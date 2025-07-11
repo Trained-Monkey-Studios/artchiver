@@ -1,0 +1,20 @@
+[package]
+name = "ux"
+description.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+readme.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+bevy.workspace = true
+bevy_egui.workspace = true
+egui_dock.workspace = true
+# libs
+sync.workspace = true

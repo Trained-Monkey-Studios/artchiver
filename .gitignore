@@ -1,0 +1,6 @@
+/target
+.idea
+rover.log
+metadata.db
+/data
+/cache
