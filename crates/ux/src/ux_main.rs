@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
-use sync::{Progress, SyncEngine};
+use sync::{PluginHost, Progress};
 
 // Utility function to get an egui margin inset from the left.
 fn indented(px: i8) -> egui::Margin {
@@ -38,16 +38,16 @@ impl TabMetadata {
 }
 
 struct SyncViewer<'a> {
-    sync: &'a mut SyncEngine,
+    sync: &'a mut PluginHost,
     state: &'a mut UxState,
 }
 
 impl<'a> SyncViewer<'a> {
-    fn wrap(sync: &'a mut SyncEngine, state: &'a mut UxState) -> SyncViewer<'a> {
+    fn wrap(sync: &'a mut PluginHost, state: &'a mut UxState) -> SyncViewer<'a> {
         Self { sync, state }
     }
 
-    fn show_plugins(&mut self, ui: &mut egui::Ui) {
+    fn show_galleries(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
             for plugin in self.sync.plugins() {
                 ui.horizontal(|ui| {
@@ -91,16 +91,22 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_tags(&mut self, ui: &mut egui::Ui) {
+        let tag_cnt = self
+            .sync
+            .pool_mut()
+            .tags_count(&self.state.tag_filter)
+            .unwrap();
+        // Show the filter and global refresh-all-tags button.
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.state.tag_filter);
-            if ui.button("Refresh All").clicked() {
+            ui.label(format!("({tag_cnt})",));
+            if ui.button("⟳ Refresh All").clicked() {
                 self.sync.refresh_tags().ok();
             }
         });
         let start = std::time::Instant::now();
         let text_style = egui::TextStyle::Body;
         let row_height = ui.text_style_height(&text_style);
-        let tag_cnt = self.sync.pool().count_tags(&self.state.tag_filter).unwrap();
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show_rows(
@@ -110,16 +116,25 @@ impl<'a> SyncViewer<'a> {
                 |ui, row_range| {
                     let tags = self
                         .sync
-                        .pool()
-                        .list_tags(row_range, &self.state.tag_filter)
+                        .pool_mut()
+                        .tags_list(row_range, &self.state.tag_filter)
                         .unwrap();
-                    for tag in tags {
-                        ui.label(tag);
-                    }
+
+                    egui::Grid::new("tag_grid").num_columns(2).show(ui, |ui| {
+                        for tag in tags {
+                            if ui.button("⟳").clicked() {
+                                // self.sync.refresh_works_for_tag(tag)
+                            }
+                            ui.label(tag);
+                            ui.end_row();
+                        }
+                    });
                 },
             );
         println!("tag draw: {:?}", start.elapsed());
     }
+
+    fn show_works(&mut self, ui: &mut egui::Ui) {}
 }
 
 impl TabViewer for SyncViewer<'_> {
@@ -131,8 +146,9 @@ impl TabViewer for SyncViewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab.title.as_str() {
-            "Plugins" => self.show_plugins(ui),
+            "Galleries" => self.show_galleries(ui),
             "Tags" => self.show_tags(ui),
+            "Works" => self.show_works(ui),
             _ => {}
         }
     }
@@ -155,10 +171,10 @@ impl Default for UxToplevel {
     fn default() -> Self {
         let mut dock_state = DockState::new(vec![TabMetadata::new("Works")]);
         let surface = dock_state.main_surface_mut();
-        let [_works_node, plugins_node] =
-            surface.split_left(NodeIndex::root(), 0.2, vec![TabMetadata::new("Plugins")]);
+        let [_works_node, galleries_node] =
+            surface.split_left(NodeIndex::root(), 0.2, vec![TabMetadata::new("Galleries")]);
         surface.split_below(
-            plugins_node,
+            galleries_node,
             0.2,
             vec![TabMetadata::new("Tags"), TabMetadata::new("Artists")],
         );
@@ -172,7 +188,7 @@ impl Default for UxToplevel {
 fn ux_main(
     mut contexts: EguiContexts,
     mut ux: ResMut<UxToplevel>,
-    mut sync: ResMut<SyncEngine>,
+    mut sync: ResMut<PluginHost>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut app_exit: EventWriter<AppExit>,
 ) -> Result {
@@ -183,7 +199,7 @@ fn ux_main(
 }
 
 impl UxToplevel {
-    pub fn main(&mut self, sync: &mut SyncEngine, ctx: &mut egui::Context) -> Result {
+    pub fn main(&mut self, sync: &mut PluginHost, ctx: &mut egui::Context) -> Result {
         // Menu Bar
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {

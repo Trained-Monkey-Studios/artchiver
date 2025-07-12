@@ -1,4 +1,5 @@
-use crate::plugin::PluginResponse;
+use crate::shared::PluginResponse;
+use bevy::prelude::*;
 use crossbeam::channel::Sender;
 
 #[derive(Clone, Copy, Debug)]
@@ -8,6 +9,7 @@ pub enum Progress {
     Percent { current: usize, total: usize },
 }
 
+#[derive(Clone, Debug)]
 pub struct ProgressSender {
     tx_to_runner: Sender<PluginResponse>,
 }
@@ -15,6 +17,16 @@ pub struct ProgressSender {
 impl ProgressSender {
     pub(crate) fn wrap(tx_to_runner: Sender<PluginResponse>) -> Self {
         Self { tx_to_runner }
+    }
+
+    pub fn send(&mut self, message: PluginResponse) -> Result {
+        self.tx_to_runner.send(message)?;
+        Ok(())
+    }
+
+    pub fn database_changed(&mut self) -> Result {
+        self.tx_to_runner.send(PluginResponse::DatabaseChanged)?;
+        Ok(())
     }
 
     pub fn clear(&mut self) {

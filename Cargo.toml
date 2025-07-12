@@ -35,8 +35,10 @@ clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
 egui_dock = "0.16" # pulls same version of egui as bevy_egui
 egui_extras = { version = "0.31.1", features = ["image", "file"] } # matching bevy_egui
+io_tee = "0.1"
 itertools = "0.14"
 platform-dirs = "0.3"
+progress-streams = "1.1"
 r2d2 = "0.8"
 r2d2_sqlite = "0.31"
 rand = "0.8.5" # as pulled in by glam 29.2

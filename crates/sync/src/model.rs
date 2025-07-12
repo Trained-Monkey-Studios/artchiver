@@ -4,7 +4,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 use std::ops::Range;
 
-const MIGRATIONS: [&str; 7] = [
+const MIGRATIONS: [&str; 8] = [
     // Migrations
     r#"CREATE TABLE migrations (
         id INTEGER PRIMARY KEY,
@@ -22,6 +22,7 @@ const MIGRATIONS: [&str; 7] = [
         name TEXT NOT NULL,
         UNIQUE(name)
     );"#,
+    r#"CREATE UNIQUE INDEX tag_name_idx ON tags(name);"#,
     // Works: A work of art
     r#"CREATE TABLE works (
         id INTEGER PRIMARY KEY,
@@ -83,12 +84,27 @@ fn connect_or_create_db(env: Res<Environment>, mut commands: Commands) -> Result
         env.metadata_file_path().display()
     );
     let manager = SqliteConnectionManager::file(env.metadata_file_path());
-    let pool = r2d2::Pool::new(manager)?;
-    let db = pool.get()?;
+    let pool = r2d2::Pool::builder().build(manager)?;
+    let conn = pool.get()?;
+    let mode: String = conn.query_one("PRAGMA journal_mode = WAL;", (), |row| row.get(0))?;
+    assert_eq!(mode, "wal");
+    let params = [("synchronous", "NORMAL"), ("cache_size", "2000")];
+    for (name, value) in params {
+        info!("Configuring DB: {name} = {value}");
+        conn.execute(&format!("PRAGMA {name} = {value};"), ())?;
+    }
+    let params = [
+        ("journal_size_limit", (64 * 1024 * 1024).to_string()),
+        ("mmap_size", (1024 * 1024 * 1024).to_string()),
+        ("busy_timeout", "5000".into()),
+    ];
+    for (name, value) in params {
+        let _: i64 = conn.query_one(&format!("PRAGMA {name} = {value};"), [], |row| row.get(0))?;
+    }
 
     // List all migrations that we've already run.
     let finished_migrations = {
-        match db.prepare("SELECT ordinal FROM migrations") {
+        match conn.prepare("SELECT ordinal FROM migrations") {
             Ok(mut stmt) => match stmt.query_map([], |row| row.get(0)) {
                 Ok(q) => q.flatten().collect::<Vec<i64>>(),
                 Err(_) => vec![],
@@ -100,8 +116,8 @@ fn connect_or_create_db(env: Res<Environment>, mut commands: Commands) -> Result
     // Execute and record all migration statements
     for (ordinal, migration) in MIGRATIONS.iter().enumerate() {
         if !finished_migrations.contains(&(ordinal as i64)) {
-            db.execute(migration, ())?;
-            db.execute("INSERT INTO migrations (ordinal) VALUES (?)", [ordinal])?;
+            conn.execute(migration, ())?;
+            conn.execute("INSERT INTO migrations (ordinal) VALUES (?)", [ordinal])?;
         }
     }
 
@@ -132,15 +148,15 @@ impl MetadataPool {
     }
 
     pub fn upsert_plugin(&self, plugin_name: &str) -> Result<i64> {
-        let pool = self.pool.get()?;
-        let row_cnt = pool.execute(
+        let conn = self.pool.get()?;
+        let row_cnt = conn.execute(
             "INSERT OR IGNORE INTO plugins (name) VALUES (?)",
             params![plugin_name],
         )?;
         let plugin_id = if row_cnt > 0 {
-            pool.last_insert_rowid()
+            conn.last_insert_rowid()
         } else {
-            pool.query_row(
+            conn.query_row(
                 "SELECT id FROM plugins WHERE name = ?",
                 params![plugin_name],
                 |row| row.get(0),
@@ -150,37 +166,47 @@ impl MetadataPool {
     }
 
     pub fn upsert_tags(
-        &self,
+        &mut self,
         plugin_id: i64,
         tags: &[String],
         progress: &mut ProgressSender,
     ) -> Result {
         progress.set_spinner();
-        let pool = self.pool.get()?;
-        let mut insert_tag_stmt = pool.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)")?;
-        let mut select_tag_id_stmt = pool.prepare("SELECT id FROM tags WHERE name = ?")?;
-        let mut insert_plugin_tag_stmt =
-            pool.prepare("INSERT OR IGNORE INTO plugin_tags (plugin_id, tag_id) VALUES (?, ?)")?;
 
-        for (i, tag) in tags.iter().enumerate() {
-            progress.set_percent(i, tags.len());
-            let row_cnt = insert_tag_stmt.execute(params![tag])?;
-            let tag_id = if row_cnt > 0 {
-                progress.message(format!("Added tag '{tag}' to gallery {plugin_id}"));
-                pool.last_insert_rowid()
-            } else {
-                progress.message(format!("Skipped adding existing tag '{tag}'"));
-                select_tag_id_stmt.query_row(params![tag], |row| row.get(0))?
-            };
-            insert_plugin_tag_stmt.execute(params![plugin_id, tag_id])?;
+        let conn = self.pool.get()?;
+        let mut insert_tag_stmt = conn.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)")?;
+        let mut select_tag_id_stmt = conn.prepare("SELECT id FROM tags WHERE name = ?")?;
+        let mut insert_plugin_tag_stmt =
+            conn.prepare("INSERT OR IGNORE INTO plugin_tags (plugin_id, tag_id) VALUES (?, ?)")?;
+
+        let total_count = tags.len();
+        let mut current_pos = 0;
+        progress.message(format!("Writing {total_count} tags to the database..."));
+        for chunk in tags.chunks(10_000) {
+            conn.execute("BEGIN TRANSACTION", ())?;
+            for tag in chunk {
+                let row_cnt = insert_tag_stmt.execute(params![tag])?;
+                let tag_id = if row_cnt > 0 {
+                    conn.last_insert_rowid()
+                } else {
+                    select_tag_id_stmt.query_row(params![tag], |row| row.get(0))?
+                };
+                insert_plugin_tag_stmt.execute(params![plugin_id, tag_id])?;
+            }
+            conn.execute("COMMIT TRANSACTION", ())?;
+
+            current_pos += chunk.len();
+            progress.set_percent(current_pos, total_count);
+            progress.database_changed()?;
         }
+
         progress.clear();
         Ok(())
     }
 
-    pub fn count_tags(&self, filter: &str) -> Result<i64> {
-        let pool = self.pool.get()?;
-        let cnt = pool.query_row(
+    pub fn tags_count(&self, filter: &str) -> Result<i64> {
+        let conn = self.pool.get()?;
+        let cnt = conn.query_row(
             "SELECT COUNT(*) FROM tags WHERE name LIKE ? ORDER BY name ASC",
             [format!("%{filter}%")],
             |row| row.get(0),
@@ -188,9 +214,9 @@ impl MetadataPool {
         Ok(cnt)
     }
 
-    pub fn list_tags(&self, range: Range<usize>, filter: &str) -> Result<Vec<String>> {
-        let pool = self.pool.get()?;
-        let mut stmt = pool.prepare(
+    pub fn tags_list(&self, range: Range<usize>, filter: &str) -> Result<Vec<String>> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
             "SELECT name FROM tags WHERE name LIKE ? ORDER BY name ASC LIMIT ? OFFSET ?",
         )?;
         let rows = stmt.query_map(
