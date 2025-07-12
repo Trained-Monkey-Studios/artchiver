@@ -1,7 +1,14 @@
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
-use sync::SyncEngine;
+use sync::{Progress, SyncEngine};
+
+// Utility function to get an egui margin inset from the left.
+fn indented(px: i8) -> egui::Margin {
+    let mut m = egui::Margin::ZERO;
+    m.left = px;
+    m
+}
 
 pub struct UxPlugin;
 
@@ -13,7 +20,7 @@ pub enum UxSet {
 impl Plugin for UxPlugin {
     fn build(&self, app: &mut App) {
         assert!(app.is_plugin_added::<EguiPlugin>());
-        app.insert_resource(UxState::default())
+        app.insert_resource(UxToplevel::default())
             .add_systems(EguiPrimaryContextPass, ux_main.in_set(UxSet::Main));
     }
 }
@@ -32,41 +39,86 @@ impl TabMetadata {
 
 struct SyncViewer<'a> {
     sync: &'a mut SyncEngine,
+    state: &'a mut UxState,
 }
 
 impl<'a> SyncViewer<'a> {
-    fn wrap(sync: &'a mut SyncEngine) -> SyncViewer<'a> {
-        Self { sync }
+    fn wrap(sync: &'a mut SyncEngine, state: &'a mut UxState) -> SyncViewer<'a> {
+        Self { sync, state }
     }
 
     fn show_plugins(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
             for plugin in self.sync.plugins() {
-                ui.collapsing(plugin.name(), |ui| {
-                    let desc = plugin
-                        .metadata()
-                        .map(|m| m.description())
-                        .unwrap_or_else(|| "not yet loaded");
-                    let version = plugin
-                        .metadata()
-                        .map(|m| m.version())
-                        .unwrap_or_else(|| "not yet loaded");
-                    ui.label(desc);
-                    ui.label(format!("Source: {}", plugin.source().display()));
-                    ui.label(format!("Version: {version}"));
-                    ui.separator();
-                    for message in plugin.messages().unwrap().iter() {
-                        ui.label(message);
+                ui.horizontal(|ui| {
+                    ui.heading(plugin.name());
+                    match plugin.progress() {
+                        Progress::None => {}
+                        Progress::Spinner => {
+                            ui.spinner();
+                        }
+                        Progress::Percent { current, total } => {
+                            ui.add(
+                                egui::ProgressBar::new(*current as f32 / *total as f32)
+                                    .animate(true)
+                                    .show_percentage(),
+                            );
+                        }
                     }
                 });
+                egui::Frame::new()
+                    .inner_margin(indented(16))
+                    .show(ui, |ui| {
+                        ui.label(plugin.description());
+                        egui::Grid::new("plugin_grid")
+                            .num_columns(2)
+                            .show(ui, |ui| {
+                                ui.label("Source");
+                                ui.label(plugin.source().display().to_string());
+                                ui.end_row();
+                                ui.label("Version");
+                                ui.label(plugin.version());
+                                ui.end_row();
+                            });
+                        ui.collapsing("Messages", |ui| {
+                            for message in plugin.messages() {
+                                ui.label(message);
+                            }
+                        });
+                    });
             }
         });
     }
 
     fn show_tags(&mut self, ui: &mut egui::Ui) {
-        if ui.button("Refresh Tags").clicked() {
-            self.sync.refresh_tags().ok();
-        }
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut self.state.tag_filter);
+            if ui.button("Refresh All").clicked() {
+                self.sync.refresh_tags().ok();
+            }
+        });
+        let start = std::time::Instant::now();
+        let text_style = egui::TextStyle::Body;
+        let row_height = ui.text_style_height(&text_style);
+        let tag_cnt = self.sync.pool().count_tags(&self.state.tag_filter).unwrap();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show_rows(
+                ui,
+                row_height,
+                tag_cnt.try_into().unwrap(),
+                |ui, row_range| {
+                    let tags = self
+                        .sync
+                        .pool()
+                        .list_tags(row_range, &self.state.tag_filter)
+                        .unwrap();
+                    for tag in tags {
+                        ui.label(tag);
+                    }
+                },
+            );
+        println!("tag draw: {:?}", start.elapsed());
     }
 }
 
@@ -86,14 +138,20 @@ impl TabViewer for SyncViewer<'_> {
     }
 }
 
-#[derive(Resource)]
+#[derive(Default)]
 pub struct UxState {
     show_preferences: bool,
     show_about: bool,
-    dock_state: DockState<TabMetadata>,
+    tag_filter: String,
 }
 
-impl Default for UxState {
+#[derive(Resource)]
+pub struct UxToplevel {
+    dock_state: DockState<TabMetadata>,
+    state: UxState,
+}
+
+impl Default for UxToplevel {
     fn default() -> Self {
         let mut dock_state = DockState::new(vec![TabMetadata::new("Works")]);
         let surface = dock_state.main_surface_mut();
@@ -105,16 +163,15 @@ impl Default for UxState {
             vec![TabMetadata::new("Tags"), TabMetadata::new("Artists")],
         );
         Self {
-            show_about: false,
-            show_preferences: false,
             dock_state,
+            state: Default::default(),
         }
     }
 }
 
 fn ux_main(
     mut contexts: EguiContexts,
-    mut ux: ResMut<UxState>,
+    mut ux: ResMut<UxToplevel>,
     mut sync: ResMut<SyncEngine>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut app_exit: EventWriter<AppExit>,
@@ -125,14 +182,14 @@ fn ux_main(
     ux.main(&mut sync, contexts.ctx_mut()?)
 }
 
-impl UxState {
+impl UxToplevel {
     pub fn main(&mut self, sync: &mut SyncEngine, ctx: &mut egui::Context) -> Result {
         // Menu Bar
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Preferences...").clicked() {
-                        self.show_preferences = true;
+                        self.state.show_preferences = true;
                         ui.close_menu();
                     }
 
@@ -147,7 +204,7 @@ impl UxState {
                 });
                 ui.menu_button("Help", |ui| {
                     if ui.button("About...").clicked() {
-                        self.show_about = true;
+                        self.state.show_about = true;
                         ui.close_menu();
                     }
                 });
@@ -155,14 +212,14 @@ impl UxState {
         });
 
         // Preferences
-        if self.show_preferences {
+        if self.state.show_preferences {
             egui::Window::new("Preferences").show(ctx, |ui| {
                 self.render_preferences(ui);
             });
         }
 
         // About
-        if self.show_about {
+        if self.state.show_about {
             egui::Window::new("About").show(ctx, |ui| {
                 self.render_about(ui);
             });
@@ -173,7 +230,7 @@ impl UxState {
             .show(ctx, |ui| {
                 DockArea::new(&mut self.dock_state)
                     .style(Style::from_egui(ui.style().as_ref()))
-                    .show(ctx, &mut SyncViewer::wrap(sync));
+                    .show(ctx, &mut SyncViewer::wrap(sync, &mut self.state));
             });
 
         Ok(())

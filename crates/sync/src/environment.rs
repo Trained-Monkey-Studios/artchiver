@@ -24,12 +24,16 @@ impl Environment {
         &self.prefix
     }
 
+    pub fn data_dir(&self) -> PathBuf {
+        self.prefix.join("data")
+    }
+
     pub fn cache_dir(&self) -> PathBuf {
         self.prefix.join("cache")
     }
 
-    pub fn data_dir(&self) -> PathBuf {
-        self.prefix.join("data")
+    pub fn metadata_file_path(&self) -> PathBuf {
+        self.data_dir().join("metadata.db")
     }
 
     pub fn global_plugin_dir(&self) -> PathBuf {

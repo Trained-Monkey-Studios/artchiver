@@ -68,7 +68,7 @@ extern "ExtismHost" {
 // 51: Tags,
 // 52: Tags AAT URL,
 // 53: Tags Wikidata URL
-const CSV_URL: &'static str = "https://media.githubusercontent.com/media/metmuseum/openaccess/refs/heads/master/MetObjects.csv";
+const CSV_URL: &str = "https://media.githubusercontent.com/media/metmuseum/openaccess/refs/heads/master/MetObjects.csv";
 
 #[plugin_fn]
 pub fn startup() -> FnResult<Json<PluginMetadata>> {

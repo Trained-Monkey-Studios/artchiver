@@ -1,7 +1,11 @@
-use crate::{Environment, model::connect_or_create_db};
+use crate::{
+    Environment,
+    model::{MetadataPlugin, MetadataPool, MetadataPoolResource, MetadataSet},
+    progress::{Progress, ProgressSender},
+};
 use bevy::{
     prelude::*,
-    tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::FutureExt},
+    tasks::{AsyncComputeTaskPool, Task, block_on},
 };
 use crossbeam::channel;
 use extism::{
@@ -19,14 +23,20 @@ use ureq::Agent;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, SystemSet)]
 pub enum SyncSet {
+    StartupEngine,
     MaintainPlugins,
 }
 
 pub struct SyncPlugin;
 impl Plugin for SyncPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(SyncEngine::default())
-            .add_systems(Startup, (connect_or_create_db, startup_sync_engine))
+        app.add_plugins(MetadataPlugin)
+            .add_systems(
+                Startup,
+                startup_sync_engine
+                    .in_set(SyncSet::StartupEngine)
+                    .after(MetadataSet::Connect),
+            )
             .add_systems(
                 FixedUpdate,
                 maintain_plugins.in_set(SyncSet::MaintainPlugins),
@@ -58,17 +68,16 @@ impl PluginMetadata {
 #[derive(Clone, Debug)]
 pub struct PluginState {
     cache_dir: PathBuf,
+    pool: MetadataPool,
     agent: Agent,
-    messages: VecDeque<String>,
 }
 
 impl PluginState {
-    const MAX_MESSAGES: usize = 20;
-
-    fn new(cache_dir: &Path) -> Self {
-        const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+    fn new(cache_dir: &Path, pool: MetadataPool) -> Self {
+        const VERSION: &str = env!("CARGO_PKG_VERSION");
         Self {
             cache_dir: cache_dir.to_owned(),
+            pool,
             agent: Agent::new_with_config(
                 Agent::config_builder()
                     .no_delay(true)
@@ -79,7 +88,6 @@ impl PluginState {
                     .timeout_recv_body(Some(Duration::from_secs(60)))
                     .build(),
             ),
-            messages: VecDeque::new(),
         }
     }
 
@@ -90,35 +98,19 @@ impl PluginState {
     fn agent(state: &UserData<PluginState>) -> Agent {
         state.get().unwrap().lock().unwrap().agent.clone()
     }
-
-    fn message(state: &UserData<PluginState>, message: impl AsRef<str>) {
-        let size = state.get().unwrap().lock().unwrap().messages.len();
-        if size > Self::MAX_MESSAGES {
-            let popcnt = size - Self::MAX_MESSAGES;
-            for _ in 0..popcnt {
-                state.get().unwrap().lock().unwrap().messages.pop_front();
-            }
-        }
-        state
-            .get()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .messages
-            .push_back(message.as_ref().to_owned());
-    }
 }
 
 #[derive(Clone, Debug)]
 enum PluginRequest {
     Shutdown,
-    ListTags,
+    RefreshTags,
 }
 
 #[derive(Clone, Debug)]
-enum PluginResponse {
+pub(crate) enum PluginResponse {
     PluginInfo(PluginMetadata),
-    FoundTags(Vec<String>),
+    Progress(Progress),
+    Message(String),
 }
 
 #[derive(Debug)]
@@ -126,7 +118,8 @@ pub struct PluginHandle {
     // Metadata
     source: PathBuf,
     metadata: Option<PluginMetadata>,
-    state: UserData<PluginState>,
+    progress: Progress,
+    messages: VecDeque<String>,
 
     // Maintenance state
     task: Task<Result<()>>,
@@ -135,6 +128,8 @@ pub struct PluginHandle {
 }
 
 impl PluginHandle {
+    const MAX_MESSAGES: usize = 20;
+
     pub fn source(&self) -> &Path {
         &self.source
     }
@@ -151,38 +146,68 @@ impl PluginHandle {
         }
     }
 
-    pub fn messages(&self) -> Result<Vec<String>> {
-        Ok(self
-            .state
-            .get()?
-            .lock()
-            .unwrap()
-            .messages
-            .iter()
-            .cloned()
-            .collect())
+    pub fn description(&self) -> String {
+        if let Some(metadata) = self.metadata.as_ref() {
+            metadata.description().to_owned()
+        } else {
+            "not yet loaded".to_owned()
+        }
+    }
+
+    pub fn version(&self) -> String {
+        if let Some(metadata) = self.metadata.as_ref() {
+            metadata.version().to_owned()
+        } else {
+            "not yet loaded".to_owned()
+        }
+    }
+
+    pub fn messages(&self) -> impl Iterator<Item = &str> {
+        self.messages.iter().map(|s| s.as_str())
+    }
+
+    pub fn progress(&self) -> &Progress {
+        &self.progress
     }
 }
 
-#[derive(Debug, Default, Resource)]
+#[derive(Debug, Resource)]
 pub struct SyncEngine {
     plugins: Vec<PluginHandle>,
+    pool: MetadataPool,
 }
 
 impl SyncEngine {
+    fn new(pool: MetadataPool) -> Self {
+        Self {
+            plugins: Vec::new(),
+            pool,
+        }
+    }
+
+    pub fn pool(&self) -> &MetadataPool {
+        &self.pool
+    }
+
     pub fn plugins(&self) -> impl Iterator<Item = &PluginHandle> {
         self.plugins.iter()
     }
 
     pub fn refresh_tags(&self) -> Result {
         for plugin in self.plugins.iter() {
-            plugin.tx_to_plugin.send(PluginRequest::ListTags)?;
+            plugin.tx_to_plugin.send(PluginRequest::RefreshTags)?;
         }
         Ok(())
     }
 }
 
-fn startup_sync_engine(mut engine: ResMut<SyncEngine>, env: Res<Environment>) -> Result {
+fn startup_sync_engine(
+    metadata: Res<MetadataPoolResource>,
+    env: Res<Environment>,
+    mut commands: Commands,
+) -> Result {
+    let mut engine = SyncEngine::new(metadata.pool());
+
     let mut all_wasm = Vec::new();
     for item in fs::read_dir(env.global_plugin_dir())?.chain(fs::read_dir(env.local_plugin_dir())?)
     {
@@ -199,8 +224,8 @@ fn startup_sync_engine(mut engine: ResMut<SyncEngine>, env: Res<Environment>) ->
     }
 
     for source in all_wasm.drain(..) {
+        let state = UserData::new(PluginState::new(&env.cache_dir(), metadata.pool()));
         info!("Loading plugin: {}", source.display());
-        let state = UserData::new(PluginState::new(&env.cache_dir()));
         let manifest = Manifest::new([Wasm::file(source.clone())]);
         let plugin = PluginBuilder::new(manifest)
             .with_wasi(true)
@@ -208,17 +233,40 @@ fn startup_sync_engine(mut engine: ResMut<SyncEngine>, env: Res<Environment>) ->
             .build()?;
         let (tx_to_plugin, rx_from_runner) = channel::unbounded();
         let (tx_to_runner, rx_from_plugin) = channel::unbounded();
-        let plugin_task = AsyncComputeTaskPool::get()
-            .spawn(async move { plugin_main(plugin, rx_from_runner, tx_to_runner).await });
+        let plugin_source = source.clone();
+        let plugin_state = state.clone();
+        let plugin_task = AsyncComputeTaskPool::get().spawn(async move {
+            let rv = plugin_main(
+                plugin,
+                plugin_state.clone(),
+                rx_from_runner,
+                tx_to_runner.clone(),
+            )
+            .await;
+            if let Err(e) = rv.as_ref() {
+                let mut progress = ProgressSender::wrap(tx_to_runner);
+                progress.message("Plugin shutting down");
+                progress.message("Error: {e}");
+                error!(
+                    "Plugin {} shutting down with error: {}",
+                    plugin_source.display(),
+                    e
+                );
+            }
+            rv
+        });
         engine.plugins.push(PluginHandle {
             source,
             metadata: None,
-            state,
+            progress: Progress::None,
+            messages: VecDeque::new(),
             task: plugin_task,
             tx_to_plugin,
             rx_from_plugin,
         });
     }
+
+    commands.insert_resource(engine);
     Ok(())
 }
 
@@ -229,8 +277,14 @@ fn maintain_plugins(mut engine: ResMut<SyncEngine>, app_exit: EventReader<AppExi
                 PluginResponse::PluginInfo(info) => {
                     handle.metadata = Some(info);
                 }
-                PluginResponse::FoundTags(tags) => {
-                    println!("TAGS: {tags:#?}");
+                PluginResponse::Progress(progress) => {
+                    handle.progress = progress;
+                }
+                PluginResponse::Message(message) => {
+                    handle.messages.push_back(message);
+                    while handle.messages.len() > PluginHandle::MAX_MESSAGES {
+                        handle.messages.pop_front();
+                    }
                 }
             }
         }
@@ -238,7 +292,7 @@ fn maintain_plugins(mut engine: ResMut<SyncEngine>, app_exit: EventReader<AppExi
 
     // Proxy shutdown to our plugins and wait for them to terminate.
     if !app_exit.is_empty() {
-        for mut handle in engine.plugins.drain(..) {
+        for handle in engine.plugins.drain(..) {
             handle.tx_to_plugin.send(PluginRequest::Shutdown)?;
             block_on(handle.task)?;
         }
@@ -251,23 +305,48 @@ fn maintain_plugins(mut engine: ResMut<SyncEngine>, app_exit: EventReader<AppExi
 // with the main thread via the queues in the handle resource.
 //
 // Plugin Lifetime:
-// * startup - return the information pack
+// * startup - return an information pack about the plugin and set it on the state for
+//             display in the UX. This may contain required configuration fields to be
+//             shown in the UX.
+// * TODO: configure - receive configuration from the UX and store it in the plugin state.
+// * Refresh* - query our plugin (to read from the gallery source) and write back the data
+//              to the metadata db for display in the UX.
+// * shutdown - return from the plugin thread so that we can cleanly shut down the pool and exit.
 async fn plugin_main(
     mut plugin: ExtPlugin,
+    state: UserData<PluginState>,
     rx_from_runner: channel::Receiver<PluginRequest>,
     tx_to_runner: channel::Sender<PluginResponse>,
 ) -> Result {
-    let res = plugin.call::<(), Json<PluginMetadata>>("startup", ())?;
-    tx_to_runner.send(PluginResponse::PluginInfo(res.0))?;
+    let mut progress = ProgressSender::wrap(tx_to_runner.clone());
+
+    progress.message("Getting plugin metadata");
+    let metadata = plugin.call::<(), Json<PluginMetadata>>("startup", ())?.0;
+    let plugin_id = state
+        .get()?
+        .lock()
+        .unwrap()
+        .pool
+        .upsert_plugin(metadata.name())?;
+    progress.message(format!(
+        "Started plugin id:{plugin_id}, \"{}\"",
+        metadata.name()
+    ));
+    tx_to_runner.send(PluginResponse::PluginInfo(metadata))?;
 
     while let Ok(msg) = rx_from_runner.recv() {
         match msg {
             PluginRequest::Shutdown => {
+                progress.message("Shutting down plugin: {plugin_id}");
                 break;
             }
-            PluginRequest::ListTags => {
+            PluginRequest::RefreshTags => {
                 let tags = plugin.call::<(), Json<Vec<String>>>("list_tags", ())?;
-                tx_to_runner.send(PluginResponse::FoundTags(tags.0))?;
+                progress.message(format!("Discovered {} tags", tags.0.len()));
+
+                // Note: don't hold the lock while doing the long running db thing.
+                let pool = state.get()?.lock().unwrap().pool.clone();
+                pool.upsert_tags(plugin_id, &tags.0, &mut progress)?;
             }
         }
     }
@@ -279,10 +358,10 @@ host_fn!(fetch_text(state: PluginState; url: &str) -> String {
     let key = Sha256::digest(url.as_bytes());
     let keypath = PluginState::cache_dir(&state).join(format!("{key:x}"));
     if let Ok(data) = fs::read_to_string(&keypath) {
-        PluginState::message(&state, format!("Cache hit: {url}"));
+        // PluginState::message(&state, format!("Cache hit: {url}"));
         return Ok(data);
     }
-    PluginState::message(&state, format!("Fetching: {url}"));
+    // PluginState::message(&state, format!("Fetching: {url}"));
 
     // Stream the response into our cache file
     let mut response= PluginState::agent(&state).get(url).call()?;

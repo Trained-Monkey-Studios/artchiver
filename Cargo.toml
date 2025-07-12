@@ -37,7 +37,10 @@ egui_dock = "0.16" # pulls same version of egui as bevy_egui
 egui_extras = { version = "0.31.1", features = ["image", "file"] } # matching bevy_egui
 itertools = "0.14"
 platform-dirs = "0.3"
+r2d2 = "0.8"
+r2d2_sqlite = "0.31"
 rand = "0.8.5" # as pulled in by glam 29.2
+rusqlite = { version = "0.37", features = ["bundled", "time"] }
 serde = "1.0"
 sha2 = "0.10"
 extism = "1.0"
@@ -50,7 +53,6 @@ ureq = "3.0"
 
 bevy_egui = { version = "0.35", features = ["render"] }
 bevy_framepace = "0.19"
-rusqlite = { version = "0.37", features = ["bundled", "time"] }
 bevy = { version = "0.16", default-features = false, features = [
     # Default
     #"android-game-activity", # Android GameActivity support. Default, choose between this and android-native-activity.
@@ -152,9 +154,9 @@ bevy = { version = "0.16", default-features = false, features = [
     #"webp", # WebP image format support
     #"zlib", # For KTX2 supercompression
 ] }
+
 sync = { path = "crates/sync" }
 ux = { path = "crates/ux" }
-
 
 # Change to emit debugging symbols when tracing is required
 [profile.release]
