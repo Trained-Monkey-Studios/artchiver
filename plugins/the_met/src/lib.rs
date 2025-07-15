@@ -1,18 +1,10 @@
+use artchiver_sdk::*;
 use extism_pdk::*;
-use serde::{Deserialize, Serialize};
+use jiff::civil::Date;
+use serde::Deserialize;
 use std::collections::HashSet;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct PluginMetadata {
-    name: String,
-    version: String,
-    description: String,
-}
-
-#[host_fn]
-extern "ExtismHost" {
-    fn fetch_text(url: &str) -> String;
-}
+import_section!();
 
 // 0: Object Number,
 // 1: Is Highlight,
@@ -72,33 +64,180 @@ const CSV_URL: &str = "https://media.githubusercontent.com/media/metmuseum/opena
 
 #[plugin_fn]
 pub fn startup() -> FnResult<Json<PluginMetadata>> {
-    Ok(Json(PluginMetadata {
-        name: "The Metropolitan Gallery of Art".to_owned(),
-        version: "0.0.1".to_owned(),
-        description:
-            "A plugin for Artchiver to provide The Metropolitan Gallery of the Arts open data."
-                .to_owned(),
-    }))
+    Ok(Json(
+        PluginMetadata::new(
+            "The Metropolitan Gallery of Art",
+            "0.0.1",
+            "A plugin for Artchiver to provide The Metropolitan Gallery of the Arts open data.",
+        )
+        .with_rate_limit(80),
+    ))
+}
+
+fn make_reader(raw: &str) -> FnResult<csv::Reader<&[u8]>> {
+    // let raw = unsafe { fetch_text(CSV_URL)? };
+    let rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .trim(csv::Trim::All)
+        .from_reader(raw.as_bytes());
+    Ok(rdr)
+}
+
+fn get_record_tags(record: &csv::StringRecord) -> impl Iterator<Item = &str> {
+    record.get(51).unwrap().split('|').filter(|s| !s.is_empty())
 }
 
 #[plugin_fn]
 pub fn list_tags() -> FnResult<Json<Vec<String>>> {
     let mut all_tags = HashSet::new();
-    let raw = unsafe { fetch_text(CSV_URL)? };
-    let mut rdr = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .trim(csv::Trim::All)
-        .from_reader(raw.as_bytes());
+    let raw = Web::fetch_large_text(CSV_URL)?;
+
+    Progress::spinner()?;
+    let mut rdr = make_reader(&raw)?;
     for result in rdr.records() {
         let record = result?;
-        let tags = record
-            .get(51)
-            .unwrap()
-            .split('|')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_owned());
+        let tags = get_record_tags(&record).map(|s| s.to_owned());
         all_tags.extend(tags);
     }
+    Progress::clear()?;
+
     info!("Found {} tags", all_tags.len());
     Ok(all_tags.drain().collect::<Vec<String>>().into())
+}
+
+#[allow(non_snake_case, unused)]
+#[derive(Debug, Deserialize)]
+struct SearchResults {
+    total: u32,
+    objectIDs: Vec<u32>,
+}
+
+#[allow(non_snake_case, unused)]
+#[derive(Debug, Deserialize)]
+struct Constituent {
+    constituentID: u32,
+    role: String,
+    name: String,
+    constituentULAN_URL: String,
+    constituentWikidata_URL: String,
+    gender: String,
+}
+
+#[allow(non_snake_case, unused)]
+#[derive(Debug, Deserialize)]
+struct ElementMeasurement {
+    Width: Option<f32>,
+    Height: Option<f32>,
+    Depth: Option<f32>,
+}
+
+#[allow(non_snake_case, unused)]
+#[derive(Debug, Deserialize)]
+struct Measurement {
+    elementName: String,
+    elementDescription: Option<String>,
+    elementMeasurements: ElementMeasurement,
+}
+
+#[allow(non_snake_case, unused)]
+#[derive(Debug, Deserialize)]
+struct Tag {
+    term: String,
+    AAT_URL: Option<String>,
+    Wikidata_URL: String,
+}
+
+#[allow(non_snake_case, unused)]
+#[derive(Debug, Deserialize)]
+struct ObjectInfo {
+    objectID: u32,
+    isHighlight: bool,
+    accessionNumber: String,
+    accessionYear: String,
+    isPublicDomain: bool,
+    primaryImage: String,
+    primaryImageSmall: String,
+    additionalImages: Vec<String>,
+    constituents: Option<Vec<Constituent>>,
+    department: String,
+    objectName: String,
+    title: String,
+    culture: String,
+    period: String,
+    dynasty: String,
+    reign: String,
+    portfolio: String,
+    artistRole: String,
+    artistPrefix: String,
+    artistDisplayName: String,
+    artistDisplayBio: String,
+    artistSuffix: String,
+    artistAlphaSort: String,
+    artistNationality: String,
+    artistBeginDate: String,
+    artistEndDate: String,
+    artistGender: String,
+    artistWikidata_URL: String,
+    artistULAN_URL: String,
+    objectDate: String,
+    objectBeginDate: i32,
+    objectEndDate: i32,
+    medium: String,
+    dimensions: String,
+    measurements: Option<Vec<Measurement>>,
+    creditLine: String,
+    geographyType: String,
+    city: String,
+    state: String,
+    county: String,
+    country: String,
+    region: String,
+    subregion: String,
+    locale: String,
+    locus: String,
+    excavation: String,
+    river: String,
+    classification: String,
+    rightsAndReproduction: String,
+    linkResource: String,
+    metadataDate: String,
+    repository: String,
+    objectURL: String,
+    tags: Vec<Tag>,
+    objectWikidata_URL: String,
+    isTimelineWork: bool,
+    GalleryNumber: String,
+}
+
+#[plugin_fn]
+pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
+    // Query the search api with tags= to get the list of works by id
+    let search_results = Web::fetch_text(format!(
+        "https://collectionapi.metmuseum.org/public/collection/v1/search?tags=true&q={tag})"
+    ))?;
+    let search = serde_json::from_str::<SearchResults>(&search_results)?;
+    info!("Found {} works matching tag {tag}", search.total);
+
+    // Query the Object API for each id we found above to get the data we need
+    let mut matching_works = Vec::new();
+    for obj_id in search.objectIDs {
+        let Ok(object_info) = Web::fetch_text(format!(
+            "https://collectionapi.metmuseum.org/public/collection/v1/objects/{obj_id}"
+        )) else {
+            continue;
+        };
+        // warn!("{object_info}");
+        let object = serde_json::from_str::<ObjectInfo>(&object_info)?;
+        if !object.primaryImage.is_empty() {
+            matching_works.push(Work::new(
+                object.title,
+                0,
+                Date::strptime("%Y-%m-%d", format!("{}-01-01", object.objectBeginDate))?,
+                object.primaryImageSmall.to_owned(),
+                object.primaryImage.to_owned(),
+                None,
+            ));
+        }
+    }
+    Ok(matching_works.into())
 }

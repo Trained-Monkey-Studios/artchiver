@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
-use sync::{PluginHost, Progress};
+use std::path::Path;
+use sync::{Environment, PluginHost, Progress, TagSet, get_data_path_for_url};
 
 // Utility function to get an egui margin inset from the left.
 fn indented(px: i8) -> egui::Margin {
@@ -40,11 +41,20 @@ impl TabMetadata {
 struct SyncViewer<'a> {
     sync: &'a mut PluginHost,
     state: &'a mut UxState,
+    data_dir: &'a Path,
 }
 
 impl<'a> SyncViewer<'a> {
-    fn wrap(sync: &'a mut PluginHost, state: &'a mut UxState) -> SyncViewer<'a> {
-        Self { sync, state }
+    fn wrap(
+        sync: &'a mut PluginHost,
+        state: &'a mut UxState,
+        data_dir: &'a Path,
+    ) -> SyncViewer<'a> {
+        Self {
+            sync,
+            state,
+            data_dir,
+        }
     }
 
     fn show_galleries(&mut self, ui: &mut egui::Ui) {
@@ -104,7 +114,6 @@ impl<'a> SyncViewer<'a> {
                 self.sync.refresh_tags().ok();
             }
         });
-        let start = std::time::Instant::now();
         let text_style = egui::TextStyle::Body;
         let row_height = ui.text_style_height(&text_style);
         egui::ScrollArea::vertical()
@@ -120,21 +129,74 @@ impl<'a> SyncViewer<'a> {
                         .tags_list(row_range, &self.state.tag_filter)
                         .unwrap();
 
-                    egui::Grid::new("tag_grid").num_columns(2).show(ui, |ui| {
-                        for tag in tags {
-                            if ui.button("⟳").clicked() {
-                                // self.sync.refresh_works_for_tag(tag)
+                    egui::Grid::new("tag_grid")
+                        .num_columns(2)
+                        .spacing([0., 0.])
+                        .min_col_width(0.)
+                        .show(ui, |ui| {
+                            for tag in tags {
+                                let status = self.state.tag_selection.status(&tag);
+                                if ui
+                                    .add(egui::Button::new("✔").small().selected(status.enabled()))
+                                    .clicked()
+                                {
+                                    self.state.tag_selection.enable(&tag);
+                                }
+                                if ui.add(egui::Button::new(" ").small()).clicked() {
+                                    self.state.tag_selection.unselect(&tag);
+                                }
+                                if ui
+                                    .add(egui::Button::new("x").small().selected(status.disabled()))
+                                    .clicked()
+                                {
+                                    self.state.tag_selection.disable(&tag);
+                                }
+                                ui.label("   ");
+                                if ui.button("⟳").clicked() {
+                                    self.sync.refresh_works_for_tag(&tag).ok();
+                                }
+                                ui.label("   ");
+                                if status.disabled() {
+                                    ui.label(egui::RichText::new(tag).strikethrough());
+                                } else if status.enabled() {
+                                    ui.label(egui::RichText::new(tag).strong());
+                                } else {
+                                    ui.label(tag);
+                                }
+                                ui.end_row();
                             }
-                            ui.label(tag);
-                            ui.end_row();
-                        }
-                    });
+                        });
                 },
             );
-        println!("tag draw: {:?}", start.elapsed());
     }
 
-    fn show_works(&mut self, ui: &mut egui::Ui) {}
+    fn show_works(&mut self, ui: &mut egui::Ui) {
+        ui.heading(self.state.tag_selection.to_string());
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut self.state.work_filter);
+            ui.label("UNKNOWN COUNT");
+        });
+
+        let works = self
+            .sync
+            .pool_mut()
+            .works_list(&self.state.tag_selection)
+            .unwrap();
+        ui.horizontal_wrapped(|ui| {
+            for work in works {
+                let path = get_data_path_for_url(self.data_dir, work.preview_url()).unwrap();
+                let uri = format!("file://{}", path.display());
+                let img = egui::Image::new(uri)
+                    .alt_text(work.name())
+                    .show_loading_spinner(true)
+                    .maintain_aspect_ratio(true)
+                    .fit_to_exact_size(egui::Vec2::new(256., 256.));
+                if ui.add(img).on_hover_text(work.name()).clicked() {
+                    println!("work: {}", work.name());
+                }
+            }
+        });
+    }
 }
 
 impl TabViewer for SyncViewer<'_> {
@@ -159,6 +221,8 @@ pub struct UxState {
     show_preferences: bool,
     show_about: bool,
     tag_filter: String,
+    tag_selection: TagSet,
+    work_filter: String,
 }
 
 #[derive(Resource)]
@@ -189,17 +253,23 @@ fn ux_main(
     mut contexts: EguiContexts,
     mut ux: ResMut<UxToplevel>,
     mut sync: ResMut<PluginHost>,
+    env: Res<Environment>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut app_exit: EventWriter<AppExit>,
 ) -> Result {
     if keyboard.just_pressed(KeyCode::Escape) {
         app_exit.write(AppExit::Success);
     }
-    ux.main(&mut sync, contexts.ctx_mut()?)
+    ux.main(&env, &mut sync, contexts.ctx_mut()?)
 }
 
 impl UxToplevel {
-    pub fn main(&mut self, sync: &mut PluginHost, ctx: &mut egui::Context) -> Result {
+    pub fn main(
+        &mut self,
+        env: &Environment,
+        sync: &mut PluginHost,
+        ctx: &mut egui::Context,
+    ) -> Result {
         // Menu Bar
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -246,7 +316,10 @@ impl UxToplevel {
             .show(ctx, |ui| {
                 DockArea::new(&mut self.dock_state)
                     .style(Style::from_egui(ui.style().as_ref()))
-                    .show(ctx, &mut SyncViewer::wrap(sync, &mut self.state));
+                    .show(
+                        ctx,
+                        &mut SyncViewer::wrap(sync, &mut self.state, &env.data_dir()),
+                    );
             });
 
         Ok(())

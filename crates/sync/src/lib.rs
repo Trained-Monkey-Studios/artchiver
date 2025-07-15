@@ -9,7 +9,9 @@ mod shared;
 pub use crate::{
     environment::{Environment, EnvironmentPlugin},
     host::PluginHost,
+    plugin::get_data_path_for_url,
     progress::Progress,
+    shared::{TagSet, TagStatus},
 };
 
 use crate::{

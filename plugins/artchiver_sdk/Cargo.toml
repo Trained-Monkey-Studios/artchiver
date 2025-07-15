@@ -1,0 +1,11 @@
+[package]
+name = "artchiver_sdk"
+description = "Shared types for communication with artchiver from a plugin"
+version = "0.0.1"
+edition = "2024"
+license = "GPL-3"
+
+[dependencies]
+jiff = { version ="0.2", features = ["serde"] }
+serde = "1.0"
+extism-pdk = "1.0"

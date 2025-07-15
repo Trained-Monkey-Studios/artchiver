@@ -4,8 +4,9 @@ use crate::{
     model::{MetadataPool, MetadataPoolResource},
     plugin::load_plugin,
     progress::Progress,
-    shared::{PluginMetadata, PluginRequest, PluginResponse},
+    shared::{PluginRequest, PluginResponse},
 };
+use artchiver_sdk::PluginMetadata;
 use bevy::{
     prelude::*,
     tasks::{Task, block_on},
@@ -47,13 +48,8 @@ pub(crate) fn startup_plugins(
         let (tx_to_plugin, rx_from_runner) = channel::unbounded();
         let (tx_to_runner, rx_from_plugin) = channel::unbounded();
 
-        let plugin_task = load_plugin(
-            &source,
-            &env.cache_dir(),
-            metadata.pool(),
-            rx_from_runner,
-            tx_to_runner,
-        )?;
+        let plugin_task =
+            load_plugin(&source, &env, metadata.pool(), rx_from_runner, tx_to_runner)?;
         engine.plugins.push(PluginHandle {
             source,
             metadata: None,
@@ -100,6 +96,21 @@ impl PluginHost {
     pub fn refresh_tags(&self) -> Result {
         for plugin in self.plugins.iter() {
             plugin.tx_to_plugin.send(PluginRequest::RefreshTags)?;
+        }
+        Ok(())
+    }
+
+    pub fn refresh_works_for_tag(&mut self, tag: &str) -> Result {
+        let plugin_names = self.pool.list_plugins_for_tag(tag)?;
+        for plugin in &self.plugins {
+            // Only ask for matching works if the tag came from a plugin.
+            if plugin_names.contains(&plugin.name()) {
+                plugin
+                    .tx_to_plugin
+                    .send(PluginRequest::RefreshWorksForTag {
+                        tag: tag.to_owned(),
+                    })?;
+            }
         }
         Ok(())
     }

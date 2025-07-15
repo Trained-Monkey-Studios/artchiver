@@ -1,8 +1,9 @@
-use crate::{Environment, progress::ProgressSender};
+use crate::{Environment, progress::ProgressSender, shared::TagSet};
+use artchiver_sdk::Work;
 use bevy::prelude::*;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
-use std::ops::Range;
+use std::{collections::HashSet, ops::Range};
 
 const MIGRATIONS: [&str; 8] = [
     // Migrations
@@ -31,8 +32,9 @@ const MIGRATIONS: [&str; 8] = [
         date TIMESTAMP,
         preview_url TEXT NOT NULL,
         screen_url TEXT NOT NULL,
-        archive_url TEXT NOT NULL,
-        FOREIGN KEY(artist_id) REFERENCES artists(id)
+        archive_url TEXT,
+        -- FOREIGN KEY(artist_id) REFERENCES artists(id)
+        UNIQUE(screen_url)
     );"#,
     // Artists: The creator of a work of art
     r#"CREATE TABLE artists (
@@ -86,6 +88,7 @@ fn connect_or_create_db(env: Res<Environment>, mut commands: Commands) -> Result
     let manager = SqliteConnectionManager::file(env.metadata_file_path());
     let pool = r2d2::Pool::builder().build(manager)?;
     let conn = pool.get()?;
+    rusqlite::vtab::array::load_module(&conn)?;
     let mode: String = conn.query_one("PRAGMA journal_mode = WAL;", (), |row| row.get(0))?;
     assert_eq!(mode, "wal");
     let params = [("synchronous", "NORMAL"), ("cache_size", "2000")];
@@ -99,6 +102,7 @@ fn connect_or_create_db(env: Res<Environment>, mut commands: Commands) -> Result
         ("busy_timeout", "5000".into()),
     ];
     for (name, value) in params {
+        info!("Configuring DB: {name} = {value}");
         let _: i64 = conn.query_one(&format!("PRAGMA {name} = {value};"), [], |row| row.get(0))?;
     }
 
@@ -204,6 +208,53 @@ impl MetadataPool {
         Ok(())
     }
 
+    pub fn upsert_works(
+        &mut self,
+        tag: &str,
+        works: &[Work],
+        progress: &mut ProgressSender,
+    ) -> Result {
+        let conn = self.pool.get()?;
+        let tag_id: i64 = conn.query_one("SELECT id FROM tags WHERE name = ?", [tag], |row| {
+            row.get(0)
+        })?;
+        let mut insert_work_stmt = conn.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?)")?;
+        let mut insert_work_tag_stmt =
+            conn.prepare("INSERT OR IGNORE INTO work_tags (tag_id, work_id) VALUES (?, ?)")?;
+        let mut select_work_id_stmt = conn.prepare("SELECT id FROM works WHERE name = ?")?;
+
+        let total_count = works.len();
+        let mut current_pos = 0;
+        progress.message(format!("Writing {total_count} works to the database..."));
+
+        for chunk in works.chunks(10_000) {
+            conn.execute("BEGIN TRANSACTION", ())?;
+            for work in chunk {
+                let row_cnt = insert_work_stmt.execute(params![
+                    work.name(),
+                    work.artist_id(),
+                    work.date(),
+                    work.preview_url(),
+                    work.screen_url(),
+                    work.archive_url()
+                ])?;
+                let work_id = if row_cnt > 0 {
+                    conn.last_insert_rowid()
+                } else {
+                    select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))?
+                };
+                insert_work_tag_stmt.execute(params![tag_id, work_id])?;
+            }
+            conn.execute("COMMIT TRANSACTION", ())?;
+
+            current_pos += chunk.len();
+            progress.set_percent(current_pos, total_count);
+            progress.database_changed()?;
+        }
+
+        Ok(())
+    }
+
     pub fn tags_count(&self, filter: &str) -> Result<i64> {
         let conn = self.pool.get()?;
         let cnt = conn.query_row(
@@ -224,5 +275,48 @@ impl MetadataPool {
             |row| row.get(0),
         )?;
         Ok(rows.flatten().collect())
+    }
+
+    pub fn list_plugins_for_tag(&self, tag: &str) -> Result<HashSet<String>> {
+        let conn = self.pool.get()?;
+        let tag_id: i64 = conn.query_one("SELECT id FROM tags WHERE name = ?", [tag], |row| {
+            row.get(0)
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT p.name FROM plugins AS p INNER JOIN plugin_tags AS pt WHERE pt.tag_id = ? AND p.id = pt.plugin_id",
+        )?;
+        let rows = stmt.query_map(params![tag_id], |row| row.get(0))?;
+        Ok(rows.flatten().collect())
+    }
+
+    pub fn works_list(&self, range: Range<usize>, tags: &TagSet) -> Result<Vec<Work>> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT name, artist_id, date, preview_url, screen_url, archive_url
+                FROM works WHERE id IN (
+                    SELECT work_id FROM work_tags WHERE tag_id IN (
+                        SELECT id FROM tags WHERE name IN rarray(?)
+                    )
+                ) ORDER BY date DESC"#,
+        )?;
+        // LIMIT ? OFFSET ?
+        let works: Vec<Work> = stmt
+            .query_map(
+                params![tags.enabled_rarray() /*, range.end - range.start, range.start*/],
+                |row| {
+                    Ok(Work::new(
+                        row.get::<usize, String>(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        None,
+                    ))
+                },
+            )?
+            .flatten()
+            .collect();
+        Ok(works)
     }
 }

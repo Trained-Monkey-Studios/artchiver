@@ -18,31 +18,26 @@ members = [
     "apps/artchiver",
     # Crates
     "crates/sync",
-    "crates/ux", "plugins/the_met",
-#    "crates/gallery",
-#    "crates/game_state",
-#    "crates/menu",
-#    "crates/persist",
-#    "crates/player",
-#    "crates/puzzle",
-#    "crates/puzzle_render",
-#    "crates/save",
-#    "crates/zip_resource",
+    "crates/ux",
+    # Plugins and SDK
+    "plugins/artchiver_sdk",
+    "plugins/the_met",
 ]
 
 [workspace.dependencies]
 clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
 egui_dock = "0.16" # pulls same version of egui as bevy_egui
-egui_extras = { version = "0.31.1", features = ["image", "file"] } # matching bevy_egui
+egui_extras = { version = "0.31.1", features = ["image", "file", "gif", "webp"] } # matching bevy_egui
 io_tee = "0.1"
 itertools = "0.14"
+jiff = { version ="0.2", features = ["serde"] }
 platform-dirs = "0.3"
 progress-streams = "1.1"
 r2d2 = "0.8"
 r2d2_sqlite = "0.31"
 rand = "0.8.5" # as pulled in by glam 29.2
-rusqlite = { version = "0.37", features = ["bundled", "time"] }
+rusqlite = { version = "0.37", features = ["array", "bundled", "load_extension", "jiff", "rusqlite-macros", "vtab"] }
 serde = "1.0"
 sha2 = "0.10"
 extism = "1.0"
@@ -159,6 +154,7 @@ bevy = { version = "0.16", default-features = false, features = [
 
 sync = { path = "crates/sync" }
 ux = { path = "crates/ux" }
+artchiver_sdk = { path = "plugins/artchiver_sdk" }
 
 # Change to emit debugging symbols when tracing is required
 [profile.release]
