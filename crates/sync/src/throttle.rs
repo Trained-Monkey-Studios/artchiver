@@ -1,6 +1,9 @@
 use parking_lot::Mutex;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    thread::sleep,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug)]
 struct CallingThrottleData {
@@ -32,18 +35,17 @@ impl CallingThrottle {
     }
 
     pub fn throttle(&self) {
-        let now = Instant::now();
         let mut data = self.lock.lock();
-        while data.timestamps.len() >= data.nb_call_times_limit {
+        while data.timestamps.len() == data.nb_call_times_limit {
             let now = Instant::now();
             let timeout = data.expired_time;
             data.timestamps.retain(|&x| now.duration_since(x) < timeout);
             if data.timestamps.len() >= data.nb_call_times_limit {
                 let time_to_sleep = data.timestamps[0] + data.expired_time - now;
-                std::thread::sleep(time_to_sleep);
+                sleep(time_to_sleep);
             }
         }
-        data.timestamps.push(now);
+        data.timestamps.push(Instant::now());
     }
 }
 
@@ -59,5 +61,25 @@ mod tests {
             throttle.throttle();
         }
         assert!(start.elapsed() > Duration::from_secs(3));
+    }
+
+    #[test]
+    fn test_throttle_window() {
+        let throttle = CallingThrottle::new(1, Duration::from_secs(2));
+        let start = Instant::now();
+        for _ in 0..3 {
+            throttle.throttle();
+            /*
+            +0 -> #1
+            sleep(2)
+            +2 -> #2
+            sleep(2)
+            +4 -> #3
+            sleep(2)
+            +6 -> #4
+            ...
+             */
+        }
+        assert!(dbg!(start.elapsed()) > Duration::from_secs(3));
     }
 }

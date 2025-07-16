@@ -44,7 +44,7 @@ rusqlite = { version = "0.37", features = ["array", "bundled", "load_extension",
 serde = "1.0"
 sha2 = "0.10"
 extism = "1.0"
-ureq = "3.0"
+ureq = { version = "3.0", features = ["json"] }
 
 # Note: use via bevy_image with feature flags on bevy
 #image = { version = "0.25.6", default-features = false, features = [

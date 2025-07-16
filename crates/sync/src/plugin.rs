@@ -1,9 +1,9 @@
-use crate::throttle::CallingThrottle;
 use crate::{
     environment::Environment,
     model::MetadataPool,
     progress::ProgressSender,
     shared::{PluginRequest, PluginResponse},
+    throttle::CallingThrottle,
 };
 use artchiver_sdk::{HttpTextResult, PluginMetadata, Work};
 use bevy::{
@@ -12,8 +12,7 @@ use bevy::{
 };
 use crossbeam::channel::{Receiver, Sender};
 use extism::{
-    Manifest, PTR, Plugin as ExtPlugin, PluginBuilder, UserData, ValType, Wasm, convert::Json,
-    host_fn,
+    Manifest, PTR, Plugin as ExtPlugin, PluginBuilder, UserData, Wasm, convert::Json, host_fn,
 };
 use io_tee::TeeWriter;
 use progress_streams::{ProgressReader, ProgressWriter};
@@ -25,29 +24,33 @@ use std::{
     time::Duration,
 };
 use ureq::Agent;
+use ureq::config::RedirectAuthHeaders;
 
-pub(crate) fn load_plugin(
+fn make_plugin(
     source: &Path,
-    env: &Environment,
-    pool: MetadataPool,
-    rx_from_runner: Receiver<PluginRequest>,
-    tx_to_runner: Sender<PluginResponse>,
-) -> Result<Task<()>> {
-    info!("Loading plugin: {}", source.display());
-    let progress = ProgressSender::wrap(tx_to_runner.clone());
-    let state = UserData::new(PluginState::new(env, pool, progress.clone()));
-    let manifest = Manifest::new([Wasm::file(source)]);
+    config: Vec<(String, String)>,
+    state: UserData<PluginState>,
+) -> Result<ExtPlugin> {
+    let manifest = Manifest::new([Wasm::file(source)]).with_config(config.into_iter());
     let plugin = PluginBuilder::new(manifest)
         .with_wasi(true)
         .with_function("progress_spinner", [], [], state.clone(), progress_spinner)
         .with_function(
             "progress_percent",
-            [ValType::I32, ValType::I32],
+            [PTR, PTR],
             [],
             state.clone(),
             progress_percent,
         )
         .with_function("progress_clear", [], [], state.clone(), progress_clear)
+        .with_function(
+            "progress_message",
+            [PTR],
+            [],
+            state.clone(),
+            progress_message,
+        )
+        .with_function("progress_trace", [PTR], [], state.clone(), progress_trace)
         .with_function("fetch_text", [PTR], [PTR], state.clone(), fetch_text)
         .with_function(
             "fetch_large_text",
@@ -57,10 +60,31 @@ pub(crate) fn load_plugin(
             fetch_large_text,
         )
         .build()?;
+    Ok(plugin)
+}
+
+pub(crate) fn create_plugin_task(
+    source: &Path,
+    env: &Environment,
+    pool: MetadataPool,
+    rx_from_runner: Receiver<PluginRequest>,
+    tx_to_runner: Sender<PluginResponse>,
+) -> Result<Task<()>> {
+    info!("Loading plugin: {}", source.display());
+    let progress = ProgressSender::wrap(tx_to_runner.clone());
+    let state = UserData::new(PluginState::new(env, pool, progress.clone()));
+    let plugin = make_plugin(source, vec![], state.clone())?;
 
     let plugin_source = source.to_owned();
     let plugin_task = AsyncComputeTaskPool::get().spawn(async move {
-        let rv = plugin_main(plugin, state.clone(), rx_from_runner, progress).await;
+        let rv = plugin_main(
+            &plugin_source,
+            plugin,
+            state.clone(),
+            rx_from_runner,
+            progress,
+        )
+        .await;
         if let Err(e) = rv.as_ref() {
             let mut progress = ProgressSender::wrap(tx_to_runner);
             progress.message("Plugin shutting down");
@@ -103,8 +127,8 @@ impl PluginState {
             agent: Agent::new_with_config(
                 Agent::config_builder()
                     .no_delay(true)
-                    .http_status_as_error(true)
                     .user_agent(format!("Artchiver/{VERSION}"))
+                    .redirect_auth_headers(RedirectAuthHeaders::SameHost)
                     .max_response_header_size(256 * 1024)
                     .timeout_global(Some(Duration::from_secs(30)))
                     .timeout_recv_body(Some(Duration::from_secs(60)))
@@ -127,18 +151,24 @@ impl PluginState {
 //              to the metadata db for display in the UX.
 // * shutdown - return from the plugin thread so that we can cleanly shut down the pool and exit.
 async fn plugin_main(
+    plugin_source: &Path,
     mut plugin: ExtPlugin,
     state: UserData<PluginState>,
     rx_from_runner: Receiver<PluginRequest>,
     mut progress: ProgressSender,
 ) -> Result {
     progress.message("Getting plugin metadata");
-    let metadata = plugin.call::<(), Json<PluginMetadata>>("startup", ())?.0;
+    let mut metadata = plugin.call::<(), Json<PluginMetadata>>("startup", ())?.0;
     let plugin_id = {
         let state_ref = state.get()?;
         let mut state = state_ref.lock().unwrap();
-        state.throttle = CallingThrottle::new(metadata.rate_limit(), Duration::from_secs(1));
-        state.pool.upsert_plugin(metadata.name())?
+        state.throttle = CallingThrottle::new(metadata.rate_limit(), metadata.rate_window());
+        let plugin_id = state.pool.upsert_plugin(metadata.name())?;
+        let configs = state.pool.load_configurations(plugin_id)?;
+        for (k, v) in &configs {
+            metadata.set_config_value(k, v);
+        }
+        plugin_id
     };
     progress.message(format!(
         "Started plugin id:{plugin_id}, \"{}\"",
@@ -146,34 +176,36 @@ async fn plugin_main(
     ));
     progress.send(PluginResponse::PluginInfo(metadata))?;
 
-    while let Ok(msg) = rx_from_runner.recv() {
-        if matches!(msg, PluginRequest::Shutdown) {
-            progress.message("Shutting down plugin: {plugin_id}");
-            break;
-        }
-        if let Err(e) = handle_plugin_message(msg, plugin_id, &mut plugin, &state, &mut progress) {
+    'outer: while let Ok(msg) = rx_from_runner.recv() {
+        let rv = match msg {
+            PluginRequest::Shutdown => {
+                progress.message("Shutting down plugin: {plugin_id}");
+                break 'outer;
+            }
+            PluginRequest::ApplyConfiguration { config } => {
+                state
+                    .get()?
+                    .lock()
+                    .unwrap()
+                    .pool
+                    .save_configurations(plugin_id, &config)?;
+                // reload the plugin with configuration applied
+                plugin = make_plugin(plugin_source, config, state.clone())?;
+                Ok(())
+            }
+            PluginRequest::RefreshTags => {
+                refresh_tags(plugin_id, &mut plugin, &state, &mut progress)
+            }
+            PluginRequest::RefreshWorksForTag { tag } => {
+                refresh_works_for_tag(tag, &mut plugin, &state, &mut progress)
+            }
+        };
+        if let Err(e) = rv {
             progress.message(format!("Error handling plugin message: {e}"));
             error!("Error handling plugin message: {e}");
         }
     }
     Ok(())
-}
-
-fn handle_plugin_message(
-    msg: PluginRequest,
-    plugin_id: i64,
-    plugin: &mut ExtPlugin,
-    state: &UserData<PluginState>,
-    progress: &mut ProgressSender,
-) -> Result {
-    trace!("Handling plugin message: {:?}", msg);
-    match msg {
-        PluginRequest::Shutdown => Ok(()),
-        PluginRequest::RefreshTags => refresh_tags(plugin_id, plugin, state, progress),
-        PluginRequest::RefreshWorksForTag { tag } => {
-            refresh_works_for_tag(tag, plugin, state, progress)
-        }
-    }
 }
 
 fn refresh_tags(
@@ -249,6 +281,16 @@ host_fn!(progress_clear(state: PluginState;) {
     Ok(())
 });
 
+host_fn!(progress_message(state: PluginState; msg: String) {
+    state.get()?.lock().unwrap().progress.message(msg);
+    Ok(())
+});
+
+host_fn!(progress_trace(state: PluginState; msg: String) {
+    state.get()?.lock().unwrap().progress.trace(msg);
+    Ok(())
+});
+
 fn fetch_text_inner(state: &mut PluginState, url: &str, progress: bool) -> Result<String> {
     if progress {
         state.progress.set_spinner();
@@ -303,7 +345,16 @@ fn fetch_text_inner(state: &mut PluginState, url: &str, progress: bool) -> Resul
         state.progress.clear();
         out
     } else {
-        let mut response = state.agent.get(url).call()?;
+        let mut response = match state.agent.get(url).call() {
+            Ok(response) => response,
+            Err(e) => {
+                state
+                    .progress
+                    .message(format!("Request failed for {url}: {e}"));
+                error!("Request failed for {url}: {e}");
+                return Err(e.into());
+            }
+        };
         let mut tmp_fp = fs::File::create(&tmp_path)?;
         let mut buffer = Vec::new();
         let mut tee = TeeWriter::new(&mut tmp_fp, &mut buffer);
@@ -333,10 +384,11 @@ host_fn!(fetch_large_text(state: PluginState; url: &str) -> Json<HttpTextResult>
 });
 
 fn ensure_work_data_is_cached(state: &UserData<PluginState>, work: &Work) -> Result<()> {
-    ensure_data_url(state, work.preview_url())?;
-    ensure_data_url(state, work.screen_url())?;
+    // Note: ignore download failures and let the user re-try, if needed.
+    ensure_data_url(state, work.preview_url()).ok();
+    ensure_data_url(state, work.screen_url()).ok();
     if let Some(archive_url) = work.archive_url() {
-        ensure_data_url(state, archive_url)?;
+        ensure_data_url(state, archive_url).ok();
     }
     Ok(())
 }
@@ -358,7 +410,7 @@ fn make_temp_path(tmp_dir: &Path) -> PathBuf {
 }
 
 fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<()> {
-    // Take our lock early an extract Arcs and sub-mutexes.
+    // Take our lock early to extract data and sub-Arc-mutexes for progress, throttle, etc.
     let (data_dir, tmp_dir, agent, mut progress, throttle) = {
         let state_ref = state.get()?;
         let state = state_ref.lock().unwrap();
@@ -379,12 +431,25 @@ fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<()> {
 
     let tmp_path = make_temp_path(&tmp_dir);
     {
+        // Drop to close the file before the renaming it, just for sanity.
         let tmp_fp = fs::File::create(&tmp_path)?;
         throttle.throttle();
         progress.trace(format!("ensure_data_url({url})"));
-        let mut response = agent.get(url).call()?;
+        let mut resp = agent.get(url).call()?;
+        if !resp.status().is_success() {
+            let body = resp.body_mut().read_to_string()?;
+            progress.message(format!(
+                "Response Error {} for {url}\n{body}",
+                resp.status()
+            ));
+            error!("Response Error {} for {url}\n{body}", resp.status());
+            return Err(BevyError::from(format!(
+                "Response Error {} for {url}\n{body}",
+                resp.status()
+            )));
+        }
         io::copy(
-            &mut response.body_mut().as_reader(),
+            &mut resp.body_mut().as_reader(),
             &mut io::BufWriter::new(tmp_fp),
         )?;
     }

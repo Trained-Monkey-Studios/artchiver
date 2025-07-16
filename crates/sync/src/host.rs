@@ -2,7 +2,7 @@ use crate::{
     caching_pool::CachingPool,
     environment::Environment,
     model::{MetadataPool, MetadataPoolResource},
-    plugin::load_plugin,
+    plugin::create_plugin_task,
     progress::Progress,
     shared::{PluginRequest, PluginResponse},
 };
@@ -49,7 +49,7 @@ pub(crate) fn startup_plugins(
         let (tx_to_runner, rx_from_plugin) = channel::unbounded();
 
         let plugin_task =
-            load_plugin(&source, &env, metadata.pool(), rx_from_runner, tx_to_runner)?;
+            create_plugin_task(&source, &env, metadata.pool(), rx_from_runner, tx_to_runner)?;
         engine.plugins.push(PluginHandle::new(
             source,
             plugin_task,
@@ -88,6 +88,10 @@ impl PluginHost {
 
     pub fn plugins(&self) -> impl Iterator<Item = &PluginHandle> {
         self.plugins.iter()
+    }
+
+    pub fn plugins_mut(&mut self) -> impl Iterator<Item = &mut PluginHandle> {
+        self.plugins.iter_mut()
     }
 
     pub fn refresh_tags(&self) -> Result {
@@ -159,6 +163,10 @@ impl PluginHandle {
         self.metadata.as_ref()
     }
 
+    pub fn metadata_mut(&mut self) -> Option<&mut PluginMetadata> {
+        self.metadata.as_mut()
+    }
+
     pub fn name(&self) -> String {
         if let Some(metadata) = self.metadata.as_ref() {
             metadata.name().to_owned()
@@ -193,6 +201,17 @@ impl PluginHandle {
 
     pub fn progress(&self) -> &Progress {
         &self.progress
+    }
+
+    pub fn apply_configuration(&self) -> Result {
+        self.tx_to_plugin.send(PluginRequest::ApplyConfiguration {
+            config: self
+                .metadata
+                .as_ref()
+                .map(|v| v.configurations().to_vec())
+                .unwrap_or_default(),
+        })?;
+        Ok(())
     }
 }
 

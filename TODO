@@ -1,10 +1,13 @@
 o Recover from random errors in the plugin and at least don't kill the loop
 o Check if a image file is actually present before trying to render it so we don't cache the ENOENT
 o Show loading images where we have a download in progress
-* Compute area needed to cover so we can request the correct range; support range requests
 o Pre-load the screen images for all fetched (and over-fetched) works so they are ready to show
 o Put an LRU cache in place in front of egui's image cache so we can keep memory under control
 o Add support for rate limiting
-* Fetch images in parallel
-* Show number of works next to each tag
+o Fetch images in parallel
+o Show number of works next to each tag
+o Print response errors better; ~Re-create the Agent if we ever crash out to the top-level~ Fix Met rate limits
+* Insert work-tag links for all tags a work has, not just the one we're querying on
+* Compute area needed to cover so we can request the correct range; support range requests
+* Cache works lookups
 * Support negative tags

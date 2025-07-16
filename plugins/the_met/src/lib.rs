@@ -70,7 +70,7 @@ pub fn startup() -> FnResult<Json<PluginMetadata>> {
             "0.0.1",
             "A plugin for Artchiver to provide The Metropolitan Gallery of the Arts open data.",
         )
-        .with_rate_limit(80),
+        .with_rate_limit(1, 2.0),
     ))
 }
 
@@ -221,13 +221,14 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
 
     // Query the Object API for each id we found above to get the data we need
     let mut matching_works = Vec::new();
-    for obj_id in search.objectIDs {
+    for (i, obj_id) in search.objectIDs.iter().enumerate() {
+        Progress::percent(i.try_into()?, search.objectIDs.len().try_into()?)?;
         let Ok(object_info) = Web::fetch_text(format!(
             "https://collectionapi.metmuseum.org/public/collection/v1/objects/{obj_id}"
         )) else {
+            Progress::trace(format!("Failed to fetch object info for {obj_id}"))?;
             continue;
         };
-        // warn!("{object_info}");
         let object = serde_json::from_str::<ObjectInfo>(&object_info)?;
         if !object.primaryImage.is_empty() {
             matching_works.push(Work::new(
@@ -240,5 +241,6 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
             ));
         }
     }
+    Progress::clear()?;
     Ok(matching_works.into())
 }

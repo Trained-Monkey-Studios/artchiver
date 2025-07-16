@@ -64,7 +64,7 @@ impl<'a> SyncViewer<'a> {
 
     fn show_galleries(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
-            for plugin in self.sync.plugins() {
+            for plugin in self.sync.plugins_mut() {
                 ui.horizontal(|ui| {
                     ui.heading(plugin.name());
                     match plugin.progress() {
@@ -97,6 +97,20 @@ impl<'a> SyncViewer<'a> {
                                         ui.label("Version");
                                         ui.label(plugin.version());
                                         ui.end_row();
+                                        if let Some(meta) = plugin.metadata_mut() {
+                                            for (config_key, config_val) in
+                                                meta.configurations_mut()
+                                            {
+                                                ui.label(config_key);
+                                                ui.text_edit_singleline(config_val);
+                                                ui.end_row();
+                                            }
+                                            if !meta.configurations().is_empty()
+                                                && ui.button("Update").clicked()
+                                            {
+                                                plugin.apply_configuration().unwrap();
+                                            }
+                                        }
                                     });
                             });
                         egui::CollapsingHeader::new("Messages")

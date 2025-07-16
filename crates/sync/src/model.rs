@@ -5,23 +5,29 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 use std::{collections::HashSet, ops::Range};
 
-const MIGRATIONS: [&str; 8] = [
+const MIGRATIONS: [&str; 9] = [
     // Migrations
     r#"CREATE TABLE migrations (
         id INTEGER PRIMARY KEY,
         ordinal INTEGER NOT NULL UNIQUE
     );"#,
+    r#"CREATE TABLE plugin_configurations (
+        id INTEGER PRIMARY KEY,
+        plugin_id INTEGER NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        FOREIGN KEY(plugin_id) REFERENCES plugins(id),
+        UNIQUE (plugin_id, key)
+    );"#,
     // Plugins: Data sources; by name so that versions can change and the wasm file can move.
     r#"CREATE TABLE plugins (
         id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        UNIQUE(name)
+        name TEXT NOT NULL UNIQUE
     );"#,
     // Tags: Attributes of a work, such as the author, subject-matter, etc.
     r#"CREATE TABLE tags (
         id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        UNIQUE(name)
+        name TEXT NOT NULL UNIQUE
     );"#,
     r#"CREATE UNIQUE INDEX tag_name_idx ON tags(name);"#,
     // Works: A work of art
@@ -31,10 +37,9 @@ const MIGRATIONS: [&str; 8] = [
         artist_id INTEGER NOT NULL,
         date TIMESTAMP,
         preview_url TEXT NOT NULL,
-        screen_url TEXT NOT NULL,
-        archive_url TEXT,
-        -- FOREIGN KEY(artist_id) REFERENCES artists(id)
-        UNIQUE(screen_url)
+        screen_url TEXT NOT NULL UNIQUE,
+        archive_url TEXT
+        -- TODO: FOREIGN KEY(artist_id) REFERENCES artists(id)
     );"#,
     // Artists: The creator of a work of art
     r#"CREATE TABLE artists (
@@ -54,7 +59,7 @@ const MIGRATIONS: [&str; 8] = [
         work_id INTEGER NOT NULL,
         FOREIGN KEY(tag_id) REFERENCES tags(id),
         FOREIGN KEY(work_id) REFERENCES works(id),
-        UNIQUE(tag_id, work_id)
+        UNIQUE (tag_id, work_id)
     );"#,
     // Plugin<->Tag: tag each tag with the plugin it came from, so we know
     //               what plugins to query for data about each tag.
@@ -64,7 +69,7 @@ const MIGRATIONS: [&str; 8] = [
         tag_id INTEGER NOT NULL,
         FOREIGN KEY(plugin_id) REFERENCES plugins(id),
         FOREIGN KEY(tag_id) REFERENCES tags(id),
-        UNIQUE(plugin_id, tag_id)
+        UNIQUE (plugin_id, tag_id)
     );"#,
 ];
 
@@ -151,6 +156,31 @@ impl MetadataPool {
         Self { pool }
     }
 
+    pub fn load_configurations(&self, plugin_id: i64) -> Result<Vec<(String, String)>> {
+        let conn = self.pool.get()?;
+        Ok(conn
+            .prepare("SELECT key, value FROM plugin_configurations WHERE plugin_id = ?")?
+            .query_map(params![plugin_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .flatten()
+            .collect())
+    }
+
+    pub fn save_configurations(&self, plugin_id: i64, configs: &[(String, String)]) -> Result {
+        let conn = self.pool.get()?;
+        conn.execute("BEGIN TRANSACTION", ())?;
+        for (k, v) in configs {
+            conn.execute(
+                r#"INSERT INTO plugin_configurations (plugin_id, key, value)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT (plugin_id, key)
+                        DO UPDATE SET value=?"#,
+                params![plugin_id, k, v, v],
+            )?;
+        }
+        conn.execute("COMMIT TRANSACTION", ())?;
+        Ok(())
+    }
+
     pub fn upsert_plugin(&self, plugin_name: &str) -> Result<i64> {
         let conn = self.pool.get()?;
         let row_cnt = conn.execute(
@@ -219,7 +249,7 @@ impl MetadataPool {
         let tag_id: i64 = conn.query_one("SELECT id FROM tags WHERE name = ?", [tag], |row| {
             row.get(0)
         })?;
-        let mut insert_work_stmt = conn.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?)")?;
+        let mut insert_work_stmt = conn.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")?;
         let mut insert_work_tag_stmt =
             conn.prepare("INSERT OR IGNORE INTO work_tags (tag_id, work_id) VALUES (?, ?)")?;
         let mut select_work_id_stmt = conn.prepare("SELECT id FROM works WHERE name = ?")?;
@@ -232,25 +262,41 @@ impl MetadataPool {
             progress.trace(format!("db->upsert_works chunk of {}", chunk.len()));
             conn.execute("BEGIN TRANSACTION", ())?;
             for work in chunk {
-                let row_cnt = insert_work_stmt.execute(params![
-                    work.name(),
-                    work.artist_id(),
-                    work.date(),
-                    work.preview_url(),
-                    work.screen_url(),
-                    work.archive_url()
-                ])?;
-                let work_id = if row_cnt > 0 {
-                    conn.last_insert_rowid()
+                let work_id = if let Ok(work_id) = insert_work_stmt.query_one(
+                    params![
+                        work.name(),
+                        work.artist_id(),
+                        work.date(),
+                        work.preview_url(),
+                        work.screen_url(),
+                        work.archive_url()
+                    ],
+                    |row| row.get::<usize, i64>(0),
+                ) {
+                    work_id
                 } else {
-                    select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))?
+                    progress.trace(format!(
+                        "db->upsert_works work {} already exists",
+                        work.name()
+                    ));
+                    if let Ok(work_id) =
+                        select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))
+                    {
+                        work_id
+                    } else {
+                        progress.message(format!(
+                            "Detected duplicate URL in work {}, skipping",
+                            work.name()
+                        ));
+                        continue;
+                    }
                 };
+                insert_work_tag_stmt.execute(params![tag_id, work_id])?;
                 trace!(
                     "Inserted work {work_id}, name:\"{}\", tag_id:{}",
                     work.name(),
                     tag_id
                 );
-                insert_work_tag_stmt.execute(params![tag_id, work_id])?;
             }
             conn.execute("COMMIT TRANSACTION", ())?;
 

@@ -1,5 +1,6 @@
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[macro_export]
 macro_rules! import_section {
@@ -9,6 +10,8 @@ macro_rules! import_section {
             fn progress_spinner();
             fn progress_percent(current: i32, total: i32);
             fn progress_clear();
+            fn progress_message(message: &str);
+            fn progress_trace(message: &str);
             fn fetch_text(url: &str) -> Json<HttpTextResult>;
             fn fetch_large_text(url: &str) -> Json<HttpTextResult>;
         }
@@ -23,6 +26,12 @@ macro_rules! import_section {
             }
             pub fn clear() -> extism_pdk::FnResult<()> {
                 Ok(unsafe { progress_clear() }?)
+            }
+            pub fn message<S: AsRef<str>>(msg: S) -> extism_pdk::FnResult<()> {
+                Ok(unsafe { progress_message(msg.as_ref()) }?)
+            }
+            pub fn trace<S: AsRef<str>>(msg: S) -> extism_pdk::FnResult<()> {
+                Ok(unsafe { progress_trace(msg.as_ref()) }?)
             }
         }
 
@@ -62,7 +71,9 @@ pub struct PluginMetadata {
     name: String,
     version: String,
     description: String,
-    rate_limit: u32, // requests per second
+    rate_limit_n: u32,   // requests per window
+    rate_window_ms: u32, // window time in milliseconds
+    configurations: Vec<(String, String)>,
 }
 
 impl PluginMetadata {
@@ -71,13 +82,29 @@ impl PluginMetadata {
             name: name.to_string(),
             version: version.to_string(),
             description: description.to_string(),
-            rate_limit: 1,
+            rate_limit_n: 1,
+            rate_window_ms: 1,
+            configurations: Vec::new(),
         }
     }
 
-    pub fn with_rate_limit(mut self, rate_limit: u32) -> Self {
-        self.rate_limit = rate_limit;
+    pub fn with_rate_limit(mut self, rate_limit_n: u32, window_sec: f32) -> Self {
+        self.rate_limit_n = rate_limit_n;
+        self.rate_window_ms = (window_sec * 1000.) as u32;
         self
+    }
+
+    pub fn with_configuration(mut self, name: &str) -> Self {
+        self.configurations.push((name.to_string(), String::new()));
+        self
+    }
+
+    pub fn set_config_value(&mut self, key: &str, value: &str) {
+        for (k, v) in self.configurations_mut() {
+            if key == k {
+                *v = value.to_string();
+            }
+        }
     }
 
     pub fn name(&self) -> &str {
@@ -93,7 +120,19 @@ impl PluginMetadata {
     }
 
     pub fn rate_limit(&self) -> usize {
-        self.rate_limit as usize
+        self.rate_limit_n as usize
+    }
+
+    pub fn rate_window(&self) -> Duration {
+        Duration::from_millis(self.rate_window_ms.into())
+    }
+
+    pub fn configurations(&self) -> &[(String, String)] {
+        &self.configurations
+    }
+
+    pub fn configurations_mut(&mut self) -> impl Iterator<Item = (&str, &mut String)> {
+        self.configurations.iter_mut().map(|(k, v)| (k.as_str(), v))
     }
 }
 

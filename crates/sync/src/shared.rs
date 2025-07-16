@@ -7,6 +7,7 @@ use std::{collections::HashSet, fmt, rc::Rc};
 #[derive(Clone, Debug)]
 pub(crate) enum PluginRequest {
     Shutdown,
+    ApplyConfiguration { config: Vec<(String, String)> },
     RefreshTags,
     RefreshWorksForTag { tag: String },
 }
