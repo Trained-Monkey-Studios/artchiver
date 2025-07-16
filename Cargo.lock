@@ -5620,6 +5620,7 @@ dependencies = [
  "r2d2",
  "r2d2_sqlite",
  "rand 0.9.1",
+ "rayon",
  "rusqlite",
  "sha2",
  "ureq",

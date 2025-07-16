@@ -1,4 +1,5 @@
 use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -8,9 +9,9 @@ struct CallingThrottleData {
     timestamps: Vec<Instant>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CallingThrottle {
-    lock: Mutex<CallingThrottleData>,
+    lock: Arc<Mutex<CallingThrottleData>>,
 }
 
 impl Default for CallingThrottle {
@@ -22,11 +23,11 @@ impl Default for CallingThrottle {
 impl CallingThrottle {
     pub fn new(nb_call_times_limit: usize, expired_time: Duration) -> Self {
         Self {
-            lock: Mutex::new(CallingThrottleData {
+            lock: Arc::new(Mutex::new(CallingThrottleData {
                 nb_call_times_limit,
                 expired_time,
                 timestamps: Vec::new(),
-            }),
+            })),
         }
     }
 

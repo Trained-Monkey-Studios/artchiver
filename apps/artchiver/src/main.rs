@@ -1,8 +1,9 @@
+use bevy::log::{Level, LogPlugin};
 use bevy::{
     diagnostic::FrameTimeDiagnosticsPlugin,
     ecs::schedule::{LogLevel, ScheduleBuildSettings},
     prelude::*,
-    window::{Window, WindowMode, WindowResolution},
+    window::{Window, WindowMode},
 };
 use bevy_egui::{EguiContexts, EguiPlugin};
 use clap::Parser;
@@ -84,16 +85,14 @@ fn main() -> Result<()> {
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
                     mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-                    resolution: WindowResolution::new(1920., 1080.),
                     ..default()
                 }),
                 ..default()
+            }).set(LogPlugin {
+                level: Level::TRACE,
+                filter: "ureq=info,extism=info,egui_extras=info,rustls=warn,cranelift=warn,wasmtime=warn,bevy_render=warn,wgpu=warn,bevy_app=warn,calloop=warn,polling=warn,naga=warn".into(),
+                ..default()
             }),
-            // .set(AssetPlugin {
-            //     file_path: "assets/art".into(),
-            //     processed_file_path: "pkg/art".into(),
-            //     ..default()
-            // }),
             FrameTimeDiagnosticsPlugin::default(),
             bevy_framepace::FramepacePlugin, // reduces input lag
             EguiPlugin::default(),

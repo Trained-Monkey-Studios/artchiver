@@ -1,5 +1,5 @@
 use crate::{Environment, progress::ProgressSender, shared::TagSet};
-use artchiver_sdk::Work;
+use artchiver_sdk::{TagInfo, Work};
 use bevy::prelude::*;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
@@ -232,7 +232,6 @@ impl MetadataPool {
             progress.trace(format!("db->upsert_works chunk of {}", chunk.len()));
             conn.execute("BEGIN TRANSACTION", ())?;
             for work in chunk {
-                trace!("Inserting work: {}", work.name());
                 let row_cnt = insert_work_stmt.execute(params![
                     work.name(),
                     work.artist_id(),
@@ -246,7 +245,11 @@ impl MetadataPool {
                 } else {
                     select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))?
                 };
-                trace!("Adding work {} to tag {}", work.name(), tag_id);
+                trace!(
+                    "Inserted work {work_id}, name:\"{}\", tag_id:{}",
+                    work.name(),
+                    tag_id
+                );
                 insert_work_tag_stmt.execute(params![tag_id, work_id])?;
             }
             conn.execute("COMMIT TRANSACTION", ())?;
@@ -269,14 +272,17 @@ impl MetadataPool {
         Ok(cnt)
     }
 
-    pub fn tags_list(&self, range: Range<usize>, filter: &str) -> Result<Vec<String>> {
+    pub fn tags_list(&self, range: Range<usize>, filter: &str) -> Result<Vec<TagInfo>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT name FROM tags WHERE name LIKE ? ORDER BY name ASC LIMIT ? OFFSET ?",
+            r#"SELECT tags.name, COUNT(work_tags.id) FROM tags
+            LEFT JOIN work_tags ON tags.id == work_tags.tag_id WHERE tags.name LIKE ?
+            GROUP BY tags.name ORDER BY tags.name ASC LIMIT ? OFFSET ?"#,
         )?;
+        // SELECT tags.name, COUNT(work_tags.id) FROM tags LEFT JOIN work_tags ON tags.id == work_tags.tag_id WHERE tags.name LIKE 'A%' GROUP BY tags.name ORDER BY tags.name DESC LIMIT 20 OFFSET 20;
         let rows = stmt.query_map(
             params![format!("%{filter}%"), range.end - range.start, range.start],
-            |row| row.get(0),
+            |row| Ok(TagInfo::new(row.get::<usize, String>(0)?, row.get(1)?)),
         )?;
         Ok(rows.flatten().collect())
     }

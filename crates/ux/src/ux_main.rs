@@ -1,6 +1,9 @@
 use artchiver_sdk::Work;
 use bevy::prelude::*;
-use bevy_egui::{egui::{SizeHint, self, TextWrapMode}, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
+use bevy_egui::{
+    EguiContexts, EguiPlugin, EguiPrimaryContextPass,
+    egui::{self, SizeHint, TextWrapMode},
+};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use lru::LruCache;
 use std::path::Path;
@@ -149,38 +152,39 @@ impl<'a> SyncViewer<'a> {
                         .unwrap();
 
                     egui::Grid::new("tag_grid")
-                        .num_columns(2)
+                        .num_columns(1)
                         .spacing([0., 0.])
                         .min_col_width(0.)
                         .show(ui, |ui| {
                             for tag in tags {
-                                let status = self.state.tag_selection.status(&tag);
+                                let status = self.state.tag_selection.status(tag.name());
                                 if ui
                                     .add(egui::Button::new("✔").small().selected(status.enabled()))
                                     .clicked()
                                 {
-                                    self.state.tag_selection.enable(&tag);
+                                    self.state.tag_selection.enable(tag.name());
                                 }
                                 if ui.add(egui::Button::new(" ").small()).clicked() {
-                                    self.state.tag_selection.unselect(&tag);
+                                    self.state.tag_selection.unselect(tag.name());
                                 }
                                 if ui
                                     .add(egui::Button::new("x").small().selected(status.disabled()))
                                     .clicked()
                                 {
-                                    self.state.tag_selection.disable(&tag);
+                                    self.state.tag_selection.disable(tag.name());
                                 }
                                 ui.label("   ");
                                 if ui.button("⟳").clicked() {
-                                    self.sync.refresh_works_for_tag(&tag).ok();
+                                    self.sync.refresh_works_for_tag(tag.name()).ok();
                                 }
                                 ui.label("   ");
+                                let content = format!("{} ({})", tag.name(), tag.work_count());
                                 if status.disabled() {
-                                    ui.label(egui::RichText::new(tag).strikethrough());
+                                    ui.label(egui::RichText::new(content).strikethrough());
                                 } else if status.enabled() {
-                                    ui.label(egui::RichText::new(tag).strong());
+                                    ui.label(egui::RichText::new(content).strong());
                                 } else {
-                                    ui.label(tag);
+                                    ui.label(content);
                                 }
                                 ui.end_row();
                             }

@@ -1,5 +1,5 @@
 use crate::{model::MetadataPool, shared::TagSet};
-use artchiver_sdk::Work;
+use artchiver_sdk::{TagInfo, Work};
 use bevy::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
@@ -18,7 +18,7 @@ struct TagCache {
     db_gen: u64,
     filter: String,
     range: Range<usize>,
-    tags: Vec<String>,
+    tags: Vec<TagInfo>,
 }
 
 #[derive(Debug)]
@@ -67,7 +67,7 @@ impl CachingPool {
         Ok(count)
     }
 
-    pub fn tags_list(&mut self, range: Range<usize>, filter: &str) -> Result<Vec<String>> {
+    pub fn tags_list(&mut self, range: Range<usize>, filter: &str) -> Result<Vec<TagInfo>> {
         if let Some(cache) = self.tag_cache.as_ref()
             && cache.db_gen == self.database_generation
             && cache.filter == filter

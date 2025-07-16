@@ -208,21 +208,29 @@ fn refresh_works_for_tag(
         .0;
 
     // Save the works we found.
-    let state_ref = state.get()?;
-    let mut state = state_ref.lock().unwrap();
-    state.pool.upsert_works(&tag, &works, progress)?;
+    {
+        let state_ref = state.get()?;
+        let mut state = state_ref.lock().unwrap();
+        state.pool.upsert_works(&tag, &works, progress)?;
+    }
 
     // Fetch preview images eagerly.
     progress.message(format!("Downloading {} works to disk...", works.len()));
-    for (i, work) in works.iter().enumerate() {
-        progress.set_percent(i, works.len());
-        if let Err(e) = ensure_work_data_is_cached(&state, work, progress) {
-            progress.message(format!("Error downloading work {}: {e}", work.name()));
-            error!("Error downloading work {}: {e}", work.name());
+    let works_len = works.len();
+    let mut works = works;
+    rayon::scope(|s| {
+        for (i, work) in works.drain(..).enumerate() {
+            let mut progress = progress.clone();
+            s.spawn(move |_| {
+                progress.set_percent(i, works_len);
+                if let Err(e) = ensure_work_data_is_cached(state, &work) {
+                    progress.message(format!("Error downloading work {}: {e}", work.name()));
+                    error!("Error downloading work {}: {e}", work.name());
+                }
+            });
         }
-    }
+    });
     progress.clear();
-
     Ok(())
 }
 
@@ -324,15 +332,11 @@ host_fn!(fetch_large_text(state: PluginState; url: &str) -> Json<HttpTextResult>
     }))
 });
 
-fn ensure_work_data_is_cached(
-    state: &PluginState,
-    work: &Work,
-    progress: &mut ProgressSender,
-) -> Result<()> {
-    ensure_data_url(state, work.preview_url(), progress)?;
-    ensure_data_url(state, work.screen_url(), progress)?;
+fn ensure_work_data_is_cached(state: &UserData<PluginState>, work: &Work) -> Result<()> {
+    ensure_data_url(state, work.preview_url())?;
+    ensure_data_url(state, work.screen_url())?;
     if let Some(archive_url) = work.archive_url() {
-        ensure_data_url(state, archive_url, progress)?;
+        ensure_data_url(state, archive_url)?;
     }
     Ok(())
 }
@@ -347,34 +351,43 @@ pub fn get_data_path_for_url(data_dir: &Path, url: &str) -> Result<PathBuf> {
 fn make_temp_path(tmp_dir: &Path) -> PathBuf {
     let tmp_name: String = rand::rng()
         .sample_iter(&Alphanumeric)
-        .take(7)
+        .take(20)
         .map(char::from)
         .collect();
     tmp_dir.join(tmp_name)
 }
 
-fn ensure_data_url(
-    state: &PluginState,
-    url: &str,
-    progress: &mut ProgressSender,
-) -> Result<PathBuf> {
-    let data_path = get_data_path_for_url(&state.data_dir, url)?;
+fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<()> {
+    // Take our lock early an extract Arcs and sub-mutexes.
+    let (data_dir, tmp_dir, agent, mut progress, throttle) = {
+        let state_ref = state.get()?;
+        let state = state_ref.lock().unwrap();
+        (
+            state.data_dir.clone(),
+            state.tmp_dir.clone(),
+            state.agent.clone(),
+            state.progress.clone(),
+            state.throttle.clone(),
+        )
+    };
+
+    let data_path = get_data_path_for_url(&data_dir, url)?;
     if data_path.exists() {
         progress.trace(format!("cached: ensure_data_url({url})"));
-        return Ok(data_path);
+        return Ok(());
     }
 
-    let tmp_path = make_temp_path(&state.tmp_dir);
+    let tmp_path = make_temp_path(&tmp_dir);
     {
         let tmp_fp = fs::File::create(&tmp_path)?;
-        state.throttle.throttle();
+        throttle.throttle();
         progress.trace(format!("ensure_data_url({url})"));
-        let mut response = state.agent.get(url).call()?;
+        let mut response = agent.get(url).call()?;
         io::copy(
             &mut response.body_mut().as_reader(),
             &mut io::BufWriter::new(tmp_fp),
         )?;
     }
     fs::rename(&tmp_path, &data_path)?;
-    Ok(data_path)
+    Ok(())
 }

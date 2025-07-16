@@ -104,6 +104,29 @@ pub enum HttpTextResult {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TagInfo {
+    name: String,
+    work_count: u64,
+}
+
+impl TagInfo {
+    pub fn new<S: ToString>(name: S, work_count: u64) -> Self {
+        Self {
+            name: name.to_string(),
+            work_count,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn work_count(&self) -> u64 {
+        self.work_count
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Work {
     name: String,
     artist_id: i64,
