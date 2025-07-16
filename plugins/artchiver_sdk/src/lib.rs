@@ -204,6 +204,11 @@ impl Work {
         self
     }
 
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
+        self
+    }
+
     pub fn id(&self) -> i64 {
         self.id
     }

@@ -380,4 +380,30 @@ impl MetadataPool {
             .collect();
         Ok(works)
     }
+
+    pub fn lookup_work(&self, work_id: i64) -> Result<Work> {
+        let conn = self.pool.get()?;
+
+        let work = conn.query_one(
+            r#"SELECT id, name, artist_id, date, preview_url, screen_url, archive_url
+                              FROM works WHERE id = ?"#,
+            [work_id],
+            |row| {
+                Ok(Work::new(
+                    row.get::<usize, String>(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    None,
+                    vec![],
+                )
+                .with_id(row.get(0)?))
+            },
+        )?;
+        let tags = conn.prepare(
+            r#"SELECT tags.name FROM tags LEFT JOIN work_tags ON work_tags.tag_id = tags.id WHERE work_tags.work_id = ?"#)?
+            .query_map([work_id], |row| row.get(0))?.flatten().collect();
+        Ok(work.with_tags(tags))
+    }
 }

@@ -9,7 +9,8 @@ o Show number of works next to each tag
 o Print response errors better; ~Re-create the Agent if we ever crash out to the top-level~ Fix Met rate limits
 o Insert work-tag links for all tags a work has, not just the one we're querying on
 o Make positive tags an ^ rather than a v.
-* Allow selecting an image and show its metadata
+o Allow selecting an image and show its metadata
+o Limit number of images we try to upload each frame to avoid freezing the UI
 * Compute area needed to cover so we can request the correct range; support range requests
 * Cache works lookups
 * Support negative tags

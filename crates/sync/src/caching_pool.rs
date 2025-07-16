@@ -102,7 +102,17 @@ impl CachingPool {
         Ok(plugins)
     }
 
+    pub fn count_matching_works(&mut self, tags: &TagSet) -> Result<usize> {
+        todo!()
+    }
+
     pub fn works_list(&mut self, tags: &TagSet) -> Result<Vec<Work>> {
+        // TODO: cache results
         self.pool.works_list(0..100, tags)
+    }
+
+    pub fn lookup_work(&mut self, work_id: i64) -> Result<Work> {
+        // TODO: cache results
+        self.pool.lookup_work(work_id)
     }
 }

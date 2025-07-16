@@ -2,7 +2,7 @@ use artchiver_sdk::Work;
 use bevy::prelude::*;
 use bevy_egui::{
     EguiContexts, EguiPlugin, EguiPrimaryContextPass,
-    egui::{self, SizeHint, TextWrapMode},
+    egui::{self, Sense, SizeHint, TextWrapMode},
 };
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use lru::LruCache;
@@ -227,29 +227,64 @@ impl<'a> SyncViewer<'a> {
                         .show_loading_spinner(true)
                         .maintain_aspect_ratio(true)
                         .fit_to_exact_size(egui::Vec2::new(256., 256.));
-                    if ui.add(img).on_hover_text(work.name()).clicked() {
-                        println!("work: {}", work.name());
+                    let btn = egui::ImageButton::new(img)
+                        .frame(false)
+                        .selected(false)
+                        .sense(Sense::click());
+                    if ui.add(btn).clicked() {
+                        self.state.selected_work = Some(work.id());
                     }
                 } else {
                     ui.add(egui::Spinner::new().size(256.));
                 }
             }
-            self.flush_works_lru();
+            self.flush_works_lru(ui.ctx());
         });
     }
 
+    fn show_info(&mut self, ui: &mut egui::Ui) {
+        if let Some(work_id) = self.state.selected_work
+            && let Ok(work) = self.sync.pool_mut().lookup_work(work_id)
+        {
+            egui::Grid::new("work_info_grid").show(ui, |ui| {
+                ui.label("Name");
+                ui.label(work.name());
+                ui.end_row();
+            });
+            ui.label(" ");
+            ui.heading("Tags");
+            ui.separator();
+            for tag in work.tags() {
+                if ui.button(tag).clicked() {
+                    self.state.tag_selection.enable(tag);
+                }
+            }
+        }
+    }
+
     fn ensure_work_cached(&mut self, work: &Work, ctx: &egui::Context) -> Option<String> {
+        // Limit number of times we call try_load_image per frame to prevent pauses
+        if self.state.per_frame_work_upload_count > UxState::MAX_PER_FRAME_UPLOADS {
+            return None;
+        }
+
         let screen_path = get_data_path_for_url(self.data_dir, work.screen_url()).unwrap();
-        let screen_uri = format!("file://{}", screen_path.display());
         if screen_path.exists() {
-            let _ = ctx.try_load_image(&screen_uri, SizeHint::Size(256, 256));
-            self.state.works_lru.get_or_insert(screen_uri.clone(), || 0);
+            let screen_uri = format!("file://{}", screen_path.display());
+            if !self.state.works_lru.contains(&screen_uri) {
+                let _ = ctx.try_load_image(&screen_uri, SizeHint::Size(256, 256));
+                self.state.per_frame_work_upload_count += 1;
+            }
+            self.state.works_lru.get_or_insert(screen_uri, || 0);
         }
 
         let preview_path = get_data_path_for_url(self.data_dir, work.preview_url()).unwrap();
-        let preview_uri = format!("file://{}", preview_path.display());
         if preview_path.exists() {
-            let _ = ctx.try_load_image(&preview_uri, SizeHint::Size(256, 256));
+            let preview_uri = format!("file://{}", preview_path.display());
+            if !self.state.works_lru.contains(&preview_uri) {
+                let _ = ctx.try_load_image(&preview_uri, SizeHint::Size(256, 256));
+                self.state.per_frame_work_upload_count += 1;
+            }
             self.state
                 .works_lru
                 .get_or_insert(preview_uri.clone(), || 0);
@@ -259,9 +294,12 @@ impl<'a> SyncViewer<'a> {
         }
     }
 
-    fn flush_works_lru(&mut self) {
+    fn flush_works_lru(&mut self, ctx: &egui::Context) {
+        self.state.per_frame_work_upload_count = 0;
         while self.state.works_lru.len() > UxState::LRU_CACHE_SIZE {
-            let _ = self.state.works_lru.pop_lru();
+            if let Some((uri, _)) = self.state.works_lru.pop_lru() {
+                ctx.forget_image(&uri);
+            }
         }
     }
 }
@@ -278,6 +316,7 @@ impl TabViewer for SyncViewer<'_> {
             "Galleries" => self.show_galleries(ui),
             "Tags" => self.show_tags(ui),
             "Works" => self.show_works(ui),
+            "Work Info" => self.show_info(ui),
             _ => {}
         }
     }
@@ -290,10 +329,13 @@ pub struct UxState {
     tag_selection: TagSet,
     work_filter: String,
     works_lru: LruCache<String, u32>,
+    per_frame_work_upload_count: usize,
+    selected_work: Option<i64>,
 }
 
 impl UxState {
     const LRU_CACHE_SIZE: usize = 1_000;
+    const MAX_PER_FRAME_UPLOADS: usize = 3;
 
     pub fn new() -> Self {
         Self {
@@ -303,6 +345,8 @@ impl UxState {
             tag_selection: TagSet::default(),
             work_filter: String::new(),
             works_lru: LruCache::unbounded(),
+            per_frame_work_upload_count: 0,
+            selected_work: None,
         }
     }
 }
@@ -317,8 +361,10 @@ impl Default for UxToplevel {
     fn default() -> Self {
         let mut dock_state = DockState::new(vec![TabMetadata::new("Works")]);
         let surface = dock_state.main_surface_mut();
-        let [_works_node, galleries_node] =
+        let [right_node, galleries_node] =
             surface.split_left(NodeIndex::root(), 0.2, vec![TabMetadata::new("Galleries")]);
+        let [_works_node, _info_node] =
+            surface.split_right(right_node, 0.8, vec![TabMetadata::new("Work Info")]);
         surface.split_below(
             galleries_node,
             0.2,
