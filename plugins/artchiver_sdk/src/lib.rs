@@ -167,12 +167,14 @@ impl TagInfo {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Work {
+    id: i64,
     name: String,
     artist_id: i64,
     date: Date,
     preview_url: String,
     screen_url: String,
     archive_url: Option<String>,
+    tags: Vec<String>,
 }
 
 impl Work {
@@ -183,15 +185,27 @@ impl Work {
         preview_url: S,
         screen_url: S,
         archive_url: Option<S>,
+        tags: Vec<String>,
     ) -> Self {
         Self {
+            id: 0,
             name: name.to_string(),
             artist_id,
             date,
             preview_url: preview_url.to_string(),
             screen_url: screen_url.to_string(),
             archive_url: archive_url.map(|s| s.to_string()),
+            tags,
         }
+    }
+
+    pub fn with_id(mut self, id: i64) -> Self {
+        self.id = id;
+        self
+    }
+
+    pub fn id(&self) -> i64 {
+        self.id
     }
 
     pub fn name(&self) -> &str {
@@ -216,5 +230,9 @@ impl Work {
 
     pub fn archive_url(&self) -> Option<&str> {
         self.archive_url.as_deref()
+    }
+
+    pub fn tags(&self) -> &[String] {
+        &self.tags
     }
 }

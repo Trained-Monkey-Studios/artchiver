@@ -7,7 +7,9 @@ o Add support for rate limiting
 o Fetch images in parallel
 o Show number of works next to each tag
 o Print response errors better; ~Re-create the Agent if we ever crash out to the top-level~ Fix Met rate limits
-* Insert work-tag links for all tags a work has, not just the one we're querying on
+o Insert work-tag links for all tags a work has, not just the one we're querying on
+o Make positive tags an ^ rather than a v.
+* Allow selecting an image and show its metadata
 * Compute area needed to cover so we can request the correct range; support range requests
 * Cache works lookups
 * Support negative tags

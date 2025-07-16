@@ -238,6 +238,7 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
                 object.primaryImageSmall.to_owned(),
                 object.primaryImage.to_owned(),
                 None,
+                object.tags.iter().map(|t| &t.term).cloned().collect(),
             ));
         }
     }

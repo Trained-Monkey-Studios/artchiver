@@ -31,7 +31,6 @@ pkgs.mkShell {
     pkg-config
     rust
     sccache
-    sqlite
     xz
   ]);
 
@@ -48,6 +47,7 @@ pkgs.mkShell {
     libxkbcommon
     openssl
     pango
+    sqlite
     udev
     vulkan-tools
     wayland

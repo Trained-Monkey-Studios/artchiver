@@ -70,10 +70,18 @@ impl TagSet {
         self.disabled.insert(tag.to_owned());
     }
 
+    pub fn enabled(&self) -> impl Iterator<Item = &String> {
+        self.enabled.iter()
+    }
+
     // Build the enabled set into a vector suitable for passing to Rusqlites rarray function
     // e.g. for use with an SQL "IN" clause.
     pub fn enabled_rarray(&self) -> Rc<Vec<Value>> {
         Rc::new(self.enabled.iter().cloned().map(Value::from).collect())
+    }
+
+    pub fn enabled_count(&self) -> usize {
+        self.enabled.len()
     }
 }
 

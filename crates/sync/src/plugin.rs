@@ -243,7 +243,7 @@ fn refresh_works_for_tag(
     {
         let state_ref = state.get()?;
         let mut state = state_ref.lock().unwrap();
-        state.pool.upsert_works(&tag, &works, progress)?;
+        state.pool.upsert_works(&works, progress)?;
     }
 
     // Fetch preview images eagerly.

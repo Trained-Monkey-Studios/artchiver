@@ -2,8 +2,8 @@ use crate::{Environment, progress::ProgressSender, shared::TagSet};
 use artchiver_sdk::{TagInfo, Work};
 use bevy::prelude::*;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
-use std::{collections::HashSet, ops::Range};
+use rusqlite::{params, types::Value};
+use std::{collections::HashSet, ops::Range, rc::Rc};
 
 const MIGRATIONS: [&str; 9] = [
     // Migrations
@@ -145,6 +145,10 @@ impl MetadataPoolResource {
     }
 }
 
+fn string_to_rarray(v: &[String]) -> Rc<Vec<Value>> {
+    Rc::new(v.iter().cloned().map(Value::from).collect())
+}
+
 // Wrap the low level connection details so that we cna provide a high level metadata model.
 #[derive(Clone, Debug)]
 pub struct MetadataPool {
@@ -239,17 +243,11 @@ impl MetadataPool {
         Ok(())
     }
 
-    pub fn upsert_works(
-        &mut self,
-        tag: &str,
-        works: &[Work],
-        progress: &mut ProgressSender,
-    ) -> Result {
+    pub fn upsert_works(&mut self, works: &[Work], progress: &mut ProgressSender) -> Result {
         let conn = self.pool.get()?;
-        let tag_id: i64 = conn.query_one("SELECT id FROM tags WHERE name = ?", [tag], |row| {
-            row.get(0)
-        })?;
         let mut insert_work_stmt = conn.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")?;
+        let mut select_tag_ids_from_names =
+            conn.prepare("SELECT id FROM tags WHERE name IN rarray(?)")?;
         let mut insert_work_tag_stmt =
             conn.prepare("INSERT OR IGNORE INTO work_tags (tag_id, work_id) VALUES (?, ?)")?;
         let mut select_work_id_stmt = conn.prepare("SELECT id FROM works WHERE name = ?")?;
@@ -291,12 +289,13 @@ impl MetadataPool {
                         continue;
                     }
                 };
-                insert_work_tag_stmt.execute(params![tag_id, work_id])?;
-                trace!(
-                    "Inserted work {work_id}, name:\"{}\", tag_id:{}",
-                    work.name(),
-                    tag_id
-                );
+                let tag_ids: Vec<i64> = select_tag_ids_from_names
+                    .query_map([string_to_rarray(work.tags())], |row| row.get(0))?
+                    .flatten()
+                    .collect();
+                for tag_id in &tag_ids {
+                    insert_work_tag_stmt.execute(params![*tag_id, work_id])?;
+                }
             }
             conn.execute("COMMIT TRANSACTION", ())?;
 
@@ -345,29 +344,36 @@ impl MetadataPool {
         Ok(rows.flatten().collect())
     }
 
-    pub fn works_list(&self, range: Range<usize>, tags: &TagSet) -> Result<Vec<Work>> {
+    pub fn works_list(&self, range: Range<usize>, tag_set: &TagSet) -> Result<Vec<Work>> {
         let conn = self.pool.get()?;
+        let enabled_count = tag_set.enabled_count();
+        if enabled_count == 0 {
+            return Ok(vec![]);
+        }
         let mut stmt = conn.prepare(
-            r#"
-            SELECT name, artist_id, date, preview_url, screen_url, archive_url
-                FROM works WHERE id IN (
-                    SELECT work_id FROM work_tags WHERE tag_id IN (
-                        SELECT id FROM tags WHERE name IN rarray(?)
-                    )
-                ) ORDER BY date DESC LIMIT ? OFFSET ?"#,
-        )?;
+            r#"SELECT works.id, works.name, works.artist_id, works.date, works.preview_url, works.screen_url, works.archive_url
+            FROM works LEFT JOIN work_tags ON work_tags.work_id = works.id LEFT JOIN tags ON tags.id = work_tags.tag_id
+            WHERE tags.name in rarray(?) GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = ? ORDER BY works.date ASC
+            LIMIT ? OFFSET ?;"#)?;
         let works: Vec<Work> = stmt
             .query_map(
-                params![tags.enabled_rarray(), range.end - range.start, range.start],
+                params![
+                    tag_set.enabled_rarray(),
+                    enabled_count,
+                    range.end - range.start,
+                    range.start
+                ],
                 |row| {
                     Ok(Work::new(
-                        row.get::<usize, String>(0)?,
-                        row.get(1)?,
+                        row.get::<usize, String>(1)?,
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                         None,
-                    ))
+                        vec![],
+                    )
+                    .with_id(row.get(0)?))
                 },
             )?
             .flatten()
