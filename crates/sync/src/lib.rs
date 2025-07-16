@@ -5,6 +5,7 @@ mod model;
 mod plugin;
 mod progress;
 mod shared;
+mod throttle;
 
 pub use crate::{
     environment::{Environment, EnvironmentPlugin},

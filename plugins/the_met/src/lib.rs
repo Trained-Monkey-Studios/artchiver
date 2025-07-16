@@ -213,7 +213,8 @@ struct ObjectInfo {
 pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
     // Query the search api with tags= to get the list of works by id
     let search_results = Web::fetch_text(format!(
-        "https://collectionapi.metmuseum.org/public/collection/v1/search?tags=true&q={tag})"
+        "https://collectionapi.metmuseum.org/public/collection/v1/search?tags=true&q={})",
+        urlencoding::encode(&tag)
     ))?;
     let search = serde_json::from_str::<SearchResults>(&search_results)?;
     info!("Found {} works matching tag {tag}", search.total);

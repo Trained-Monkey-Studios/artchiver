@@ -85,10 +85,10 @@ fn connect_or_create_db(env: Res<Environment>, mut commands: Commands) -> Result
         "Opening Metadata DB at {}",
         env.metadata_file_path().display()
     );
-    let manager = SqliteConnectionManager::file(env.metadata_file_path());
+    let manager = SqliteConnectionManager::file(env.metadata_file_path())
+        .with_init(|conn| rusqlite::vtab::array::load_module(conn));
     let pool = r2d2::Pool::builder().build(manager)?;
     let conn = pool.get()?;
-    rusqlite::vtab::array::load_module(&conn)?;
     let mode: String = conn.query_one("PRAGMA journal_mode = WAL;", (), |row| row.get(0))?;
     assert_eq!(mode, "wal");
     let params = [("synchronous", "NORMAL"), ("cache_size", "2000")];
@@ -187,6 +187,7 @@ impl MetadataPool {
         let mut current_pos = 0;
         progress.message(format!("Writing {total_count} tags to the database..."));
         for chunk in tags.chunks(10_000) {
+            progress.trace(format!("db->upsert_tags chunk of {}", chunk.len()));
             conn.execute("BEGIN TRANSACTION", ())?;
             for tag in chunk {
                 let row_cnt = insert_tag_stmt.execute(params![tag])?;
@@ -228,8 +229,10 @@ impl MetadataPool {
         progress.message(format!("Writing {total_count} works to the database..."));
 
         for chunk in works.chunks(10_000) {
+            progress.trace(format!("db->upsert_works chunk of {}", chunk.len()));
             conn.execute("BEGIN TRANSACTION", ())?;
             for work in chunk {
+                trace!("Inserting work: {}", work.name());
                 let row_cnt = insert_work_stmt.execute(params![
                     work.name(),
                     work.artist_id(),
@@ -243,6 +246,7 @@ impl MetadataPool {
                 } else {
                     select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))?
                 };
+                trace!("Adding work {} to tag {}", work.name(), tag_id);
                 insert_work_tag_stmt.execute(params![tag_id, work_id])?;
             }
             conn.execute("COMMIT TRANSACTION", ())?;
@@ -298,12 +302,11 @@ impl MetadataPool {
                     SELECT work_id FROM work_tags WHERE tag_id IN (
                         SELECT id FROM tags WHERE name IN rarray(?)
                     )
-                ) ORDER BY date DESC"#,
+                ) ORDER BY date DESC LIMIT ? OFFSET ?"#,
         )?;
-        // LIMIT ? OFFSET ?
         let works: Vec<Work> = stmt
             .query_map(
-                params![tags.enabled_rarray() /*, range.end - range.start, range.start*/],
+                params![tags.enabled_rarray(), range.end - range.start, range.start],
                 |row| {
                     Ok(Work::new(
                         row.get::<usize, String>(0)?,

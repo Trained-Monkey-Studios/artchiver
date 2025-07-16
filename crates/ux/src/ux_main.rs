@@ -1,6 +1,8 @@
+use artchiver_sdk::Work;
 use bevy::prelude::*;
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
+use bevy_egui::{egui::{SizeHint, self, TextWrapMode}, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
+use lru::LruCache;
 use std::path::Path;
 use sync::{Environment, PluginHost, Progress, TagSet, get_data_path_for_url};
 
@@ -79,22 +81,39 @@ impl<'a> SyncViewer<'a> {
                 egui::Frame::new()
                     .inner_margin(indented(16))
                     .show(ui, |ui| {
-                        ui.label(plugin.description());
-                        egui::Grid::new("plugin_grid")
-                            .num_columns(2)
+                        egui::CollapsingHeader::new("Details")
+                            .id_salt(format!("details_section_{}", plugin.name()))
                             .show(ui, |ui| {
-                                ui.label("Source");
-                                ui.label(plugin.source().display().to_string());
-                                ui.end_row();
-                                ui.label("Version");
-                                ui.label(plugin.version());
-                                ui.end_row();
+                                ui.label(plugin.description());
+                                egui::Grid::new(format!("plugin_grid_{}", plugin.name()))
+                                    .num_columns(2)
+                                    .show(ui, |ui| {
+                                        ui.label("Source");
+                                        ui.label(plugin.source().display().to_string());
+                                        ui.end_row();
+                                        ui.label("Version");
+                                        ui.label(plugin.version());
+                                        ui.end_row();
+                                    });
                             });
-                        ui.collapsing("Messages", |ui| {
-                            for message in plugin.messages() {
-                                ui.label(message);
-                            }
-                        });
+                        egui::CollapsingHeader::new("Messages")
+                            .id_salt(format!("messages_section_{}", plugin.name()))
+                            .show(ui, |ui| {
+                                for message in plugin.messages() {
+                                    ui.add(
+                                        egui::Label::new(message).wrap_mode(TextWrapMode::Truncate),
+                                    );
+                                }
+                            });
+                        egui::CollapsingHeader::new("Traces")
+                            .id_salt(format!("traces_section_{}", plugin.name()))
+                            .show(ui, |ui| {
+                                for message in plugin.traces() {
+                                    ui.add(
+                                        egui::Label::new(message).wrap_mode(TextWrapMode::Truncate),
+                                    );
+                                }
+                            });
                     });
             }
         });
@@ -184,18 +203,48 @@ impl<'a> SyncViewer<'a> {
             .unwrap();
         ui.horizontal_wrapped(|ui| {
             for work in works {
-                let path = get_data_path_for_url(self.data_dir, work.preview_url()).unwrap();
-                let uri = format!("file://{}", path.display());
-                let img = egui::Image::new(uri)
-                    .alt_text(work.name())
-                    .show_loading_spinner(true)
-                    .maintain_aspect_ratio(true)
-                    .fit_to_exact_size(egui::Vec2::new(256., 256.));
-                if ui.add(img).on_hover_text(work.name()).clicked() {
-                    println!("work: {}", work.name());
+                if let Some(uri) = self.ensure_work_cached(&work, ui.ctx()) {
+                    let img = egui::Image::new(uri)
+                        .alt_text(work.name())
+                        .show_loading_spinner(true)
+                        .maintain_aspect_ratio(true)
+                        .fit_to_exact_size(egui::Vec2::new(256., 256.));
+                    if ui.add(img).on_hover_text(work.name()).clicked() {
+                        println!("work: {}", work.name());
+                    }
+                } else {
+                    ui.add(egui::Spinner::new().size(256.));
                 }
             }
+            self.flush_works_lru();
         });
+    }
+
+    fn ensure_work_cached(&mut self, work: &Work, ctx: &egui::Context) -> Option<String> {
+        let screen_path = get_data_path_for_url(self.data_dir, work.screen_url()).unwrap();
+        let screen_uri = format!("file://{}", screen_path.display());
+        if screen_path.exists() {
+            let _ = ctx.try_load_image(&screen_uri, SizeHint::Size(256, 256));
+            self.state.works_lru.get_or_insert(screen_uri.clone(), || 0);
+        }
+
+        let preview_path = get_data_path_for_url(self.data_dir, work.preview_url()).unwrap();
+        let preview_uri = format!("file://{}", preview_path.display());
+        if preview_path.exists() {
+            let _ = ctx.try_load_image(&preview_uri, SizeHint::Size(256, 256));
+            self.state
+                .works_lru
+                .get_or_insert(preview_uri.clone(), || 0);
+            Some(preview_uri)
+        } else {
+            None
+        }
+    }
+
+    fn flush_works_lru(&mut self) {
+        while self.state.works_lru.len() > UxState::LRU_CACHE_SIZE {
+            let _ = self.state.works_lru.pop_lru();
+        }
     }
 }
 
@@ -216,13 +265,28 @@ impl TabViewer for SyncViewer<'_> {
     }
 }
 
-#[derive(Default)]
 pub struct UxState {
     show_preferences: bool,
     show_about: bool,
     tag_filter: String,
     tag_selection: TagSet,
     work_filter: String,
+    works_lru: LruCache<String, u32>,
+}
+
+impl UxState {
+    const LRU_CACHE_SIZE: usize = 1_000;
+
+    pub fn new() -> Self {
+        Self {
+            show_preferences: false,
+            show_about: false,
+            tag_filter: String::new(),
+            tag_selection: TagSet::default(),
+            work_filter: String::new(),
+            works_lru: LruCache::unbounded(),
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -244,7 +308,7 @@ impl Default for UxToplevel {
         );
         Self {
             dock_state,
-            state: Default::default(),
+            state: UxState::new(),
         }
     }
 }
@@ -260,7 +324,7 @@ fn ux_main(
     if keyboard.just_pressed(KeyCode::Escape) {
         app_exit.write(AppExit::Success);
     }
-    ux.main(&env, &mut sync, contexts.ctx_mut()?)
+    ux.main(&env, &mut sync, contexts.ctx_mut()?, &mut app_exit)
 }
 
 impl UxToplevel {
@@ -269,6 +333,7 @@ impl UxToplevel {
         env: &Environment,
         sync: &mut PluginHost,
         ctx: &mut egui::Context,
+        app_exit: &mut EventWriter<AppExit>,
     ) -> Result {
         // Menu Bar
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -284,7 +349,7 @@ impl UxToplevel {
                     if !is_web {
                         ui.separator();
                         if ui.button("Quit").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            app_exit.write(AppExit::Success);
                         }
                     }
                 });

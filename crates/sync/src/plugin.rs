@@ -1,3 +1,4 @@
+use crate::throttle::CallingThrottle;
 use crate::{
     environment::Environment,
     model::MetadataPool,
@@ -16,6 +17,7 @@ use extism::{
 };
 use io_tee::TeeWriter;
 use progress_streams::{ProgressReader, ProgressWriter};
+use rand::{Rng, distr::Alphanumeric};
 use sha2::{Digest, Sha256};
 use std::{
     fs, io,
@@ -75,11 +77,18 @@ pub(crate) fn load_plugin(
 
 #[derive(Debug)]
 struct PluginState {
+    // Environment
     cache_dir: PathBuf,
     data_dir: PathBuf,
-    pool: MetadataPool,
-    agent: Agent,
+    tmp_dir: PathBuf,
     progress: ProgressSender,
+
+    // Database
+    pool: MetadataPool,
+
+    // Web
+    agent: Agent,
+    throttle: CallingThrottle,
 }
 
 impl PluginState {
@@ -88,6 +97,8 @@ impl PluginState {
         Self {
             cache_dir: env.cache_dir().to_owned(),
             data_dir: env.data_dir().to_owned(),
+            tmp_dir: env.tmp_dir().to_owned(),
+            progress,
             pool,
             agent: Agent::new_with_config(
                 Agent::config_builder()
@@ -99,7 +110,7 @@ impl PluginState {
                     .timeout_recv_body(Some(Duration::from_secs(60)))
                     .build(),
             ),
-            progress,
+            throttle: CallingThrottle::default(),
         }
     }
 }
@@ -123,12 +134,12 @@ async fn plugin_main(
 ) -> Result {
     progress.message("Getting plugin metadata");
     let metadata = plugin.call::<(), Json<PluginMetadata>>("startup", ())?.0;
-    let plugin_id = state
-        .get()?
-        .lock()
-        .unwrap()
-        .pool
-        .upsert_plugin(metadata.name())?;
+    let plugin_id = {
+        let state_ref = state.get()?;
+        let mut state = state_ref.lock().unwrap();
+        state.throttle = CallingThrottle::new(metadata.rate_limit(), Duration::from_secs(1));
+        state.pool.upsert_plugin(metadata.name())?
+    };
     progress.message(format!(
         "Started plugin id:{plugin_id}, \"{}\"",
         metadata.name()
@@ -136,20 +147,33 @@ async fn plugin_main(
     progress.send(PluginResponse::PluginInfo(metadata))?;
 
     while let Ok(msg) = rx_from_runner.recv() {
-        match msg {
-            PluginRequest::Shutdown => {
-                progress.message("Shutting down plugin: {plugin_id}");
-                break;
-            }
-            PluginRequest::RefreshTags => {
-                refresh_tags(plugin_id, &mut plugin, &state, &mut progress)?;
-            }
-            PluginRequest::RefreshWorksForTag { tag } => {
-                refresh_works_for_tag(tag, &mut plugin, &state, &mut progress)?;
-            }
+        if matches!(msg, PluginRequest::Shutdown) {
+            progress.message("Shutting down plugin: {plugin_id}");
+            break;
+        }
+        if let Err(e) = handle_plugin_message(msg, plugin_id, &mut plugin, &state, &mut progress) {
+            progress.message(format!("Error handling plugin message: {e}"));
+            error!("Error handling plugin message: {e}");
         }
     }
     Ok(())
+}
+
+fn handle_plugin_message(
+    msg: PluginRequest,
+    plugin_id: i64,
+    plugin: &mut ExtPlugin,
+    state: &UserData<PluginState>,
+    progress: &mut ProgressSender,
+) -> Result {
+    trace!("Handling plugin message: {:?}", msg);
+    match msg {
+        PluginRequest::Shutdown => Ok(()),
+        PluginRequest::RefreshTags => refresh_tags(plugin_id, plugin, state, progress),
+        PluginRequest::RefreshWorksForTag { tag } => {
+            refresh_works_for_tag(tag, plugin, state, progress)
+        }
+    }
 }
 
 fn refresh_tags(
@@ -159,6 +183,7 @@ fn refresh_tags(
     progress: &mut ProgressSender,
 ) -> Result<()> {
     // Progress will get sent for the download or file read.
+    progress.trace("Calling plugin->list_tags");
     let tags = plugin.call::<(), Json<Vec<String>>>("list_tags", ())?.0;
 
     // Progress will get sent a second time for writing to the DB.
@@ -177,6 +202,7 @@ fn refresh_works_for_tag(
 ) -> Result<()> {
     // Ask the plugin to figure out what works we have for this tag.
     progress.set_spinner();
+    progress.trace(format!("Calling plugin->list_tags_for_work(\"{tag}\")"));
     let works = plugin
         .call::<String, Json<Vec<Work>>>("list_works_for_tag", tag.clone())?
         .0;
@@ -190,7 +216,7 @@ fn refresh_works_for_tag(
     progress.message(format!("Downloading {} works to disk...", works.len()));
     for (i, work) in works.iter().enumerate() {
         progress.set_percent(i, works.len());
-        if let Err(e) = ensure_work_data_is_cached(&state, work) {
+        if let Err(e) = ensure_work_data_is_cached(&state, work, progress) {
             progress.message(format!("Error downloading work {}: {e}", work.name()));
             error!("Error downloading work {}: {e}", work.name());
         }
@@ -222,8 +248,9 @@ fn fetch_text_inner(state: &mut PluginState, url: &str, progress: bool) -> Resul
 
     // Check our cache first
     let key = Sha256::digest(url.as_bytes());
-    let keypath = state.cache_dir.join(format!("{key:x}"));
-    if let Ok(mut cache_fp) = fs::File::open(&keypath) {
+    let key_path = state.cache_dir.join(format!("{key:x}"));
+    if let Ok(mut cache_fp) = fs::File::open(&key_path) {
+        state.progress.trace(format!("cached: fetch_text({url})"));
         if progress {
             state.progress.message(format!("Cache hit: {url}"));
             let cache_len = cache_fp.metadata()?.len() as usize;
@@ -244,8 +271,10 @@ fn fetch_text_inner(state: &mut PluginState, url: &str, progress: bool) -> Resul
     }
 
     // Stream the response simultaneously to the cache file and to a string for use by the plugin.
-    if progress {
-        state.progress.message(format!("Downloading: {url}"));
+    state.progress.trace(format!("fetch_text({url})"));
+    let tmp_path = make_temp_path(&state.tmp_dir);
+    state.throttle.throttle();
+    let buffer = if progress {
         let mut response = state.agent.get(url).call()?;
         let content_len = response.body().content_length();
         if let Some(content_len) = content_len {
@@ -253,9 +282,9 @@ fn fetch_text_inner(state: &mut PluginState, url: &str, progress: bool) -> Resul
                 .progress
                 .message(format!("Reading {content_len} bytes"));
         }
-        let mut fp = fs::File::create(keypath.clone())?;
+        let mut tmp_fp = fs::File::create(&tmp_path)?;
         let mut buffer = Vec::new();
-        let mut tee = TeeWriter::new(&mut fp, &mut buffer);
+        let mut tee = TeeWriter::new(&mut tmp_fp, &mut buffer);
         let mut writer = ProgressWriter::new(&mut tee, |progress: usize| {
             if let Some(content_len) = content_len {
                 state.progress.set_percent(progress, content_len as usize);
@@ -264,15 +293,17 @@ fn fetch_text_inner(state: &mut PluginState, url: &str, progress: bool) -> Resul
         io::copy(&mut response.body_mut().as_reader(), &mut writer)?;
         let out = String::from_utf8_lossy(&buffer).to_string();
         state.progress.clear();
-        Ok(out)
+        out
     } else {
         let mut response = state.agent.get(url).call()?;
-        let mut fp = fs::File::create(keypath.clone())?;
+        let mut tmp_fp = fs::File::create(&tmp_path)?;
         let mut buffer = Vec::new();
-        let mut tee = TeeWriter::new(&mut fp, &mut buffer);
+        let mut tee = TeeWriter::new(&mut tmp_fp, &mut buffer);
         io::copy(&mut response.body_mut().as_reader(), &mut tee)?;
-        Ok(String::from_utf8_lossy(&buffer).to_string())
-    }
+        String::from_utf8_lossy(&buffer).to_string()
+    };
+    fs::rename(&tmp_path, &key_path)?;
+    Ok(buffer)
 }
 
 host_fn!(fetch_text(state: PluginState; url: &str) -> Json<HttpTextResult> {
@@ -293,11 +324,15 @@ host_fn!(fetch_large_text(state: PluginState; url: &str) -> Json<HttpTextResult>
     }))
 });
 
-fn ensure_work_data_is_cached(state: &PluginState, work: &Work) -> Result<()> {
-    ensure_data_url(state, work.preview_url())?;
-    ensure_data_url(state, work.screen_url())?;
+fn ensure_work_data_is_cached(
+    state: &PluginState,
+    work: &Work,
+    progress: &mut ProgressSender,
+) -> Result<()> {
+    ensure_data_url(state, work.preview_url(), progress)?;
+    ensure_data_url(state, work.screen_url(), progress)?;
     if let Some(archive_url) = work.archive_url() {
-        ensure_data_url(state, archive_url)?;
+        ensure_data_url(state, archive_url, progress)?;
     }
     Ok(())
 }
@@ -309,13 +344,37 @@ pub fn get_data_path_for_url(data_dir: &Path, url: &str) -> Result<PathBuf> {
     Ok(data_path)
 }
 
-fn ensure_data_url(state: &PluginState, url: &str) -> Result<PathBuf> {
+fn make_temp_path(tmp_dir: &Path) -> PathBuf {
+    let tmp_name: String = rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(7)
+        .map(char::from)
+        .collect();
+    tmp_dir.join(tmp_name)
+}
+
+fn ensure_data_url(
+    state: &PluginState,
+    url: &str,
+    progress: &mut ProgressSender,
+) -> Result<PathBuf> {
     let data_path = get_data_path_for_url(&state.data_dir, url)?;
     if data_path.exists() {
+        progress.trace(format!("cached: ensure_data_url({url})"));
         return Ok(data_path);
     }
-    let mut response = state.agent.get(url).call()?;
-    let mut fp = fs::File::create(data_path.clone())?;
-    io::copy(&mut response.body_mut().as_reader(), &mut fp)?;
+
+    let tmp_path = make_temp_path(&state.tmp_dir);
+    {
+        let tmp_fp = fs::File::create(&tmp_path)?;
+        state.throttle.throttle();
+        progress.trace(format!("ensure_data_url({url})"));
+        let mut response = state.agent.get(url).call()?;
+        io::copy(
+            &mut response.body_mut().as_reader(),
+            &mut io::BufWriter::new(tmp_fp),
+        )?;
+    }
+    fs::rename(&tmp_path, &data_path)?;
     Ok(data_path)
 }

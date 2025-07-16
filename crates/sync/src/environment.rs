@@ -32,6 +32,10 @@ impl Environment {
         self.prefix.join("cache")
     }
 
+    pub fn tmp_dir(&self) -> PathBuf {
+        self.cache_dir().join("tmp")
+    }
+
     pub fn metadata_file_path(&self) -> PathBuf {
         self.data_dir().join("metadata.db")
     }
@@ -68,6 +72,14 @@ impl Plugin for EnvironmentPlugin {
             fs::create_dir_all(env.data_dir())?;
             info!("Cache directory: {}", env.cache_dir().display());
             fs::create_dir_all(env.cache_dir())?;
+            info!("Temp directory: {}", env.tmp_dir().display());
+            fs::create_dir_all(env.tmp_dir())?;
+
+            info!("Clearing temp directory...");
+            for entry in fs::read_dir(env.tmp_dir())? {
+                let entry = entry?;
+                fs::remove_file(entry.path())?;
+            }
 
             world.insert_resource(env);
             Ok(())

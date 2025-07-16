@@ -50,15 +50,12 @@ pub(crate) fn startup_plugins(
 
         let plugin_task =
             load_plugin(&source, &env, metadata.pool(), rx_from_runner, tx_to_runner)?;
-        engine.plugins.push(PluginHandle {
+        engine.plugins.push(PluginHandle::new(
             source,
-            metadata: None,
-            progress: Progress::None,
-            messages: VecDeque::new(),
-            task: plugin_task,
+            plugin_task,
             tx_to_plugin,
             rx_from_plugin,
-        });
+        ));
     }
 
     commands.insert_resource(engine);
@@ -124,6 +121,7 @@ pub struct PluginHandle {
     metadata: Option<PluginMetadata>,
     progress: Progress,
     messages: VecDeque<String>,
+    traces: VecDeque<String>,
 
     // Maintenance state
     task: Task<()>,
@@ -133,6 +131,25 @@ pub struct PluginHandle {
 
 impl PluginHandle {
     const MAX_MESSAGES: usize = 20;
+    const MAX_TRACES: usize = 100;
+
+    fn new(
+        source: PathBuf,
+        task: Task<()>,
+        tx_to_plugin: channel::Sender<PluginRequest>,
+        rx_from_plugin: channel::Receiver<PluginResponse>,
+    ) -> Self {
+        PluginHandle {
+            source,
+            metadata: None,
+            progress: Progress::None,
+            messages: VecDeque::new(),
+            traces: VecDeque::new(),
+            task,
+            tx_to_plugin,
+            rx_from_plugin,
+        }
+    }
 
     pub fn source(&self) -> &Path {
         &self.source
@@ -170,6 +187,10 @@ impl PluginHandle {
         self.messages.iter().map(|s| s.as_str())
     }
 
+    pub fn traces(&self) -> impl Iterator<Item = &str> {
+        self.traces.iter().map(|s| s.as_str())
+    }
+
     pub fn progress(&self) -> &Progress {
         &self.progress
     }
@@ -190,6 +211,12 @@ pub(crate) fn maintain_plugins(
                     handle.messages.push_back(message);
                     while handle.messages.len() > PluginHandle::MAX_MESSAGES {
                         handle.messages.pop_front();
+                    }
+                }
+                PluginResponse::Trace(message) => {
+                    handle.traces.push_back(message);
+                    while handle.traces.len() > PluginHandle::MAX_TRACES {
+                        handle.traces.pop_front();
                     }
                 }
                 PluginResponse::PluginInfo(info) => {

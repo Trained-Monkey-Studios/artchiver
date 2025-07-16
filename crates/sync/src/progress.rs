@@ -51,8 +51,18 @@ impl ProgressSender {
     }
 
     pub fn message(&mut self, message: impl AsRef<str>) {
+        let msg = message.as_ref();
+        info!("{msg}");
         self.tx_to_runner
-            .send(PluginResponse::Message(message.as_ref().to_string()))
+            .send(PluginResponse::Message(msg.to_string()))
+            .ok();
+    }
+
+    pub fn trace(&mut self, message: impl AsRef<str>) {
+        let msg = message.as_ref();
+        trace!("{msg}");
+        self.tx_to_runner
+            .send(PluginResponse::Trace(msg.to_string()))
             .ok();
     }
 }

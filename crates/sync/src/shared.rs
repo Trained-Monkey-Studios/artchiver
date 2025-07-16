@@ -16,6 +16,7 @@ pub(crate) enum PluginResponse {
     PluginInfo(PluginMetadata),
     Progress(Progress),
     Message(String),
+    Trace(String),
     DatabaseChanged,
 }
 

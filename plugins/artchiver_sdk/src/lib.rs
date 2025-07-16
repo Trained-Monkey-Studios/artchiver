@@ -91,6 +91,10 @@ impl PluginMetadata {
     pub fn description(&self) -> &str {
         &self.description
     }
+
+    pub fn rate_limit(&self) -> usize {
+        self.rate_limit as usize
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
