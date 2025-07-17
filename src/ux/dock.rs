@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use artchiver_sdk::Work;
-use egui::{self, Key, Margin, Modifiers, Sense, SizeHint, Stroke, TextWrapMode, Vec2};
+use egui::{self, Key, Margin, Modifiers, Sense, SizeHint, TextWrapMode, Vec2};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
@@ -135,6 +135,9 @@ impl<'a> SyncViewer<'a> {
         // Show the filter and global refresh-all-tags button.
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.state.tag_filter);
+            if ui.button("x").clicked() {
+                self.state.tag_filter.clear();
+            }
             ui.label(format!("({tag_cnt})",));
             if ui.button("⟳ Refresh All").clicked() {
                 self.sync.refresh_tags().ok();
@@ -204,17 +207,13 @@ impl<'a> SyncViewer<'a> {
             .sync
             .pool_mut()
             .works_count(&self.state.tag_selection)?;
-        ui.heading(self.state.tag_selection.to_string());
         ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut self.state.work_filter);
-            if ui.button("x").clicked() {
-                self.state.work_filter.clear();
-            }
+            ui.heading(self.state.tag_selection.to_string());
             ui.label(format!("({works_count})"));
         });
 
         const PREVIEW_SIZE: f32 = 256.;
-        const SIZE: f32 = PREVIEW_SIZE + 4.;
+        const SIZE: f32 = PREVIEW_SIZE;
 
         let width = ui.available_width();
         let n_wide = (width / SIZE).floor().max(1.) as usize;
@@ -235,39 +234,34 @@ impl<'a> SyncViewer<'a> {
                     .pool_mut()
                     .works_list(works_range.clone(), &self.state.tag_selection)?;
 
+                let sel_color = ui.style().visuals.selection.bg_fill;
+                ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+
                 // We subtracted off range_len, but may have clipped with zero, so we have to reconstruct.
                 let works_start = start_index - works_range.start;
                 for row in works[works_start..end_index].chunks(n_wide) {
                     ui.horizontal(|ui| {
                         for work in row {
                             if let Some(uri) = self.ensure_work_cached(work, ui.ctx()) {
-                                // Selection uses the border, otherwise fills the space with margin.
+                                // Selection uses the selection color for the background
                                 let selected = self.state.selected_work == Some(work.id());
-                                let (stroke, outer_margin) = if selected {
-                                    (
-                                        Stroke::new(2., ui.style().visuals.selection.bg_fill),
-                                        Margin::ZERO,
-                                    )
-                                } else {
-                                    (
-                                        Stroke::new(0., ui.style().visuals.selection.bg_fill),
-                                        Margin::symmetric(2, 2),
-                                    )
-                                };
 
                                 let img = egui::Image::new(uri)
                                     .alt_text(work.name())
                                     .show_loading_spinner(true)
                                     .maintain_aspect_ratio(true);
-                                // .fit_to_exact_size(Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE));
-                                // .max_size(Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE));
 
-                                let mut size = Vec2::new(SIZE, SIZE);
+                                let mut pad = 0.;
                                 let mut inner_margin = Margin::ZERO;
                                 if let Some(size) = img
                                     .load_and_calc_size(ui, Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE))
                                 {
-                                    println!("SIE: {size}");
+                                    // Wide things are already centered, so we only need to care
+                                    // about tall images where y > x
+                                    if size.y > size.x {
+                                        pad = (SIZE - size.x) / 2.;
+                                        inner_margin.left = pad as i8;
+                                    }
                                 }
                                 // let tlr = img.load_for_size(ui.ctx(), ui.available_size());
                                 // let original_image_size = tlr.as_ref().ok().and_then(|t| t.size());
@@ -289,22 +283,26 @@ impl<'a> SyncViewer<'a> {
                                     .selected(selected)
                                     .sense(Sense::click());
 
-                                egui::Frame::default()
-                                    .stroke(stroke)
-                                    .outer_margin(outer_margin)
-                                    .inner_margin(inner_margin)
-                                    .show(ui, |ui| {
-                                        egui::Resize::default()
-                                            .min_size(Vec2::new(SIZE, SIZE))
-                                            .max_size(Vec2::new(SIZE, SIZE))
-                                            .default_size(Vec2::new(SIZE, SIZE))
-                                            .resizable([false, false])
-                                            .show(ui, |ui| {
-                                                if ui.add(btn).clicked() {
-                                                    self.state.selected_work = Some(work.id());
-                                                }
-                                            });
+                                let mut frm = egui::Frame::default()
+                                    .outer_margin(Margin::ZERO)
+                                    .inner_margin(inner_margin);
+                                if selected {
+                                    frm = frm.fill(sel_color);
+                                }
+
+                                let rsz = egui::Resize::default()
+                                    .min_size(Vec2::new(SIZE - pad, SIZE))
+                                    .max_size(Vec2::new(SIZE - pad, SIZE))
+                                    .default_size(Vec2::new(SIZE - pad, SIZE))
+                                    .resizable([false, false]);
+
+                                frm.show(ui, |ui| {
+                                    rsz.show(ui, |ui| {
+                                        if ui.add(btn).clicked() {
+                                            self.state.selected_work = Some(work.id());
+                                        }
                                     });
+                                });
                             } else {
                                 ui.add(egui::Spinner::new().size(SIZE));
                             }
@@ -408,7 +406,6 @@ pub struct UxState {
     show_about: bool,
     tag_filter: String,
     tag_selection: TagSet,
-    work_filter: String,
     selected_work: Option<i64>,
 
     #[serde(default = "LruCache::unbounded")]
@@ -426,7 +423,6 @@ impl Default for UxState {
             show_about: false,
             tag_filter: String::new(),
             tag_selection: TagSet::default(),
-            work_filter: String::new(),
             works_lru: LruCache::unbounded(),
             per_frame_work_upload_count: 0,
             selected_work: None,
@@ -509,7 +505,7 @@ impl UxToplevel {
 
     fn render_menu(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Preferences...").clicked() {
                         self.state.show_preferences = true;

@@ -94,9 +94,7 @@ impl MetadataPool {
             .with_init(|conn| rusqlite::vtab::array::load_module(conn));
         let pool = r2d2::Pool::builder().build(manager)?;
         let conn = pool.get()?;
-        let params = [
-            ("journal_mode", "WAL", "wal"),
-        ];
+        let params = [("journal_mode", "WAL", "wal")];
         for (name, value, expect) in params {
             info!("Configuring DB: {name} = {value}");
             let result: String =

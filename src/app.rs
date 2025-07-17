@@ -4,7 +4,6 @@ use crate::{
     ux::dock::UxToplevel,
 };
 use eframe::glow;
-use egui::{self, Key, Modifiers};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]

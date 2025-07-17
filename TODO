@@ -13,9 +13,9 @@ o Allow selecting an image and show its metadata
 o Limit number of images we try to upload each frame to avoid freezing the UI
 o Compute area needed to cover so we can request the correct range; support range requests
 o Port to eframe
+o Center works in their viewports and figure out how to kill spacing between works
 * Task system and task cancellation
 * Associate refresh tags with the plugin rather than a global
-* Center works in their viewports and figure out how to kill spacing between works
 * Resizable thumbnails
 * Draw preview images at any size
 * Cache works lookups
