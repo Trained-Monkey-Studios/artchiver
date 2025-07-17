@@ -344,17 +344,42 @@ impl MetadataPool {
         Ok(rows.flatten().collect())
     }
 
+    fn make_works_query(order: &str, postfix: &str) -> String {
+        format!(
+            r#"SELECT works.id, works.name, works.artist_id, works.date, works.preview_url, works.screen_url, works.archive_url
+            FROM works
+            LEFT JOIN work_tags ON work_tags.work_id = works.id
+            LEFT JOIN tags ON tags.id = work_tags.tag_id
+            WHERE tags.name in rarray(?)
+            GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = ?
+            {order}
+            {postfix}"#
+        )
+    }
+
+    pub fn works_count(&self, tag_set: &TagSet) -> Result<usize> {
+        if tag_set.enabled_count() == 0 {
+            return Ok(0);
+        }
+        let conn = self.pool.get()?;
+        let count: i64 = conn.query_one(
+            &format!("SELECT COUNT(*) FROM ({});", Self::make_works_query("", "")),
+            params![tag_set.enabled_rarray(), tag_set.enabled_count()],
+            |row| row.get(0),
+        )?;
+        Ok(count.try_into()?)
+    }
+
     pub fn works_list(&self, range: Range<usize>, tag_set: &TagSet) -> Result<Vec<Work>> {
         let conn = self.pool.get()?;
         let enabled_count = tag_set.enabled_count();
         if enabled_count == 0 {
             return Ok(vec![]);
         }
-        let mut stmt = conn.prepare(
-            r#"SELECT works.id, works.name, works.artist_id, works.date, works.preview_url, works.screen_url, works.archive_url
-            FROM works LEFT JOIN work_tags ON work_tags.work_id = works.id LEFT JOIN tags ON tags.id = work_tags.tag_id
-            WHERE tags.name in rarray(?) GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = ? ORDER BY works.date ASC
-            LIMIT ? OFFSET ?;"#)?;
+        let mut stmt = conn.prepare(&Self::make_works_query(
+            "ORDER BY works.date ASC",
+            "LIMIT ? OFFSET ?;",
+        ))?;
         let works: Vec<Work> = stmt
             .query_map(
                 params![

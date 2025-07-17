@@ -1,8 +1,9 @@
 use artchiver_sdk::Work;
 use bevy::prelude::*;
+use bevy_egui::egui::Stroke;
 use bevy_egui::{
     EguiContexts, EguiPlugin, EguiPrimaryContextPass,
-    egui::{self, Sense, SizeHint, TextWrapMode},
+    egui::{self, Margin, Sense, SizeHint, TextWrapMode, Vec2},
 };
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use lru::LruCache;
@@ -208,38 +209,151 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_works(&mut self, ui: &mut egui::Ui) {
+        let works_count = self
+            .sync
+            .pool_mut()
+            .works_count(&self.state.tag_selection)
+            .unwrap();
         ui.heading(self.state.tag_selection.to_string());
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.state.work_filter);
-            ui.label("UNKNOWN COUNT");
+            if ui.button("x").clicked() {
+                self.state.work_filter.clear();
+            }
+            ui.label(format!("({works_count})"));
         });
 
-        let works = self
-            .sync
-            .pool_mut()
-            .works_list(&self.state.tag_selection)
-            .unwrap();
-        ui.horizontal_wrapped(|ui| {
-            for work in works {
-                if let Some(uri) = self.ensure_work_cached(&work, ui.ctx()) {
-                    let img = egui::Image::new(uri)
-                        .alt_text(work.name())
-                        .show_loading_spinner(true)
-                        .maintain_aspect_ratio(true)
-                        .fit_to_exact_size(egui::Vec2::new(256., 256.));
-                    let btn = egui::ImageButton::new(img)
-                        .frame(false)
-                        .selected(false)
-                        .sense(Sense::click());
-                    if ui.add(btn).clicked() {
-                        self.state.selected_work = Some(work.id());
-                    }
-                } else {
-                    ui.add(egui::Spinner::new().size(256.));
+        const PREVIEW_SIZE: f32 = 256.;
+        const SIZE: f32 = PREVIEW_SIZE + 4.;
+
+        let width = ui.available_width();
+        let n_wide = (width / SIZE).floor().max(1.) as usize;
+        let n_rows = works_count.div_ceil(n_wide);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show_rows(ui, SIZE, n_rows, |ui, rows| {
+                let start_index = rows.start * n_wide;
+                let end_index = (rows.end * n_wide).min(works_count);
+                let range_len = end_index - start_index;
+
+                // Note: overfetch by 1x our current visible area in both directions so we can
+                //       usually scroll in either direction without pause or loading spinners.
+                let works_range = start_index.saturating_sub(range_len)
+                    ..end_index.saturating_add(range_len).min(works_count);
+                let works = self
+                    .sync
+                    .pool_mut()
+                    .works_list(works_range.clone(), &self.state.tag_selection)
+                    .unwrap();
+
+                // We subtracted off range_len, but may have clipped with zero, so we have to reconstruct.
+                let works_start = start_index - works_range.start;
+                for row in works[works_start..end_index].chunks(n_wide) {
+                    ui.horizontal(|ui| {
+                        for work in row {
+                            if let Some(uri) = self.ensure_work_cached(&work, ui.ctx()) {
+                                // Selection uses the border, otherwise fills the space with margin.
+                                let selected = self.state.selected_work == Some(work.id());
+                                let (stroke, outer_margin) = if selected {
+                                    (
+                                        Stroke::new(2., ui.style().visuals.selection.bg_fill),
+                                        Margin::ZERO,
+                                    )
+                                } else {
+                                    (
+                                        Stroke::new(0., ui.style().visuals.selection.bg_fill),
+                                        Margin::symmetric(2, 2),
+                                    )
+                                };
+
+                                let img = egui::Image::new(uri)
+                                    .alt_text(work.name())
+                                    .show_loading_spinner(true)
+                                    .maintain_aspect_ratio(true);
+                                // .fit_to_exact_size(Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE));
+                                // .max_size(Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE));
+
+                                let mut size = Vec2::new(SIZE, SIZE);
+                                let mut inner_margin = Margin::ZERO;
+                                if let Some(size) = img
+                                    .load_and_calc_size(ui, Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE))
+                                {
+                                    println!("SIE: {size}");
+                                }
+                                // let tlr = img.load_for_size(ui.ctx(), ui.available_size());
+                                // let original_image_size = tlr.as_ref().ok().and_then(|t| t.size());
+                                // if let Some(size) = original_image_size {
+                                //     if size.x > size.y {
+                                //         // Wide image, so pad the top to center
+                                //         // let f = size
+                                //     } else if size.y > size.x {
+                                //         // Tall image, so pad the left to center
+                                //         let sz_x = PREVIEW_SIZE / size.y * size.x;
+                                //         let pad = (PREVIEW_SIZE - sz_x) / 2.;
+                                //         inner_margin.left = pad as i8;
+                                //     }
+                                //     // println!("Size: {size}");
+                                // }
+
+                                let btn = egui::ImageButton::new(img)
+                                    .frame(false)
+                                    .selected(selected)
+                                    .sense(Sense::click());
+
+                                egui::Frame::default()
+                                    .stroke(stroke)
+                                    .outer_margin(outer_margin)
+                                    .inner_margin(inner_margin)
+                                    .show(ui, |ui| {
+                                        egui::Resize::default()
+                                            .min_size(Vec2::new(SIZE, SIZE))
+                                            .max_size(Vec2::new(SIZE, SIZE))
+                                            .default_size(Vec2::new(SIZE, SIZE))
+                                            .resizable([false, false])
+                                            .show(ui, |ui| {
+                                                if ui.add(btn).clicked() {
+                                                    self.state.selected_work = Some(work.id());
+                                                }
+                                            });
+                                    });
+                            } else {
+                                ui.add(egui::Spinner::new().size(SIZE));
+                            }
+                        }
+                    });
                 }
-            }
-            self.flush_works_lru(ui.ctx());
-        });
+                self.flush_works_lru(ui.ctx());
+            });
+
+        // ui.horizontal_wrapped(|ui| {
+        //     for work in works {
+        //         if let Some(uri) = self.ensure_work_cached(&work, ui.ctx()) {
+        //             let img = egui::Image::new(uri)
+        //                 .alt_text(work.name())
+        //                 .show_loading_spinner(true)
+        //                 .maintain_aspect_ratio(true)
+        //                 .fit_to_exact_size(Vec2::new(256., 256.))
+        //                 .max_size(Vec2::new(256., 256.));
+        //             let btn = egui::ImageButton::new(img)
+        //                 .frame(self.state.selected_work == Some(work.id()))
+        //                 .selected(self.state.selected_work == Some(work.id()))
+        //                 .sense(Sense::click());
+        //             egui::Resize::default()
+        //                 .min_size(Vec2::new(256., 256.))
+        //                 .max_size(Vec2::new(256., 256.))
+        //                 .default_size(Vec2::new(256., 256.))
+        //                 .resizable([false, false])
+        //                 .show(ui, |ui| {
+        //                     if ui.add(btn).clicked() {
+        //                         self.state.selected_work = Some(work.id());
+        //                     }
+        //                 });
+        //         } else {
+        //             ui.add(egui::Spinner::new().size(256.));
+        //         }
+        //     }
+        //     self.flush_works_lru(ui.ctx());
+        // });
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
