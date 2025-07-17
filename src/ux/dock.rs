@@ -1,0 +1,544 @@
+use crate::{
+    shared::{environment::Environment, progress::Progress, tag::TagSet},
+    sync::plugin::{client::get_data_path_for_url, host::PluginHost},
+};
+use anyhow::Result;
+use artchiver_sdk::Work;
+use egui::{self, Key, Margin, Modifiers, Sense, SizeHint, Stroke, TextWrapMode, Vec2};
+use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
+use lru::LruCache;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+// Utility function to get an egui margin inset from the left.
+fn indented(px: i8) -> Margin {
+    let mut m = Margin::ZERO;
+    m.left = px;
+    m
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TabMetadata {
+    title: String,
+}
+
+impl TabMetadata {
+    pub fn new(title: &str) -> Self {
+        Self {
+            title: title.to_string(),
+        }
+    }
+}
+
+struct SyncViewer<'a> {
+    sync: &'a mut PluginHost,
+    state: &'a mut UxState,
+    data_dir: &'a Path,
+}
+
+impl<'a> SyncViewer<'a> {
+    fn wrap(
+        sync: &'a mut PluginHost,
+        state: &'a mut UxState,
+        data_dir: &'a Path,
+    ) -> SyncViewer<'a> {
+        Self {
+            sync,
+            state,
+            data_dir,
+        }
+    }
+
+    fn show_galleries(&mut self, ui: &mut egui::Ui) -> Result<()> {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for plugin in self.sync.plugins_mut() {
+                ui.horizontal(|ui| {
+                    ui.heading(plugin.name());
+                    match plugin.progress() {
+                        Progress::None => {}
+                        Progress::Spinner => {
+                            ui.spinner();
+                        }
+                        Progress::Percent { current, total } => {
+                            ui.add(
+                                egui::ProgressBar::new(*current as f32 / *total as f32)
+                                    .animate(true)
+                                    .show_percentage(),
+                            );
+                        }
+                    }
+                });
+                egui::Frame::new()
+                    .inner_margin(indented(16))
+                    .show(ui, |ui| {
+                        egui::CollapsingHeader::new("Details")
+                            .id_salt(format!("details_section_{}", plugin.name()))
+                            .show(ui, |ui| {
+                                ui.label(plugin.description());
+                                egui::Grid::new(format!("plugin_grid_{}", plugin.name()))
+                                    .num_columns(2)
+                                    .show(ui, |ui| {
+                                        ui.label("Source");
+                                        ui.label(plugin.source().display().to_string());
+                                        ui.end_row();
+                                        ui.label("Version");
+                                        ui.label(plugin.version());
+                                        ui.end_row();
+                                        if let Some(meta) = plugin.metadata_mut() {
+                                            for (config_key, config_val) in
+                                                meta.configurations_mut()
+                                            {
+                                                ui.label(config_key);
+                                                ui.text_edit_singleline(config_val);
+                                                ui.end_row();
+                                            }
+                                            if !meta.configurations().is_empty()
+                                                && ui.button("Update").clicked()
+                                            {
+                                                plugin.apply_configuration().unwrap();
+                                            }
+                                        }
+                                    });
+                            });
+                        egui::CollapsingHeader::new("Messages")
+                            .id_salt(format!("messages_section_{}", plugin.name()))
+                            .show(ui, |ui| {
+                                for message in plugin.messages() {
+                                    ui.add(
+                                        egui::Label::new(message).wrap_mode(TextWrapMode::Truncate),
+                                    );
+                                }
+                            });
+                        egui::CollapsingHeader::new("Traces")
+                            .id_salt(format!("traces_section_{}", plugin.name()))
+                            .show(ui, |ui| {
+                                for message in plugin.traces() {
+                                    ui.add(
+                                        egui::Label::new(message).wrap_mode(TextWrapMode::Truncate),
+                                    );
+                                }
+                            });
+                    });
+            }
+        });
+        Ok(())
+    }
+
+    fn show_tags(&mut self, ui: &mut egui::Ui) -> Result<()> {
+        let tag_cnt = self
+            .sync
+            .pool_mut()
+            .tags_count(&self.state.tag_filter)
+            .unwrap();
+        // Show the filter and global refresh-all-tags button.
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut self.state.tag_filter);
+            ui.label(format!("({tag_cnt})",));
+            if ui.button("⟳ Refresh All").clicked() {
+                self.sync.refresh_tags().ok();
+            }
+        });
+        let text_style = egui::TextStyle::Body;
+        let row_height = ui.text_style_height(&text_style);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show_rows(
+                ui,
+                row_height,
+                tag_cnt.try_into().unwrap(),
+                |ui, row_range| {
+                    let tags = self
+                        .sync
+                        .pool_mut()
+                        .tags_list(row_range, &self.state.tag_filter)
+                        .unwrap();
+
+                    egui::Grid::new("tag_grid")
+                        .num_columns(1)
+                        .spacing([0., 0.])
+                        .min_col_width(0.)
+                        .show(ui, |ui| {
+                            for tag in tags {
+                                let status = self.state.tag_selection.status(tag.name());
+                                if ui
+                                    .add(egui::Button::new("✔").small().selected(status.enabled()))
+                                    .clicked()
+                                {
+                                    self.state.tag_selection.enable(tag.name());
+                                }
+                                if ui.add(egui::Button::new(" ").small()).clicked() {
+                                    self.state.tag_selection.unselect(tag.name());
+                                }
+                                if ui
+                                    .add(egui::Button::new("x").small().selected(status.disabled()))
+                                    .clicked()
+                                {
+                                    self.state.tag_selection.disable(tag.name());
+                                }
+                                ui.label("   ");
+                                if ui.button("⟳").clicked() {
+                                    self.sync.refresh_works_for_tag(tag.name()).ok();
+                                }
+                                ui.label("   ");
+                                let content = format!("{} ({})", tag.name(), tag.work_count());
+                                if status.disabled() {
+                                    ui.label(egui::RichText::new(content).strikethrough());
+                                } else if status.enabled() {
+                                    ui.label(egui::RichText::new(content).strong());
+                                } else {
+                                    ui.label(content);
+                                }
+                                ui.end_row();
+                            }
+                        });
+                },
+            );
+        Ok(())
+    }
+
+    fn show_works(&mut self, ui: &mut egui::Ui) -> Result<()> {
+        let works_count = self
+            .sync
+            .pool_mut()
+            .works_count(&self.state.tag_selection)?;
+        ui.heading(self.state.tag_selection.to_string());
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut self.state.work_filter);
+            if ui.button("x").clicked() {
+                self.state.work_filter.clear();
+            }
+            ui.label(format!("({works_count})"));
+        });
+
+        const PREVIEW_SIZE: f32 = 256.;
+        const SIZE: f32 = PREVIEW_SIZE + 4.;
+
+        let width = ui.available_width();
+        let n_wide = (width / SIZE).floor().max(1.) as usize;
+        let n_rows = works_count.div_ceil(n_wide);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show_rows(ui, SIZE, n_rows, |ui, rows| -> Result<()> {
+                let start_index = rows.start * n_wide;
+                let end_index = (rows.end * n_wide).min(works_count);
+                let range_len = end_index - start_index;
+
+                // Note: overfetch by 1x our current visible area in both directions so we can
+                //       usually scroll in either direction without pause or loading spinners.
+                let works_range = start_index.saturating_sub(range_len)
+                    ..end_index.saturating_add(range_len).min(works_count);
+                let works = self
+                    .sync
+                    .pool_mut()
+                    .works_list(works_range.clone(), &self.state.tag_selection)?;
+
+                // We subtracted off range_len, but may have clipped with zero, so we have to reconstruct.
+                let works_start = start_index - works_range.start;
+                for row in works[works_start..end_index].chunks(n_wide) {
+                    ui.horizontal(|ui| {
+                        for work in row {
+                            if let Some(uri) = self.ensure_work_cached(work, ui.ctx()) {
+                                // Selection uses the border, otherwise fills the space with margin.
+                                let selected = self.state.selected_work == Some(work.id());
+                                let (stroke, outer_margin) = if selected {
+                                    (
+                                        Stroke::new(2., ui.style().visuals.selection.bg_fill),
+                                        Margin::ZERO,
+                                    )
+                                } else {
+                                    (
+                                        Stroke::new(0., ui.style().visuals.selection.bg_fill),
+                                        Margin::symmetric(2, 2),
+                                    )
+                                };
+
+                                let img = egui::Image::new(uri)
+                                    .alt_text(work.name())
+                                    .show_loading_spinner(true)
+                                    .maintain_aspect_ratio(true);
+                                // .fit_to_exact_size(Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE));
+                                // .max_size(Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE));
+
+                                let mut size = Vec2::new(SIZE, SIZE);
+                                let mut inner_margin = Margin::ZERO;
+                                if let Some(size) = img
+                                    .load_and_calc_size(ui, Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE))
+                                {
+                                    println!("SIE: {size}");
+                                }
+                                // let tlr = img.load_for_size(ui.ctx(), ui.available_size());
+                                // let original_image_size = tlr.as_ref().ok().and_then(|t| t.size());
+                                // if let Some(size) = original_image_size {
+                                //     if size.x > size.y {
+                                //         // Wide image, so pad the top to center
+                                //         // let f = size
+                                //     } else if size.y > size.x {
+                                //         // Tall image, so pad the left to center
+                                //         let sz_x = PREVIEW_SIZE / size.y * size.x;
+                                //         let pad = (PREVIEW_SIZE - sz_x) / 2.;
+                                //         inner_margin.left = pad as i8;
+                                //     }
+                                //     // println!("Size: {size}");
+                                // }
+
+                                let btn = egui::ImageButton::new(img)
+                                    .frame(false)
+                                    .selected(selected)
+                                    .sense(Sense::click());
+
+                                egui::Frame::default()
+                                    .stroke(stroke)
+                                    .outer_margin(outer_margin)
+                                    .inner_margin(inner_margin)
+                                    .show(ui, |ui| {
+                                        egui::Resize::default()
+                                            .min_size(Vec2::new(SIZE, SIZE))
+                                            .max_size(Vec2::new(SIZE, SIZE))
+                                            .default_size(Vec2::new(SIZE, SIZE))
+                                            .resizable([false, false])
+                                            .show(ui, |ui| {
+                                                if ui.add(btn).clicked() {
+                                                    self.state.selected_work = Some(work.id());
+                                                }
+                                            });
+                                    });
+                            } else {
+                                ui.add(egui::Spinner::new().size(SIZE));
+                            }
+                        }
+                    });
+                }
+                self.flush_works_lru(ui.ctx());
+                Ok(())
+            });
+        Ok(())
+    }
+
+    fn show_info(&mut self, ui: &mut egui::Ui) -> Result<()> {
+        if let Some(work_id) = self.state.selected_work
+            && let Ok(work) = self.sync.pool_mut().lookup_work(work_id)
+        {
+            egui::Grid::new("work_info_grid").show(ui, |ui| {
+                ui.label("Name");
+                ui.label(work.name());
+                ui.end_row();
+            });
+            ui.label(" ");
+            ui.heading("Tags");
+            ui.separator();
+            for tag in work.tags() {
+                if ui.button(tag).clicked() {
+                    self.state.tag_selection.enable(tag);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn ensure_work_cached(&mut self, work: &Work, ctx: &egui::Context) -> Option<String> {
+        // Limit number of times we call try_load_image per frame to prevent pauses
+        if self.state.per_frame_work_upload_count > UxState::MAX_PER_FRAME_UPLOADS {
+            return None;
+        }
+
+        let size_hint = SizeHint::Size {
+            width: 256,
+            height: 256,
+            maintain_aspect_ratio: true,
+        };
+        let screen_path = get_data_path_for_url(self.data_dir, work.screen_url());
+        if screen_path.exists() {
+            let screen_uri = format!("file://{}", screen_path.display());
+            if !self.state.works_lru.contains(&screen_uri) {
+                ctx.try_load_image(&screen_uri, size_hint).ok();
+                self.state.per_frame_work_upload_count += 1;
+            }
+            self.state.works_lru.get_or_insert(screen_uri, || 0);
+        }
+
+        let preview_path = get_data_path_for_url(self.data_dir, work.preview_url());
+        if preview_path.exists() {
+            let preview_uri = format!("file://{}", preview_path.display());
+            if !self.state.works_lru.contains(&preview_uri) {
+                ctx.try_load_image(&preview_uri, size_hint).ok();
+                self.state.per_frame_work_upload_count += 1;
+            }
+            self.state
+                .works_lru
+                .get_or_insert(preview_uri.clone(), || 0);
+            Some(preview_uri)
+        } else {
+            None
+        }
+    }
+
+    fn flush_works_lru(&mut self, ctx: &egui::Context) {
+        self.state.per_frame_work_upload_count = 0;
+        while self.state.works_lru.len() > UxState::LRU_CACHE_SIZE {
+            if let Some((uri, _)) = self.state.works_lru.pop_lru() {
+                ctx.forget_image(&uri);
+            }
+        }
+    }
+}
+
+impl TabViewer for SyncViewer<'_> {
+    type Tab = TabMetadata;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        (tab.title.as_str()).into()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        match tab.title.as_str() {
+            "Galleries" => self.show_galleries(ui),
+            "Tags" => self.show_tags(ui),
+            "Works" => self.show_works(ui),
+            "Work Info" => self.show_info(ui),
+            _ => Ok(())
+        }.expect("Failed to run the UX")
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UxState {
+    show_preferences: bool,
+    show_about: bool,
+    tag_filter: String,
+    tag_selection: TagSet,
+    work_filter: String,
+    selected_work: Option<i64>,
+
+    #[serde(default = "LruCache::unbounded")]
+    #[serde(skip)]
+    works_lru: LruCache<String, u32>,
+
+    #[serde(skip)]
+    per_frame_work_upload_count: usize,
+}
+
+impl Default for UxState {
+    fn default() -> Self {
+        Self {
+            show_preferences: false,
+            show_about: false,
+            tag_filter: String::new(),
+            tag_selection: TagSet::default(),
+            work_filter: String::new(),
+            works_lru: LruCache::unbounded(),
+            per_frame_work_upload_count: 0,
+            selected_work: None,
+        }
+    }
+}
+
+impl UxState {
+    const LRU_CACHE_SIZE: usize = 1_000;
+    const MAX_PER_FRAME_UPLOADS: usize = 3;
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UxToplevel {
+    dock_state: DockState<TabMetadata>,
+    state: UxState,
+}
+
+impl Default for UxToplevel {
+    fn default() -> Self {
+        let mut dock_state = DockState::new(vec![TabMetadata::new("Works")]);
+        let surface = dock_state.main_surface_mut();
+        let [right_node, galleries_node] =
+            surface.split_left(NodeIndex::root(), 0.2, vec![TabMetadata::new("Galleries")]);
+        let [_works_node, _info_node] =
+            surface.split_right(right_node, 0.8, vec![TabMetadata::new("Work Info")]);
+        surface.split_below(
+            galleries_node,
+            0.2,
+            vec![TabMetadata::new("Tags"), TabMetadata::new("Artists")],
+        );
+        Self {
+            dock_state,
+            state: UxState::default(),
+        }
+    }
+}
+
+impl UxToplevel {
+    pub fn main(
+        &mut self,
+        env: &Environment,
+        sync: &mut PluginHost,
+        ctx: &egui::Context,
+    ) -> Result<()> {
+        Self::handle_shortcuts(ctx);
+
+        // Render window parts
+        self.render_menu(ctx);
+        egui::CentralPanel::default()
+            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(0.))
+            .show(ctx, |ui| {
+                DockArea::new(&mut self.dock_state)
+                    .style(Style::from_egui(ui.style().as_ref()))
+                    .show(
+                        ctx,
+                        &mut SyncViewer::wrap(sync, &mut self.state, &env.data_dir()),
+                    );
+            });
+
+        // Sub-windows
+        self.render_preferences(ctx);
+        self.render_about(ctx);
+
+        Ok(())
+    }
+
+    fn handle_shortcuts(ctx: &egui::Context) {
+        let mut close = false;
+        ctx.input_mut(|input| {
+            if input.consume_key(Modifiers::NONE, Key::Escape) {
+                close = true;
+                // ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+        if close {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    fn render_menu(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Preferences...").clicked() {
+                        self.state.show_preferences = true;
+                    }
+                    ui.separator();
+                    if ui.button("Quit").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                ui.menu_button("Help", |ui| {
+                    if ui.button("About...").clicked() {
+                        self.state.show_about = true;
+                    }
+                });
+            });
+        });
+    }
+
+    fn render_preferences(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Preferences")
+            .open(&mut self.state.show_preferences)
+            .show(ctx, |ui| {
+                egui::widgets::global_theme_preference_buttons(ui);
+            });
+    }
+
+    fn render_about(&mut self, ctx: &egui::Context) {
+        egui::Window::new("About")
+            .open(&mut self.state.show_about)
+            .show(ctx, |ui| {
+                ui.label("about");
+            });
+    }
+}

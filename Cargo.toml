@@ -1,34 +1,53 @@
-[workspace.package]
-description = "Preserve art and history."
-version = "0.0.1"
-authors = ["Terrence Cole <terrence@trainedmonkeystudios.com>"]
+[package]
+name = "artchiver"
+version = "0.1.0"
+authors = ["Terrence D Cole <terrence.d.cole@gmail.com>"]
 edition = "2024"
-readme = ""
-homepage = ""
-documentation = ""
-repository = "https://github.com/Trained-Monkey-Studios/artchiver"
-license = "GPL-3"
-keywords = []
-categories = []
+include = ["LICENSE", "**/*.rs", "Cargo.toml"]
+rust-version = "1.88"
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [workspace]
-resolver = "2"
-members = [
-    # Applications
-    "apps/artchiver",
-    # Crates
-    "crates/sync",
-    "crates/ux",
-    # Plugins and SDK
-    "plugins/artchiver_sdk",
-    "plugins/the_met",
-]
+exclude = ["plugins/artchiver_sdk", "plugins/the_met"]
 
-[workspace.dependencies]
+[dependencies]
+image = { version = "0.25.6", default-features = false, features = [
+    "avif",
+    "bmp",
+    "dds",
+    "exr",
+    "ff",
+    "gif",
+    "hdr",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "tga",
+    "tiff",
+    "webp",
+    "rayon", # we have it anyway
+] }
+egui = "0.32"
+eframe = { version = "0.32", default-features = false, features = [
+    "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
+    "default_fonts", # Embed the default egui fonts.
+    "glow",          # Use the glow rendering backend. Alternative: "wgpu".
+    "persistence",   # Enable restoring app state when restarting the app.
+    "wayland",       # To support Linux (and CI)
+    "x11",           # To support older Linux distributions (restores one of the default features)
+] }
+log = "0.4.27"
+
+anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
-egui_dock = "0.16" # pulls same version of egui as bevy_egui
-egui_extras = { version = "0.31.1", features = ["image", "file", "gif", "webp"] } # matching bevy_egui
+egui_dock = { version = "0.17", features = ["serde"] }
+egui_extras = { version = "0.32", features = ["image", "file", "gif", "webp"] } # matching bevy_egui
 io_tee = "0.1"
 itertools = "0.14"
 jiff = { version ="0.2", features = ["serde"] }
@@ -41,137 +60,217 @@ r2d2_sqlite = "0.31"
 rand = "0.9" # as pulled in by glam 29.2
 rayon = "1.10"
 rusqlite = { version = "0.37", features = ["array", "bundled", "load_extension", "jiff", "rusqlite-macros", "vtab"] }
-serde = "1.0"
 sha2 = "0.10"
 extism = "1.0"
 ureq = { version = "3.0", features = ["json"] }
 
-# Note: use via bevy_image with feature flags on bevy
-#image = { version = "0.25.6", default-features = false, features = [
-#    "gif", "webp", "rayon", "jpeg", "png", "tiff", "ktx2", "dds"
-#] }
-
-bevy_egui = { version = "0.35", features = ["render"] }
-bevy_framepace = "0.19"
-bevy = { version = "0.16", default-features = false, features = [
-    # Default
-    #"android-game-activity", # Android GameActivity support. Default, choose between this and android-native-activity.
-    #"android_shared_stdcxx", # Enable using a shared stdlib for cxx on Android
-    #"animation", # Enable animation support, and glTF animation loading
-    #"bevy_animation", # Provides animation functionality
-    "bevy_asset", # Provides asset functionality
-    #"bevy_audio", # Provides audio functionality
-    "bevy_color", # Provides shared color types and operations
-    "bevy_core_pipeline", # Provides cameras and other basic render pipeline features
-    "bevy_gilrs", # Adds gamepad support
-    #"bevy_gizmos", # Adds support for rendering gizmos
-    #"bevy_gltf", # glTF support
-    #"bevy_mesh_picking_backend", # Provides an implementation for picking meshes
-    #"bevy_pbr", # Adds PBR rendering
-    #"bevy_picking", # Provides picking functionality
-    #"bevy_reflect",
-    "bevy_render", # Provides rendering functionality
-    #"bevy_scene", # Provides scene functionality
-    "bevy_sprite", # Provides sprite functionality
-    #"bevy_sprite_picking_backend", # Provides an implementation for picking sprites
-    #"bevy_state", # Enable built in global state machines
-    #"bevy_text", # Provides text functionality
-    #"bevy_ui", # A custom ECS-driven UI framework
-    #"bevy_ui_picking_backend", # Provides an implementation for picking UI
-    "bevy_window", # Windowing layer
-    "bevy_winit", # winit window and input backend
-    #"custom_cursor", # Enable winit custom cursor support
-    #"default_font", # Include a default font, containing only ASCII characters, at the cost of a 20kB binary size increase
-    "hdr", # HDR image format support
-    "ktx2", # KTX2 compressed texture support
-    "multi_threaded", # Enables multithreaded parallelism in the engine. Disabling it forces all engine tasks to run on a single thread.
-    "png", # PNG image format support
-    #"smaa_luts", # Include SMAA Look Up Tables KTX2 Files
-    "sysinfo_plugin", # Enables system information diagnostic plugin
-    #"tonemapping_luts", # Include tonemapping Look Up Tables KTX2 files. If everything is pink, you need to enable this feature or change the Tonemapping method for your Camera2d or Camera3d.
-    "vorbis", # OGG/VORBIS audio format support
-    #"webgl2", # Enable some limitations to be able to use WebGL2. Please refer to the WebGL2 and WebGPU section of the examples README for more information on how to run Wasm builds with WebGPU.
-    "x11", # X11 display server support
-    "zstd", # For KTX2 supercompression
-    # Optional
-    #"accesskit_unix", # Enable AccessKit on Unix backends (currently only works with experimental screen readers and forks.)
-    #"android-native-activity", # Android NativeActivity support. Legacy, should be avoided for most new Android games.
-    #"asset_processor", # Enables the built-in asset processor for processed assets.
-    #"async-io", # Use async-io’s implementation of block_on instead of futures-lite’s implementation. This is preferred if your application uses async-io.
-    #"basis-universal", # Basis Universal compressed texture support
-    #"bevy_ci_testing", # Enable systems that allow for automated testing on CI
-    #"bevy_debug_stepping", # Enable stepping-based debugging of Bevy systems
-    #"bevy_dev_tools", # Provides a collection of developer tools
-    #"bevy_image", # Load and access image data. Usually added by an image format
-    #"bevy_remote", # Enable the Bevy Remote Protocol
-    #"bmp", # BMP image format support
-    #"dds", # DDS compressed texture support
-    #"debug_glam_assert", # Enable assertions in debug builds to check the validity of parameters passed to glam
-    #"detailed_trace", # Enable detailed trace event logging. These trace events are expensive even when off, thus they require compile time opt-in
-    #"dynamic_linking", # Force dynamic linking, which improves iterative compile times
-    #"embedded_watcher", # Enables watching in memory asset providers for Bevy Asset hot-reloading
-    #"experimental_pbr_pcss", # Enable support for PCSS, at the risk of blowing past the global, per-shader sampler limit on older/lower-end GPUs
-    #"exr", # EXR image format support
-    #"ff", # Farbfeld image format support
-    #"file_watcher", # Enables watching the filesystem for Bevy Asset hot-reloading
-    #"flac", # FLAC audio format support
-    #"ghost_nodes", # Experimental support for nodes that are ignored for UI layouting
-    #"gif", # GIF image format support
-    #"glam_assert", # Enable assertions to check the validity of parameters passed to glam
-    #"ico", # ICO image format support
-    #"ios_simulator", # Enable support for the ios_simulator by downgrading some rendering capabilities
-    "jpeg", # JPEG image format support
-    #"meshlet", # Enables the meshlet renderer for dense high-poly scenes (experimental)
-    #"meshlet_processor", # Enables processing meshes into meshlet meshes for bevy_pbr
-    #"minimp3", # MP3 audio format support (through minimp3)
-    #"mp3", # MP3 audio format support
-    #"pbr_anisotropy_texture", # Enable support for anisotropy texture in the StandardMaterial, at the risk of blowing past the global, per-shader texture limit on older/lower-end GPUs
-    #"pbr_multi_layer_material_textures", # Enable support for multi-layer material textures in the StandardMaterial, at the risk of blowing past the global, per-shader texture limit on older/lower-end GPUs
-    #"pbr_transmission_textures", # Enable support for transmission-related textures in the StandardMaterial, at the risk of blowing past the global, per-shader texture limit on older/lower-end GPUs
-    #"pnm", # PNM image format support, includes pam, pbm, pgm and ppm
-    #"qoi", # QOI image format support
-    #"reflect_functions", # Enable function reflection
-    #"serialize", # Enable serialization support through serde
-    #"shader_format_glsl", # Enable support for shaders in GLSL
-    #"shader_format_spirv", # Enable support for shaders in SPIR-V
-    #"spirv_shader_passthrough", # Enable passthrough loading for SPIR-V shaders (Only supported on Vulkan, shader capabilities and extensions must agree with the platform implementation)
-    #"symphonia-aac", # AAC audio format support (through symphonia)
-    #"symphonia-all", # AAC, FLAC, MP3, MP4, OGG/VORBIS, and WAV audio formats support (through symphonia)
-    #"symphonia-flac", # FLAC audio format support (through symphonia)
-    #"symphonia-isomp4", # MP4 audio format support (through symphonia)
-    #"symphonia-vorbis", # OGG/VORBIS audio format support (through symphonia)
-    #"symphonia-wav", # WAV audio format support (through symphonia)
-    #"tga", # TGA image format support
-    #"tiff", # TIFF image format support
-    "trace", # Tracing support
-    #"trace_chrome", # Tracing support, saving a file in Chrome Tracing format
-    #"trace_tracy", # Tracing support, exposing a port for Tracy
-    #"trace_tracy_memory", # Tracing support, with memory profiling, exposing a port for Tracy
-    #"track_change_detection", # Enables source location tracking for change detection, which can assist with debugging
-    #"wav", # WAV audio format support
-    "wayland", # Wayland display server support
-    #"webgpu", # Enable support for WebGPU in Wasm. When enabled, this feature will override the webgl2 feature and you won’t be able to run Wasm builds with WebGL2, only with WebGPU.
-    #"webp", # WebP image format support
-    #"zlib", # For KTX2 supercompression
-] }
-
-sync = { path = "crates/sync" }
-ux = { path = "crates/ux" }
 artchiver_sdk = { path = "plugins/artchiver_sdk" }
 
-# Change to emit debugging symbols when tracing is required
+# You only need serde if you want app persistence:
+serde = { version = "1.0.219", features = ["derive"] }
+env_logger = "0.11.8"
+
 [profile.release]
-#debug = true
-debug = false
+opt-level = 2 # fast and small wasm
 
-# Turn on a small amount of optimisation while developing, mostly targetted
-# at triangulate, image, and other packages that are artificially
-# slow in debug builds. Note that we have to turn it on from _all_, not just
-# dependencies because of inlining.
-[profile.dev]
-debug = true
-debug-assertions = true
-opt-level = 1
+# Optimize all dependencies even in debug builds:
+[profile.dev.package."*"]
+opt-level = 2
 
-[profile.dev.package.image]
-opt-level = 3
+
+[patch.crates-io]
+
+# If you want to use the bleeding edge version of egui and eframe:
+# egui = { git = "https://github.com/emilk/egui", branch = "main" }
+# eframe = { git = "https://github.com/emilk/egui", branch = "main" }
+
+# If you fork https://github.com/emilk/egui you can test with:
+# egui = { path = "../egui/crates/egui" }
+# eframe = { path = "../egui/crates/eframe" }
+
+
+
+# ----------------------------------------------------------------------------------------
+# Lints:
+
+[lints]
+workspace = true
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+elided_lifetimes_in_paths = "warn"
+future_incompatible = { level = "warn", priority = -1 }
+nonstandard_style = { level = "warn", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+rust_2021_prelude_collisions = "warn"
+semicolon_in_expressions_from_macros = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"                         # `unsafe_op_in_unsafe_fn` may become the default in future Rust versions: https://github.com/rust-lang/rust/issues/71668
+unused_extern_crates = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+
+trivial_casts = "warn"
+unused_qualifications = "warn"
+
+
+[workspace.lints.rustdoc]
+all = "warn"
+missing_crate_level_docs = "warn"
+
+
+[workspace.lints.clippy]
+allow_attributes = "warn"
+as_ptr_cast_mut = "warn"
+await_holding_lock = "warn"
+bool_to_int_with_if = "warn"
+char_lit_as_u8 = "warn"
+checked_conversions = "warn"
+clear_with_drain = "warn"
+cloned_instead_of_copied = "warn"
+dbg_macro = "warn"
+debug_assert_with_mut_call = "warn"
+derive_partial_eq_without_eq = "warn"
+disallowed_macros = "warn"                  # See clippy.toml
+disallowed_methods = "warn"                 # See clippy.toml
+disallowed_names = "warn"                   # See clippy.toml
+disallowed_script_idents = "warn"           # See clippy.toml
+disallowed_types = "warn"                   # See clippy.toml
+doc_include_without_cfg  = "warn"
+doc_link_with_quotes = "warn"
+doc_markdown = "warn"
+empty_enum = "warn"
+empty_enum_variants_with_brackets = "warn"
+enum_glob_use = "warn"
+equatable_if_let = "warn"
+exit = "warn"
+expl_impl_clone_on_copy = "warn"
+explicit_deref_methods = "warn"
+explicit_into_iter_loop = "warn"
+explicit_iter_loop = "warn"
+fallible_impl_from = "warn"
+filter_map_next = "warn"
+flat_map_option = "warn"
+float_cmp_const = "warn"
+fn_params_excessive_bools = "warn"
+fn_to_numeric_cast_any = "warn"
+from_iter_instead_of_collect = "warn"
+get_unwrap = "warn"
+implicit_clone = "warn"
+imprecise_flops = "warn"
+index_refutable_slice = "warn"
+inefficient_to_string = "warn"
+infinite_loop = "warn"
+into_iter_without_iter = "warn"
+invalid_upcast_comparisons = "warn"
+iter_filter_is_ok = "warn"
+iter_filter_is_some = "warn"
+iter_not_returning_iterator = "warn"
+iter_on_empty_collections = "warn"
+iter_on_single_items = "warn"
+iter_over_hash_type = "warn"
+iter_without_into_iter = "warn"
+large_digit_groups = "warn"
+large_include_file = "warn"
+large_stack_arrays = "warn"
+large_stack_frames = "warn"
+large_types_passed_by_value = "warn"
+let_underscore_must_use = "warn"
+let_underscore_untyped = "warn"
+let_unit_value = "warn"
+linkedlist = "warn"
+literal_string_with_formatting_args = "warn"
+lossy_float_literal = "warn"
+macro_use_imports = "warn"
+manual_assert = "warn"
+manual_clamp = "warn"
+manual_instant_elapsed = "warn"
+manual_is_power_of_two = "warn"
+manual_is_variant_and = "warn"
+manual_let_else = "warn"
+manual_ok_or = "warn"
+manual_string_new = "warn"
+map_err_ignore = "warn"
+map_flatten = "warn"
+match_bool = "warn"
+match_on_vec_items = "warn"
+match_same_arms = "warn"
+match_wild_err_arm = "warn"
+match_wildcard_for_single_variants = "warn"
+mem_forget = "warn"
+mismatching_type_param_order = "warn"
+missing_assert_message = "warn"
+missing_enforced_import_renames = "warn"
+missing_safety_doc = "warn"
+mixed_attributes_style = "warn"
+mut_mut = "warn"
+mutex_integer = "warn"
+needless_borrow = "warn"
+needless_continue = "warn"
+needless_for_each = "warn"
+needless_pass_by_ref_mut = "warn"
+needless_pass_by_value = "warn"
+negative_feature_names = "warn"
+non_zero_suggestions = "warn"
+nonstandard_macro_braces = "warn"
+option_as_ref_cloned = "warn"
+option_option = "warn"
+path_buf_push_overwrite = "warn"
+pathbuf_init_then_push = "warn"
+ptr_as_ptr = "warn"
+ptr_cast_constness = "warn"
+pub_underscore_fields = "warn"
+pub_without_shorthand = "warn"
+rc_mutex = "warn"
+readonly_write_lock = "warn"
+redundant_type_annotations = "warn"
+ref_as_ptr = "warn"
+ref_option_ref = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_functions_in_if_condition = "warn"
+semicolon_if_nothing_returned = "warn"
+set_contains_or_insert = "warn"
+should_panic_without_expect = "warn"
+single_char_pattern = "warn"
+single_match_else = "warn"
+str_split_at_newline = "warn"
+str_to_string = "warn"
+string_add = "warn"
+string_add_assign = "warn"
+string_lit_as_bytes = "warn"
+string_lit_chars_any = "warn"
+string_to_string = "warn"
+suspicious_command_arg_space = "warn"
+suspicious_xor_used_as_pow = "warn"
+todo = "warn"
+too_long_first_doc_paragraph = "warn"
+too_many_lines = "warn"
+trailing_empty_array = "warn"
+trait_duplication_in_bounds = "warn"
+tuple_array_conversions = "warn"
+unchecked_duration_subtraction = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+uninhabited_references = "warn"
+uninlined_format_args = "warn"
+unnecessary_box_returns = "warn"
+unnecessary_literal_bound = "warn"
+unnecessary_safety_doc = "warn"
+unnecessary_struct_initialization = "warn"
+unnecessary_wraps = "warn"
+unnested_or_patterns = "warn"
+unused_peekable = "warn"
+unused_rounding = "warn"
+unused_self = "warn"
+unused_trait_names = "warn"
+unwrap_used = "warn"
+use_self = "warn"
+useless_transmute = "warn"
+verbose_file_reads = "warn"
+wildcard_dependencies = "warn"
+wildcard_imports = "warn"
+zero_sized_map_values = "warn"
+
+manual_range_contains = "warn"       # this is better on 'allow'
+map_unwrap_or = "warn"               # this is better on 'allow'

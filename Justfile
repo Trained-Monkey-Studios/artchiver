@@ -1,6 +1,6 @@
 
 plugin:
-    cargo build --target wasm32-unknown-unknown -p the_met
+    pushd plugins/the_met && cargo build --target wasm32-unknown-unknown && popd
 
 fmt:
     cargo fmt --all

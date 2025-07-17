@@ -11,8 +11,12 @@ o Insert work-tag links for all tags a work has, not just the one we're querying
 o Make positive tags an ^ rather than a v.
 o Allow selecting an image and show its metadata
 o Limit number of images we try to upload each frame to avoid freezing the UI
+o Compute area needed to cover so we can request the correct range; support range requests
+o Port to eframe
+* Task system and task cancellation
 * Associate refresh tags with the plugin rather than a global
+* Center works in their viewports and figure out how to kill spacing between works
+* Resizable thumbnails
 * Draw preview images at any size
-* Compute area needed to cover so we can request the correct range; support range requests
 * Cache works lookups
 * Support negative tags

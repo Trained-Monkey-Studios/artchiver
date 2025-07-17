@@ -1,6 +1,21 @@
-/target
+# Mac stuff:
+.DS_Store
+
+# Jetbrains stuff
 .idea
 rover.log
-metadata.db
-/data
-/cache
+
+# trunk output folder
+dist
+
+# Rust compile target directories:
+target
+target_ra
+target_wasm
+
+# https://github.com/lycheeverse/lychee
+.lycheecache
+
+# our programs own state directories
+data
+cache
