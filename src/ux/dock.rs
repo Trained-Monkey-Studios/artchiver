@@ -51,6 +51,9 @@ impl<'a> SyncViewer<'a> {
                 for plugin in self.sync.plugins_mut() {
                     ui.horizontal(|ui| {
                         ui.heading(plugin.name());
+                        if ui.button("⟳ Tags").clicked() {
+                            plugin.refresh_tags().ok();
+                        }
                         match plugin.progress() {
                             Progress::None => {}
                             Progress::Spinner => {
@@ -139,9 +142,6 @@ impl<'a> SyncViewer<'a> {
                 self.state.tag_filter.clear();
             }
             ui.label(format!("({tag_cnt})",));
-            if ui.button("⟳ Refresh All").clicked() {
-                self.sync.refresh_tags().ok();
-            }
         });
         let text_style = egui::TextStyle::Body;
         let row_height = ui.text_style_height(&text_style);
