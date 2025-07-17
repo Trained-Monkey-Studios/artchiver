@@ -2,7 +2,7 @@ use crate::shared::progress::Progress;
 use artchiver_sdk::PluginMetadata;
 
 #[derive(Clone, Debug)]
-pub(crate) enum PluginRequest {
+pub enum PluginRequest {
     Shutdown,
     ApplyConfiguration { config: Vec<(String, String)> },
     RefreshTags,
@@ -10,7 +10,7 @@ pub(crate) enum PluginRequest {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum PluginResponse {
+pub enum PluginResponse {
     PluginInfo(PluginMetadata),
     Progress(Progress),
     Message(String),

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::*;
+use log::info;
 use platform_dirs::AppDirs;
 use std::{
     fs,
@@ -13,9 +13,9 @@ pub struct Environment {
 }
 
 impl Environment {
-    pub fn new(prefix: PathBuf) -> Result<Self> {
-        let env = Environment {
-            prefix: prefix.clone(),
+    pub fn new(prefix: &Path) -> Result<Self> {
+        let env = Self {
+            prefix: prefix.to_owned(),
             app_dirs: AppDirs::new(Some("artchiver"), false).expect("Failed to create AppDirs"),
         };
 

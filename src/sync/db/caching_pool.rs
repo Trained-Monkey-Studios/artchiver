@@ -76,13 +76,14 @@ impl CachingPool {
             return Ok(cache.tags.clone());
         }
         let tags = self.pool.tags_list(range.clone(), filter)?;
+        let out = tags.clone();
         self.tag_cache = Some(TagCache {
             db_gen: self.database_generation,
             filter: filter.to_owned(),
             range,
             tags,
         });
-        Ok(self.tag_cache.as_ref().unwrap().tags.clone())
+        Ok(out)
     }
 
     pub fn list_plugins_for_tag(&mut self, tag: &str) -> Result<HashSet<String>> {

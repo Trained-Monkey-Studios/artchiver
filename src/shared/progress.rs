@@ -1,7 +1,7 @@
 use crate::shared::plugin::PluginResponse;
 use anyhow::Result;
 use crossbeam::channel::Sender;
-use log::*;
+use log::{info, trace};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Progress {
@@ -55,10 +55,10 @@ impl ProgressSender {
         let msg = message.as_ref();
         info!("{msg}");
         self.tx_to_runner
-            .send(PluginResponse::Message(msg.to_string()))
+            .send(PluginResponse::Message(msg.to_owned()))
             .ok();
         self.tx_to_runner
-            .send(PluginResponse::Trace(msg.to_string()))
+            .send(PluginResponse::Trace(msg.to_owned()))
             .ok();
     }
 
@@ -66,7 +66,7 @@ impl ProgressSender {
         let msg = message.as_ref();
         trace!("{msg}");
         self.tx_to_runner
-            .send(PluginResponse::Trace(msg.to_string()))
+            .send(PluginResponse::Trace(msg.to_owned()))
             .ok();
     }
 }

@@ -1,4 +1,4 @@
-use itertools::Itertools;
+use itertools::Itertools as _;
 use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt, rc::Rc};
@@ -11,11 +11,11 @@ pub enum TagStatus {
 
 impl TagStatus {
     pub fn enabled(&self) -> bool {
-        matches!(self, TagStatus::Enabled)
+        matches!(self, Self::Enabled)
     }
 
     pub fn disabled(&self) -> bool {
-        matches!(self, TagStatus::Disabled)
+        matches!(self, Self::Disabled)
     }
 }
 
@@ -28,7 +28,7 @@ pub struct TagSet {
 impl TagSet {
     pub fn status(&self, tag: &str) -> TagStatus {
         if self.enabled.contains(tag) {
-            assert!(!self.disabled.contains(tag));
+            assert!(!self.disabled.contains(tag), "tag in both sets");
             TagStatus::Enabled
         } else if self.disabled.contains(tag) {
             TagStatus::Disabled

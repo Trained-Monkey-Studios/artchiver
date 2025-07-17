@@ -80,6 +80,6 @@ mod tests {
             ...
              */
         }
-        assert!(dbg!(start.elapsed()) > Duration::from_secs(3));
+        assert!(start.elapsed() > Duration::from_secs(3));
     }
 }

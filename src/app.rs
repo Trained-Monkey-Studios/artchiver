@@ -24,9 +24,10 @@ pub struct ArtchiverApp {
 
 impl Default for ArtchiverApp {
     fn default() -> Self {
-        let env = Environment::new(std::env::current_dir().unwrap()).unwrap();
-        let pool = MetadataPool::connect_or_create(&env).unwrap();
-        let host = PluginHost::new(pool, &env).unwrap();
+        let pwd = std::env::current_dir().expect("failed to get working directory");
+        let env = Environment::new(&pwd).expect("failed to create environment");
+        let pool = MetadataPool::connect_or_create(&env).expect("failed to connect to database");
+        let host = PluginHost::new(pool, &env).expect("failed to set up plugins");
         Self {
             toplevel: UxToplevel::default(),
             env,
@@ -60,7 +61,9 @@ impl eframe::App for ArtchiverApp {
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.host.maintain_plugins();
-        self.toplevel.main(&self.env, &mut self.host, ctx).unwrap();
+        self.toplevel
+            .main(&self.env, &mut self.host, ctx)
+            .expect("ux update error");
 
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
@@ -88,6 +91,8 @@ impl eframe::App for ArtchiverApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&glow::Context>) {
-        self.host.cleanup_for_exit().unwrap();
+        self.host
+            .cleanup_for_exit()
+            .expect("failed to cleanup plugins on exit");
     }
 }

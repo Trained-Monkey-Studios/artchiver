@@ -25,7 +25,7 @@ pub struct TabMetadata {
 impl TabMetadata {
     pub fn new(title: &str) -> Self {
         Self {
-            title: title.to_string(),
+            title: title.to_owned(),
         }
     }
 }
@@ -37,11 +37,7 @@ struct SyncViewer<'a> {
 }
 
 impl<'a> SyncViewer<'a> {
-    fn wrap(
-        sync: &'a mut PluginHost,
-        state: &'a mut UxState,
-        data_dir: &'a Path,
-    ) -> SyncViewer<'a> {
+    fn wrap(sync: &'a mut PluginHost, state: &'a mut UxState, data_dir: &'a Path) -> Self {
         Self {
             sync,
             state,
@@ -50,86 +46,92 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_galleries(&mut self, ui: &mut egui::Ui) -> Result<()> {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for plugin in self.sync.plugins_mut() {
-                ui.horizontal(|ui| {
-                    ui.heading(plugin.name());
-                    match plugin.progress() {
-                        Progress::None => {}
-                        Progress::Spinner => {
-                            ui.spinner();
+        egui::ScrollArea::vertical()
+            .show(ui, |ui| -> Result<()> {
+                for plugin in self.sync.plugins_mut() {
+                    ui.horizontal(|ui| {
+                        ui.heading(plugin.name());
+                        match plugin.progress() {
+                            Progress::None => {}
+                            Progress::Spinner => {
+                                ui.spinner();
+                            }
+                            Progress::Percent { current, total } => {
+                                ui.add(
+                                    egui::ProgressBar::new(*current as f32 / *total as f32)
+                                        .animate(true)
+                                        .show_percentage(),
+                                );
+                            }
                         }
-                        Progress::Percent { current, total } => {
-                            ui.add(
-                                egui::ProgressBar::new(*current as f32 / *total as f32)
-                                    .animate(true)
-                                    .show_percentage(),
-                            );
-                        }
-                    }
-                });
-                egui::Frame::new()
-                    .inner_margin(indented(16))
-                    .show(ui, |ui| {
-                        egui::CollapsingHeader::new("Details")
-                            .id_salt(format!("details_section_{}", plugin.name()))
-                            .show(ui, |ui| {
-                                ui.label(plugin.description());
-                                egui::Grid::new(format!("plugin_grid_{}", plugin.name()))
-                                    .num_columns(2)
-                                    .show(ui, |ui| {
-                                        ui.label("Source");
-                                        ui.label(plugin.source().display().to_string());
-                                        ui.end_row();
-                                        ui.label("Version");
-                                        ui.label(plugin.version());
-                                        ui.end_row();
-                                        if let Some(meta) = plugin.metadata_mut() {
-                                            for (config_key, config_val) in
-                                                meta.configurations_mut()
-                                            {
-                                                ui.label(config_key);
-                                                ui.text_edit_singleline(config_val);
-                                                ui.end_row();
-                                            }
-                                            if !meta.configurations().is_empty()
-                                                && ui.button("Update").clicked()
-                                            {
-                                                plugin.apply_configuration().unwrap();
-                                            }
-                                        }
-                                    });
-                            });
-                        egui::CollapsingHeader::new("Messages")
-                            .id_salt(format!("messages_section_{}", plugin.name()))
-                            .show(ui, |ui| {
-                                for message in plugin.messages() {
-                                    ui.add(
-                                        egui::Label::new(message).wrap_mode(TextWrapMode::Truncate),
-                                    );
-                                }
-                            });
-                        egui::CollapsingHeader::new("Traces")
-                            .id_salt(format!("traces_section_{}", plugin.name()))
-                            .show(ui, |ui| {
-                                for message in plugin.traces() {
-                                    ui.add(
-                                        egui::Label::new(message).wrap_mode(TextWrapMode::Truncate),
-                                    );
-                                }
-                            });
                     });
-            }
-        });
+                    egui::Frame::new()
+                        .inner_margin(indented(16))
+                        .show(ui, |ui| -> Result<()> {
+                            egui::CollapsingHeader::new("Details")
+                                .id_salt(format!("details_section_{}", plugin.name()))
+                                .show(ui, |ui| -> Result<()> {
+                                    ui.label(plugin.description());
+                                    egui::Grid::new(format!("plugin_grid_{}", plugin.name()))
+                                        .num_columns(2)
+                                        .show(ui, |ui| -> Result<()> {
+                                            ui.label("Source");
+                                            ui.label(plugin.source().display().to_string());
+                                            ui.end_row();
+                                            ui.label("Version");
+                                            ui.label(plugin.version());
+                                            ui.end_row();
+                                            if let Some(meta) = plugin.metadata_mut() {
+                                                for (config_key, config_val) in
+                                                    meta.configurations_mut()
+                                                {
+                                                    ui.label(config_key);
+                                                    ui.text_edit_singleline(config_val);
+                                                    ui.end_row();
+                                                }
+                                                if !meta.configurations().is_empty()
+                                                    && ui.button("Update").clicked()
+                                                {
+                                                    plugin.apply_configuration()?;
+                                                }
+                                            }
+                                            Ok(())
+                                        })
+                                        .inner?;
+                                    Ok(())
+                                });
+                            egui::CollapsingHeader::new("Messages")
+                                .id_salt(format!("messages_section_{}", plugin.name()))
+                                .show(ui, |ui| {
+                                    for message in plugin.messages() {
+                                        ui.add(
+                                            egui::Label::new(message)
+                                                .wrap_mode(TextWrapMode::Truncate),
+                                        );
+                                    }
+                                });
+                            egui::CollapsingHeader::new("Traces")
+                                .id_salt(format!("traces_section_{}", plugin.name()))
+                                .show(ui, |ui| {
+                                    for message in plugin.traces() {
+                                        ui.add(
+                                            egui::Label::new(message)
+                                                .wrap_mode(TextWrapMode::Truncate),
+                                        );
+                                    }
+                                });
+                            Ok(())
+                        })
+                        .inner?;
+                }
+                Ok(())
+            })
+            .inner?;
         Ok(())
     }
 
     fn show_tags(&mut self, ui: &mut egui::Ui) -> Result<()> {
-        let tag_cnt = self
-            .sync
-            .pool_mut()
-            .tags_count(&self.state.tag_filter)
-            .unwrap();
+        let tag_cnt = self.sync.pool_mut().tags_count(&self.state.tag_filter)?;
         // Show the filter and global refresh-all-tags button.
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.state.tag_filter);
@@ -145,13 +147,12 @@ impl<'a> SyncViewer<'a> {
             .show_rows(
                 ui,
                 row_height,
-                tag_cnt.try_into().unwrap(),
-                |ui, row_range| {
+                tag_cnt.try_into()?,
+                |ui, row_range| -> Result<()> {
                     let tags = self
                         .sync
                         .pool_mut()
-                        .tags_list(row_range, &self.state.tag_filter)
-                        .unwrap();
+                        .tags_list(row_range, &self.state.tag_filter)?;
 
                     egui::Grid::new("tag_grid")
                         .num_columns(1)
@@ -191,8 +192,10 @@ impl<'a> SyncViewer<'a> {
                                 ui.end_row();
                             }
                         });
+                    Ok(())
                 },
-            );
+            )
+            .inner?;
         Ok(())
     }
 
@@ -314,7 +317,7 @@ impl<'a> SyncViewer<'a> {
         Ok(())
     }
 
-    fn show_info(&mut self, ui: &mut egui::Ui) -> Result<()> {
+    fn show_info(&mut self, ui: &mut egui::Ui) {
         if let Some(work_id) = self.state.selected_work
             && let Ok(work) = self.sync.pool_mut().lookup_work(work_id)
         {
@@ -332,7 +335,6 @@ impl<'a> SyncViewer<'a> {
                 }
             }
         }
-        Ok(())
     }
 
     fn ensure_work_cached(&mut self, work: &Work, ctx: &egui::Context) -> Option<String> {
@@ -391,12 +393,12 @@ impl TabViewer for SyncViewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab.title.as_str() {
-            "Galleries" => self.show_galleries(ui),
-            "Tags" => self.show_tags(ui),
-            "Works" => self.show_works(ui),
+            "Galleries" => self.show_galleries(ui).expect("failed to show gallery"),
+            "Tags" => self.show_tags(ui).expect("failed to show tags"),
+            "Works" => self.show_works(ui).expect("failed to show works"),
             "Work Info" => self.show_info(ui),
-            _ => Ok(())
-        }.expect("Failed to run the UX")
+            _ => {}
+        }
     }
 }
 

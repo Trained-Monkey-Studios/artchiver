@@ -1,8 +1,7 @@
 use crate::shared::{environment::Environment, progress::ProgressSender, tag::TagSet};
 use anyhow::Result;
 use artchiver_sdk::{TagInfo, Work};
-// use bevy::prelude::*;
-use log::*;
+use log::info;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, types::Value};
 use std::{collections::HashSet, ops::Range, rc::Rc};
@@ -75,54 +74,6 @@ const MIGRATIONS: [&str; 9] = [
     );"#,
 ];
 
-fn connect_or_create_db(env: &Environment) -> Result<()> {
-    info!(
-        "Opening Metadata DB at {}",
-        env.metadata_file_path().display()
-    );
-    let manager = SqliteConnectionManager::file(env.metadata_file_path())
-        .with_init(|conn| rusqlite::vtab::array::load_module(conn));
-    let pool = r2d2::Pool::builder().build(manager)?;
-    let conn = pool.get()?;
-    let mode: String = conn.query_one("PRAGMA journal_mode = WAL;", (), |row| row.get(0))?;
-    assert_eq!(mode, "wal");
-    let params = [("synchronous", "NORMAL"), ("cache_size", "2000")];
-    for (name, value) in params {
-        info!("Configuring DB: {name} = {value}");
-        conn.execute(&format!("PRAGMA {name} = {value};"), ())?;
-    }
-    let params = [
-        ("journal_size_limit", (64 * 1024 * 1024).to_string()),
-        ("mmap_size", (1024 * 1024 * 1024).to_string()),
-        ("busy_timeout", "5000".into()),
-    ];
-    for (name, value) in params {
-        info!("Configuring DB: {name} = {value}");
-        let _: i64 = conn.query_one(&format!("PRAGMA {name} = {value};"), [], |row| row.get(0))?;
-    }
-
-    // List all migrations that we've already run.
-    let finished_migrations = {
-        match conn.prepare("SELECT ordinal FROM migrations") {
-            Ok(mut stmt) => match stmt.query_map([], |row| row.get(0)) {
-                Ok(q) => q.flatten().collect::<Vec<i64>>(),
-                Err(_) => vec![],
-            },
-            Err(_) => vec![],
-        }
-    };
-
-    // Execute and record all migration statements
-    for (ordinal, migration) in MIGRATIONS.iter().enumerate() {
-        if !finished_migrations.contains(&(ordinal as i64)) {
-            conn.execute(migration, ())?;
-            conn.execute("INSERT INTO migrations (ordinal) VALUES (?)", [ordinal])?;
-        }
-    }
-
-    Ok(())
-}
-
 fn string_to_rarray(v: &[String]) -> Rc<Vec<Value>> {
     Rc::new(v.iter().cloned().map(Value::from).collect())
 }
@@ -143,13 +94,14 @@ impl MetadataPool {
             .with_init(|conn| rusqlite::vtab::array::load_module(conn));
         let pool = r2d2::Pool::builder().build(manager)?;
         let conn = pool.get()?;
-        // TODO: group with others
-        let mode: String = conn.query_one("PRAGMA journal_mode = WAL;", (), |row| row.get(0))?;
-        assert_eq!(mode, "wal");
-        let params = [("synchronous", "NORMAL"), ("cache_size", "2000")];
-        for (name, value) in params {
+        let params = [
+            ("journal_mode", "WAL", "wal"),
+        ];
+        for (name, value, expect) in params {
             info!("Configuring DB: {name} = {value}");
-            conn.execute(&format!("PRAGMA {name} = {value};"), ())?;
+            let result: String =
+                conn.query_one(&format!("PRAGMA {name} = {value};"), [], |row| row.get(0))?;
+            assert_eq!(result, expect, "failed to configure database");
         }
         let params = [
             ("journal_size_limit", (64 * 1024 * 1024).to_string()),
@@ -160,6 +112,11 @@ impl MetadataPool {
             info!("Configuring DB: {name} = {value}");
             let _: i64 =
                 conn.query_one(&format!("PRAGMA {name} = {value};"), [], |row| row.get(0))?;
+        }
+        let params = [("synchronous", "NORMAL"), ("cache_size", "2000")];
+        for (name, value) in params {
+            info!("Configuring DB: {name} = {value}");
+            conn.execute(&format!("PRAGMA {name} = {value};"), [])?;
         }
 
         // List all migrations that we've already run.
