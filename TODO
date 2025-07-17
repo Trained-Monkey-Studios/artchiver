@@ -15,9 +15,9 @@ o Compute area needed to cover so we can request the correct range; support rang
 o Port to eframe
 o Center works in their viewports and figure out how to kill spacing between works
 o Associate refresh tags with the plugin rather than a global
-* Resizable thumbnails
+o Cache works lookups
+o Zoom mode to show full size image
+* Resizable works gallery images
 * Unify plugin logging
 * Task system and task cancellation
-* Draw preview images at any size
-* Cache works lookups
 * Support negative tags

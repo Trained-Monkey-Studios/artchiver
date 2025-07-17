@@ -19,7 +19,7 @@ impl TagStatus {
     }
 }
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TagSet {
     enabled: HashSet<String>,
     disabled: HashSet<String>,

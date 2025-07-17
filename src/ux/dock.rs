@@ -8,7 +8,7 @@ use egui::{self, Key, Margin, Modifiers, Sense, SizeHint, TextWrapMode, Vec2};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 // Utility function to get an egui margin inset from the left.
 fn indented(px: i8) -> Margin {
@@ -203,10 +203,11 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_works(&mut self, ui: &mut egui::Ui) -> Result<()> {
-        let works_count = self
+        let works_count: usize = self
             .sync
             .pool_mut()
-            .works_count(&self.state.tag_selection)?;
+            .works_count(&self.state.tag_selection)?
+            .try_into()?;
         ui.horizontal(|ui| {
             ui.heading(self.state.tag_selection.to_string());
             ui.label(format!("({works_count})"));
@@ -256,27 +257,13 @@ impl<'a> SyncViewer<'a> {
                                 if let Some(size) = img
                                     .load_and_calc_size(ui, Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE))
                                 {
-                                    // Wide things are already centered, so we only need to care
-                                    // about tall images where y > x
+                                    // Wide things are already centered for some reason,
+                                    // so we only need to care about tall images
                                     if size.y > size.x {
                                         pad = (SIZE - size.x) / 2.;
                                         inner_margin.left = pad as i8;
                                     }
                                 }
-                                // let tlr = img.load_for_size(ui.ctx(), ui.available_size());
-                                // let original_image_size = tlr.as_ref().ok().and_then(|t| t.size());
-                                // if let Some(size) = original_image_size {
-                                //     if size.x > size.y {
-                                //         // Wide image, so pad the top to center
-                                //         // let f = size
-                                //     } else if size.y > size.x {
-                                //         // Tall image, so pad the left to center
-                                //         let sz_x = PREVIEW_SIZE / size.y * size.x;
-                                //         let pad = (PREVIEW_SIZE - sz_x) / 2.;
-                                //         inner_margin.left = pad as i8;
-                                //     }
-                                //     // println!("Size: {size}");
-                                // }
 
                                 let btn = egui::ImageButton::new(img)
                                     .frame(false)
@@ -333,6 +320,26 @@ impl<'a> SyncViewer<'a> {
                 }
             }
         }
+    }
+
+    fn render_slideshow(&mut self, ctx: &egui::Context) -> Result<()> {
+        if self.state.selected_work.is_none() {
+            self.state.mode = UxMode::Browser;
+            return Ok(());
+        }
+        let work_id = self.state.selected_work.expect("selected work");
+        let work = self.sync.pool_mut().lookup_work(work_id)?;
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let size = ui.available_size();
+            if let Some(uri) = self.ensure_work_cached(&work, ui.ctx()) {
+                ui.image(uri);
+            } else {
+                ui.add(egui::Spinner::new().size(size.x.min(size.y)));
+            }
+        });
+
+        Ok(())
     }
 
     fn ensure_work_cached(&mut self, work: &Work, ctx: &egui::Context) -> Option<String> {
@@ -400,8 +407,16 @@ impl TabViewer for SyncViewer<'_> {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum UxMode {
+    #[default]
+    Browser,
+    Slideshow,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UxState {
+    mode: UxMode,
     show_preferences: bool,
     show_about: bool,
     tag_filter: String,
@@ -419,6 +434,7 @@ pub struct UxState {
 impl Default for UxState {
     fn default() -> Self {
         Self {
+            mode: UxMode::Browser,
             show_preferences: false,
             show_about: false,
             tag_filter: String::new(),
@@ -465,41 +481,100 @@ impl UxToplevel {
     pub fn main(
         &mut self,
         env: &Environment,
-        sync: &mut PluginHost,
+        host: &mut PluginHost,
         ctx: &egui::Context,
     ) -> Result<()> {
-        Self::handle_shortcuts(ctx);
+        match self.state.mode {
+            UxMode::Browser => {
+                self.render_menu(ctx);
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(0.))
+                    .show(ctx, |ui| {
+                        DockArea::new(&mut self.dock_state)
+                            .style(Style::from_egui(ui.style().as_ref()))
+                            .show(
+                                ctx,
+                                &mut SyncViewer::wrap(host, &mut self.state, &env.data_dir()),
+                            );
+                    });
 
-        // Render window parts
-        self.render_menu(ctx);
-        egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(0.))
-            .show(ctx, |ui| {
-                DockArea::new(&mut self.dock_state)
-                    .style(Style::from_egui(ui.style().as_ref()))
-                    .show(
-                        ctx,
-                        &mut SyncViewer::wrap(sync, &mut self.state, &env.data_dir()),
-                    );
-            });
+                self.render_preferences(ctx);
+                self.render_about(ctx);
+            }
+            UxMode::Slideshow => {
+                SyncViewer::wrap(host, &mut self.state, &env.data_dir()).render_slideshow(ctx)?;
+            }
+        }
 
-        // Sub-windows
-        self.render_preferences(ctx);
-        self.render_about(ctx);
+        self.handle_shortcuts(ctx);
 
         Ok(())
     }
 
-    fn handle_shortcuts(ctx: &egui::Context) {
-        let mut close = false;
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        let mut focus = None;
+        ctx.memory(|mem| focus = mem.focused());
+
+        const KEYS: [Key; 7] = [
+            Key::Escape,
+            Key::F1,
+            Key::F,
+            Key::F11,
+            Key::Space,
+            Key::ArrowLeft,
+            Key::ArrowRight,
+        ];
+        let mut pressed = HashSet::new();
         ctx.input_mut(|input| {
-            if input.consume_key(Modifiers::NONE, Key::Escape) {
-                close = true;
-                // ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            for key in &KEYS {
+                if input.consume_key(Modifiers::NONE, *key) {
+                    pressed.insert(*key);
+                }
             }
         });
-        if close {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+
+        // If a widget has focus, we generally don't want to do _anything_ with input except let the
+        // user bail on that widget by pushing the escape button.
+        if let Some(id) = focus
+            && pressed.contains(&Key::Escape)
+        {
+            ctx.memory_mut(|mem| {
+                mem.surrender_focus(id);
+            });
+            return;
+        }
+
+        // Each of the modes interprets keys a bit differently, out of necessity.
+        match self.state.mode {
+            UxMode::Browser => {
+                if pressed.contains(&Key::F)
+                    || pressed.contains(&Key::F11)
+                    || pressed.contains(&Key::Space)
+                {
+                    if self.state.selected_work.is_some() {
+                        self.state.mode = UxMode::Slideshow;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+                    }
+                } else if pressed.contains(&Key::Escape) {
+                    if self.state.show_about {
+                        self.state.show_about = false;
+                    } else if self.state.show_preferences {
+                        self.state.show_preferences = false;
+                    } else if pressed.contains(&Key::Escape) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+            }
+            UxMode::Slideshow => {
+                if pressed.contains(&Key::Escape) {
+                    self.state.mode = UxMode::Browser;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                } else if pressed.contains(&Key::ArrowLeft) || pressed.contains(&Key::P) {
+                    // self.state.selected_work = 
+                }
+                // TODO: left/space/n and right/p to switch to next and previous works...
+                //       figure out how to do this quickly
+            }
         }
     }
 

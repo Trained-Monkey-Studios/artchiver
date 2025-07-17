@@ -336,7 +336,7 @@ impl MetadataPool {
         )
     }
 
-    pub fn works_count(&self, tag_set: &TagSet) -> Result<usize> {
+    pub fn works_count(&self, tag_set: &TagSet) -> Result<i64> {
         if tag_set.enabled_count() == 0 {
             return Ok(0);
         }
@@ -346,7 +346,7 @@ impl MetadataPool {
             params![tag_set.enabled_rarray(), tag_set.enabled_count()],
             |row| row.get(0),
         )?;
-        Ok(count.try_into()?)
+        Ok(count)
     }
 
     pub fn works_list(&self, range: Range<usize>, tag_set: &TagSet) -> Result<Vec<Work>> {

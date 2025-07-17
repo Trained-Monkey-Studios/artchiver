@@ -14,7 +14,7 @@ struct TagCountCache {
 }
 
 #[derive(Debug)]
-struct TagCache {
+struct TagsListCache {
     db_gen: u64,
     filter: String,
     range: Range<usize>,
@@ -28,12 +28,37 @@ struct TagPluginCache {
 }
 
 #[derive(Debug)]
+struct WorksCountCache {
+    db_gen: u64,
+    tag_set: TagSet,
+    count: i64,
+}
+
+#[derive(Debug)]
+struct WorksListCache {
+    db_gen: u64,
+    range: Range<usize>,
+    tag_set: TagSet,
+    works: Vec<Work>,
+}
+
+#[derive(Debug)]
+struct WorksLookupCache {
+    db_gen: u64,
+    work_id: i64,
+    work: Work,
+}
+
+#[derive(Debug)]
 pub struct CachingPool {
     pool: MetadataPool,
     database_generation: u64,
     tag_count_cache: Option<TagCountCache>,
-    tag_cache: Option<TagCache>,
+    tags_list_cache: Option<TagsListCache>,
     tag_plugins_cache: HashMap<String, TagPluginCache>,
+    works_count_cache: Option<WorksCountCache>,
+    works_list_cache: Option<WorksListCache>,
+    works_lookup_cache: Option<WorksLookupCache>,
 }
 
 impl CachingPool {
@@ -42,8 +67,11 @@ impl CachingPool {
             pool,
             database_generation: 0,
             tag_count_cache: None,
-            tag_cache: None,
+            tags_list_cache: None,
             tag_plugins_cache: HashMap::new(),
+            works_count_cache: None,
+            works_list_cache: None,
+            works_lookup_cache: None,
         }
     }
 
@@ -68,7 +96,7 @@ impl CachingPool {
     }
 
     pub fn tags_list(&mut self, range: Range<usize>, filter: &str) -> Result<Vec<TagInfo>> {
-        if let Some(cache) = self.tag_cache.as_ref()
+        if let Some(cache) = self.tags_list_cache.as_ref()
             && cache.db_gen == self.database_generation
             && cache.filter == filter
             && cache.range == range
@@ -77,7 +105,7 @@ impl CachingPool {
         }
         let tags = self.pool.tags_list(range.clone(), filter)?;
         let out = tags.clone();
-        self.tag_cache = Some(TagCache {
+        self.tags_list_cache = Some(TagsListCache {
             db_gen: self.database_generation,
             filter: filter.to_owned(),
             range,
@@ -103,17 +131,55 @@ impl CachingPool {
         Ok(plugins)
     }
 
-    pub fn works_count(&mut self, tags: &TagSet) -> Result<usize> {
-        self.pool.works_count(tags)
+    pub fn works_count(&mut self, tag_set: &TagSet) -> Result<i64> {
+        if let Some(cache) = self.works_count_cache.as_ref()
+            && cache.db_gen == self.database_generation
+            && &cache.tag_set == tag_set
+        {
+            return Ok(cache.count);
+        }
+        let count = self.pool.works_count(tag_set)?;
+        self.works_count_cache = Some(WorksCountCache {
+            db_gen: self.database_generation,
+            tag_set: tag_set.clone(),
+            count,
+        });
+        Ok(count)
     }
 
-    pub fn works_list(&mut self, range: Range<usize>, tags: &TagSet) -> Result<Vec<Work>> {
-        // TODO: cache results
-        self.pool.works_list(range, tags)
+    pub fn works_list(&mut self, range: Range<usize>, tag_set: &TagSet) -> Result<Vec<Work>> {
+        if let Some(cache) = self.works_list_cache.as_ref()
+            && cache.db_gen == self.database_generation
+            && cache.range == range
+            && &cache.tag_set == tag_set
+        {
+            return Ok(cache.works.clone());
+        }
+        let works = self.pool.works_list(range.clone(), tag_set)?;
+        let out = works.clone();
+        self.works_list_cache = Some(WorksListCache {
+            db_gen: self.database_generation,
+            range,
+            tag_set: tag_set.clone(),
+            works,
+        });
+        Ok(out)
     }
 
     pub fn lookup_work(&mut self, work_id: i64) -> Result<Work> {
-        // TODO: cache results
-        self.pool.lookup_work(work_id)
+        if let Some(cache) = self.works_lookup_cache.as_ref()
+            && cache.db_gen == self.database_generation
+            && cache.work_id == work_id
+        {
+            return Ok(cache.work.clone());
+        }
+        let work = self.pool.lookup_work(work_id)?;
+        let out = work.clone();
+        self.works_lookup_cache = Some(WorksLookupCache {
+            db_gen: self.database_generation,
+            work_id,
+            work,
+        });
+        Ok(out)
     }
 }

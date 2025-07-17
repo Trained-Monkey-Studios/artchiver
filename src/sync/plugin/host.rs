@@ -233,7 +233,7 @@ impl PluginHandle {
     pub fn progress(&self) -> &Progress {
         &self.progress
     }
-    
+
     pub fn refresh_tags(&self) -> Result<()> {
         self.tx_to_plugin.send(PluginRequest::RefreshTags)?;
         Ok(())
