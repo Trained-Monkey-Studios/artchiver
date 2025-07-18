@@ -52,6 +52,11 @@ impl TagSet {
         self.disabled.insert(tag.to_owned());
     }
 
+    pub fn clear(&mut self) {
+        self.enabled.clear();
+        self.disabled.clear();
+    }
+
     pub fn enabled(&self) -> impl Iterator<Item = &String> {
         self.enabled.iter()
     }

@@ -179,6 +179,8 @@ fn plugin_main(
         if let Err(e) = rv {
             progress.error(format!("Error handling plugin message: {e}"));
         }
+        // Note: we want to fail and crash out of the plugin if nobody is listening.
+        progress.note_completed_task()?;
     }
     Ok(())
 }

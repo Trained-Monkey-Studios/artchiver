@@ -149,7 +149,7 @@ struct Measurement {
 struct Tag {
     term: String,
     AAT_URL: Option<String>,
-    Wikidata_URL: String,
+    Wikidata_URL: Option<String>,
 }
 
 #[allow(non_snake_case, unused)]

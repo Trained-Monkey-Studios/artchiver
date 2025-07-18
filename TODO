@@ -20,6 +20,9 @@ o Zoom mode to show full size image
 o Keys to browse a gallery
 o Center the slideshow image
 o Unify plugin logging
+o Task queue, task management, and active task reporting
+* Task cancellation so we can close fast and safe; or just manage our queue better
+* Add wiki entry to each tag, if present
+* Expand work with ALL THE DATA
 * Resizable works gallery images
-* Task system and task cancellation
 * Support negative tags

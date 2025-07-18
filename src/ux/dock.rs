@@ -1,6 +1,9 @@
 use crate::{
     shared::{environment::Environment, progress::Progress, tag::TagSet},
-    sync::plugin::{client::get_data_path_for_url, host::PluginHost},
+    sync::plugin::{
+        client::get_data_path_for_url,
+        host::{PluginHandle, PluginHost},
+    },
 };
 use anyhow::Result;
 use artchiver_sdk::Work;
@@ -131,6 +134,80 @@ impl<'a> SyncViewer<'a> {
         }
     }
 
+    fn show_plugin_details(ui: &mut egui::Ui, plugin: &mut PluginHandle) {
+        egui::CollapsingHeader::new("Details")
+            .id_salt(format!("details_section_{}", plugin.name()))
+            .show(ui, |ui| -> Result<()> {
+                ui.label(plugin.description());
+                egui::Grid::new(format!("plugin_grid_{}", plugin.name()))
+                    .num_columns(2)
+                    .show(ui, |ui| -> Result<()> {
+                        ui.label("Source");
+                        ui.label(plugin.source().display().to_string());
+                        ui.end_row();
+                        ui.label("Version");
+                        ui.label(plugin.version());
+                        ui.end_row();
+                        if let Some(meta) = plugin.metadata_mut() {
+                            for (config_key, config_val) in meta.configurations_mut() {
+                                ui.label(config_key);
+                                ui.text_edit_singleline(config_val);
+                                ui.end_row();
+                            }
+                            if !meta.configurations().is_empty() && ui.button("Update").clicked() {
+                                plugin.apply_configuration()?;
+                            }
+                        }
+                        Ok(())
+                    })
+                    .inner?;
+                Ok(())
+            });
+    }
+
+    fn show_plugin_tasks(ui: &mut egui::Ui, plugin: &mut PluginHandle) {
+        egui::CollapsingHeader::new("Tasks")
+            .id_salt(format!("tasks_section_{}", plugin.name()))
+            .show(ui, |ui| {
+                let task = match plugin.active_task() {
+                    Some(task) => task.to_string(),
+                    None => "Inactive".to_owned(),
+                };
+                ui.label(format!("Current Task: {task}"));
+                ui.separator();
+                let mut removed = None;
+                for (i, task) in plugin.task_queue().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("x").on_hover_text("Cancel").clicked() {
+                            removed = Some(i);
+                        }
+                        ui.label(format!("{i}: {task}"));
+                    });
+                }
+                if let Some(index) = removed {
+                    plugin.remove_queued_task(index);
+                }
+            });
+    }
+
+    fn show_plugin_logs(ui: &mut egui::Ui, plugin: &PluginHandle) {
+        egui::CollapsingHeader::new("Logs")
+            .id_salt(format!("logs_section_{}", plugin.name()))
+            .show(ui, |ui| {
+                for (level, message) in plugin.log_messages() {
+                    let msg = egui::RichText::new(message);
+                    let msg = match level {
+                        Level::Error => msg.strong().color(egui::Color32::RED),
+                        Level::Warn => msg.color(egui::Color32::YELLOW),
+                        Level::Info => msg.color(egui::Color32::GREEN),
+                        Level::Debug => msg.color(egui::Color32::LIGHT_BLUE),
+                        Level::Trace => msg.color(egui::Color32::LIGHT_GRAY),
+                    };
+                    ui.add(egui::Label::new(msg).wrap_mode(TextWrapMode::Truncate));
+                }
+            });
+    }
+
     fn show_galleries(&mut self, ui: &mut egui::Ui) -> Result<()> {
         egui::ScrollArea::vertical()
             .show(ui, |ui| -> Result<()> {
@@ -138,7 +215,7 @@ impl<'a> SyncViewer<'a> {
                     ui.horizontal(|ui| {
                         ui.heading(plugin.name());
                         if ui.button("⟳ Tags").clicked() {
-                            plugin.refresh_tags().ok();
+                            plugin.refresh_tags();
                         }
                         match plugin.progress() {
                             Progress::None => {}
@@ -157,55 +234,9 @@ impl<'a> SyncViewer<'a> {
                     egui::Frame::new()
                         .inner_margin(indented(16))
                         .show(ui, |ui| -> Result<()> {
-                            egui::CollapsingHeader::new("Details")
-                                .id_salt(format!("details_section_{}", plugin.name()))
-                                .show(ui, |ui| -> Result<()> {
-                                    ui.label(plugin.description());
-                                    egui::Grid::new(format!("plugin_grid_{}", plugin.name()))
-                                        .num_columns(2)
-                                        .show(ui, |ui| -> Result<()> {
-                                            ui.label("Source");
-                                            ui.label(plugin.source().display().to_string());
-                                            ui.end_row();
-                                            ui.label("Version");
-                                            ui.label(plugin.version());
-                                            ui.end_row();
-                                            if let Some(meta) = plugin.metadata_mut() {
-                                                for (config_key, config_val) in
-                                                    meta.configurations_mut()
-                                                {
-                                                    ui.label(config_key);
-                                                    ui.text_edit_singleline(config_val);
-                                                    ui.end_row();
-                                                }
-                                                if !meta.configurations().is_empty()
-                                                    && ui.button("Update").clicked()
-                                                {
-                                                    plugin.apply_configuration()?;
-                                                }
-                                            }
-                                            Ok(())
-                                        })
-                                        .inner?;
-                                    Ok(())
-                                });
-                            egui::CollapsingHeader::new("Logs")
-                                .id_salt(format!("logs_section_{}", plugin.name()))
-                                .show(ui, |ui| {
-                                    for (level, message) in plugin.log_messages() {
-                                        let msg = egui::RichText::new(message);
-                                        let msg = match level {
-                                            Level::Error => msg.strong().color(egui::Color32::RED),
-                                            Level::Warn => msg.color(egui::Color32::YELLOW),
-                                            Level::Info => msg.color(egui::Color32::GREEN),
-                                            Level::Debug => msg.color(egui::Color32::LIGHT_BLUE),
-                                            Level::Trace => msg.color(egui::Color32::LIGHT_GRAY),
-                                        };
-                                        ui.add(
-                                            egui::Label::new(msg).wrap_mode(TextWrapMode::Truncate),
-                                        );
-                                    }
-                                });
+                            Self::show_plugin_details(ui, plugin);
+                            Self::show_plugin_tasks(ui, plugin);
+                            Self::show_plugin_logs(ui, plugin);
                             Ok(())
                         })
                         .inner?;
@@ -302,6 +333,9 @@ impl<'a> SyncViewer<'a> {
             .try_into()?;
         ui.horizontal(|ui| {
             ui.heading(self.state.tag_selection.to_string());
+            if ui.button("x").clicked() {
+                self.state.tag_selection.clear();
+            }
             ui.label(format!("({works_count})"));
         });
 

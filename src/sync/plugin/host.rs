@@ -84,48 +84,51 @@ impl PluginHost {
         self.plugins.iter_mut()
     }
 
-    pub fn refresh_tags(&self) -> Result<()> {
-        for plugin in &self.plugins {
-            plugin.refresh_tags()?;
-        }
-        Ok(())
-    }
-
     pub fn refresh_works_for_tag(&mut self, tag: &str) -> Result<()> {
         let plugin_names = self.pool.list_plugins_for_tag(tag)?;
-        for plugin in &self.plugins {
+        for plugin in &mut self.plugins {
             // Only ask for matching works if the tag came from a plugin.
             if plugin_names.contains(&plugin.name()) {
                 plugin
-                    .tx_to_plugin
-                    .send(PluginRequest::RefreshWorksForTag {
+                    .task_queue
+                    .push_back(PluginRequest::RefreshWorksForTag {
                         tag: tag.to_owned(),
-                    })?;
+                    });
             }
         }
         Ok(())
     }
 
     pub(crate) fn maintain_plugins(&mut self) {
+        // Receive messages from plugin
         let mut database_changed = false;
-        for handle in &mut self.plugins {
-            while let Ok(msg) = handle.rx_from_plugin.try_recv() {
+        for plugin in &mut self.plugins {
+            while let Ok(msg) = plugin.rx_from_plugin.try_recv() {
                 match msg {
                     PluginResponse::Progress(progress) => {
-                        handle.progress = progress;
+                        plugin.progress = progress;
                     }
                     PluginResponse::Log(level, message) => {
-                        handle.log_messages.push_front((level, message));
-                        while handle.log_messages.len() > PluginHandle::MAX_MESSAGES {
-                            handle.log_messages.pop_back();
+                        plugin.log_messages.push_front((level, message));
+                        while plugin.log_messages.len() > PluginHandle::MAX_MESSAGES {
+                            plugin.log_messages.pop_back();
                         }
                     }
                     PluginResponse::PluginInfo(info) => {
-                        handle.metadata = Some(info);
+                        plugin.metadata = Some(info);
                     }
                     PluginResponse::DatabaseChanged => {
                         database_changed = true;
                     }
+                    PluginResponse::CompletedTask => {
+                        plugin.active_task = None;
+                    }
+                }
+            }
+            if plugin.active_task.is_none() {
+                if let Some(task) = plugin.task_queue.pop_front() {
+                    plugin.active_task = Some(task.clone());
+                    plugin.tx_to_plugin.send(task).ok();
                 }
             }
         }
@@ -149,8 +152,12 @@ pub struct PluginHandle {
     // Metadata
     source: PathBuf,
     metadata: Option<PluginMetadata>,
+
+    // Active state
     progress: Progress,
     log_messages: VecDeque<(Level, String)>,
+    active_task: Option<PluginRequest>,
+    task_queue: VecDeque<PluginRequest>,
 
     // Maintenance state
     task: JoinHandle<()>,
@@ -172,6 +179,8 @@ impl PluginHandle {
             metadata: None,
             progress: Progress::None,
             log_messages: VecDeque::new(),
+            active_task: None,
+            task_queue: VecDeque::new(),
             task,
             tx_to_plugin,
             rx_from_plugin,
@@ -222,12 +231,28 @@ impl PluginHandle {
         &self.progress
     }
 
-    pub fn refresh_tags(&self) -> Result<()> {
-        self.tx_to_plugin.send(PluginRequest::RefreshTags)?;
-        Ok(())
+    pub fn active_task(&self) -> Option<&PluginRequest> {
+        self.active_task.as_ref()
+    }
+
+    pub fn task_queue(&self) -> impl Iterator<Item = &PluginRequest> {
+        self.task_queue.iter()
+    }
+
+    pub fn remove_queued_task(&mut self, index: usize) {
+        self.task_queue.remove(index);
+    }
+
+    pub fn refresh_tags(&mut self) {
+        self.task_queue.push_back(PluginRequest::RefreshTags);
     }
 
     pub fn apply_configuration(&self) -> Result<()> {
+        // Note: we short cut the queue here, as config needs to apply immediately.
+        //       This also doesn't send a return CompletedTask, so the CompletedTask
+        //       of anything we're after will enqueue the next task after us. This
+        //       will block a bit while the ApplyConfiguration runs, but this should
+        //       be fast enough not to notice.
         self.tx_to_plugin.send(PluginRequest::ApplyConfiguration {
             config: self
                 .metadata

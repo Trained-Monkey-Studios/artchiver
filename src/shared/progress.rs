@@ -96,4 +96,9 @@ impl ProgressSender {
             _ => self.error(message),
         };
     }
+
+    pub fn note_completed_task(&mut self) -> Result<()> {
+        self.tx_to_runner.send(PluginResponse::CompletedTask)?;
+        Ok(())
+    }
 }
