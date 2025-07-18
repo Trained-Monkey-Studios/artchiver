@@ -1,14 +1,14 @@
 use crate::{
     shared::{
         environment::Environment,
-        plugin::{PluginRequest, PluginResponse},
+        plugin::{PluginCancellation, PluginRequest, PluginResponse},
         progress::ProgressSender,
         throttle::CallingThrottle,
     },
     sync::db::{model::MetadataPool, tag::upsert_tags},
 };
 use anyhow::Result;
-use artchiver_sdk::{HttpTextResult, PluginMetadata, Request, TagInfo, Work};
+use artchiver_sdk::{PluginMetadata, Request, TagInfo, TextFetchError, TextResponse, Work};
 use crossbeam::channel::{Receiver, Sender};
 use extism::{
     Manifest, PTR, Plugin as ExtPlugin, PluginBuilder, UserData, Wasm, convert::Json, host_fn,
@@ -54,11 +54,14 @@ pub(crate) fn create_plugin_task(
     pool: MetadataPool,
     rx_from_runner: Receiver<PluginRequest>,
     tx_to_runner: Sender<PluginResponse>,
-) -> Result<JoinHandle<()>> {
+) -> Result<(JoinHandle<()>, PluginCancellation)> {
     info!("Loading plugin: {}", source.display());
     let progress = ProgressSender::wrap(tx_to_runner.clone());
     let state = UserData::new(PluginState::new(env, pool, progress.clone()));
-    // let config = pool.load_configurations(plugin_id)?;
+    let cancellation = state.get()?.lock().expect("poison").cancellation.clone();
+    // Note: on configuration; we support moving the plugin file around, so we need to key on the
+    //       name rather than the source path. As such, we have to wait until the plugin returns
+    //       its metadata to us. At which point we look up the config and rebuild the plugin.
     let plugin = make_plugin(source, vec![], &state)?;
 
     let plugin_source = source.to_owned();
@@ -70,7 +73,7 @@ pub(crate) fn create_plugin_task(
             progress.error(format!("Error: {e}"));
         }
     });
-    Ok(plugin_task)
+    Ok((plugin_task, cancellation))
 }
 
 #[derive(Debug)]
@@ -80,6 +83,7 @@ struct PluginState {
     data_dir: PathBuf,
     tmp_dir: PathBuf,
     progress: ProgressSender,
+    cancellation: PluginCancellation,
 
     // Database
     pool: MetadataPool,
@@ -97,6 +101,7 @@ impl PluginState {
             data_dir: env.data_dir().clone(),
             tmp_dir: env.tmp_dir().clone(),
             progress,
+            cancellation: PluginCancellation::default(),
             pool,
             agent: Agent::new_with_config(
                 Agent::config_builder()
@@ -181,6 +186,11 @@ fn plugin_main(
         }
         // Note: we want to fail and crash out of the plugin if nobody is listening.
         progress.note_completed_task()?;
+        // Note: always reset the cancellation on task complete. If we missed hitting
+        //       a trigger, it no longer matters once we get to this point.
+        state.get()?.lock().expect("poison").cancellation.reset();
+        // And ditto for our progress situation, particularly if we were canceled.
+        progress.clear();
     }
     Ok(())
 }
@@ -263,7 +273,7 @@ host_fn!(log_message(state: PluginState; level: u32, msg: String) {
     Ok(())
 });
 
-fn fetch_text_inner(state: &mut PluginState, request: &Request) -> Result<String> {
+fn fetch_text_inner(state: &mut PluginState, request: &Request) -> TextResponse {
     let url = request.to_url();
 
     // Check our cache first
@@ -278,9 +288,12 @@ fn fetch_text_inner(state: &mut PluginState, request: &Request) -> Result<String
     }
 
     // Stream the response simultaneously to the cache file and to a string for use by the plugin.
+    state
+        .throttle
+        .throttle(&state.cancellation)
+        .map_err(|_e| TextFetchError::Cancellation)?;
     state.progress.trace(format!("fetch_text({url})"));
     let tmp_path = make_temp_path(&state.tmp_dir);
-    state.throttle.throttle();
     let buffer = {
         let mut req = state.agent.get(&url);
         for (key, value) in request.headers() {
@@ -305,13 +318,10 @@ fn fetch_text_inner(state: &mut PluginState, request: &Request) -> Result<String
     Ok(buffer)
 }
 
-host_fn!(fetch_text(state: PluginState; req: Json<Request>) -> Json<HttpTextResult> {
+host_fn!(fetch_text(state: PluginState; req: Json<Request>) -> Json<TextResponse> {
     // Note: it is fine to hold our plugin lock across long-running tasks;
     //       there is no conflict on this lock, by design.
-    Ok(Json(match fetch_text_inner(&mut state.get()?.lock().expect("poison"), &req.0) {
-        Ok(s) => HttpTextResult::Ok(s),
-        Err(e) => HttpTextResult::Err { status_code: 0, message: e.to_string() }
-    }))
+    Ok(Json(fetch_text_inner(&mut state.get()?.lock().expect("poison"), &req.0)))
 });
 
 fn ensure_work_data_is_cached(state: &UserData<PluginState>, work: &Work) -> Result<()> {
@@ -340,7 +350,7 @@ fn make_temp_path(tmp_dir: &Path) -> PathBuf {
 
 fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<()> {
     // Take our lock early to extract data and sub-Arc-mutexes for progress, throttle, etc.
-    let (data_dir, tmp_dir, agent, mut progress, throttle) = {
+    let (data_dir, tmp_dir, agent, mut progress, throttle, cancellation) = {
         let state_ref = state.get()?;
         let state = state_ref.lock().expect("poison");
         (
@@ -349,6 +359,7 @@ fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<()> {
             state.agent.clone(),
             state.progress.clone(),
             state.throttle.clone(),
+            state.cancellation.clone(),
         )
     };
 
@@ -358,11 +369,13 @@ fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<()> {
         return Ok(());
     }
 
+    // Note: check throttle before opening files, etc, but after we might bail for caching.
+    throttle.throttle(&cancellation)?;
+
     let tmp_path = make_temp_path(&tmp_dir);
     {
         // Note: in a block to Drop, to close the file before renaming it, just for sanity.
         let tmp_fp = fs::File::create(&tmp_path)?;
-        throttle.throttle();
         progress.trace(format!("ensure_data_url({url})"));
         let mut resp = agent.get(url).call()?;
         io::copy(

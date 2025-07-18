@@ -1,7 +1,8 @@
 use crate::shared::progress::Progress;
 use artchiver_sdk::PluginMetadata;
 use log::Level;
-use std::fmt;
+use parking_lot::Mutex;
+use std::{fmt, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub enum PluginRequest {
@@ -35,4 +36,23 @@ pub enum PluginResponse {
     // Must be returned each time the plugin completes some work; otherwise the plugin will not be
     // fed more requests to work on.
     CompletedTask,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PluginCancellation {
+    signal: Arc<Mutex<bool>>,
+}
+
+impl PluginCancellation {
+    pub fn cancel(&self) {
+        *self.signal.lock() = true;
+    }
+
+    pub fn reset(&self) {
+        *self.signal.lock() = false;
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        *self.signal.lock()
+    }
 }

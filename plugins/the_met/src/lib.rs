@@ -75,7 +75,6 @@ pub fn startup() -> FnResult<Json<PluginMetadata>> {
 }
 
 fn make_reader(raw: &str) -> FnResult<csv::Reader<&[u8]>> {
-    // let raw = unsafe { fetch_text(CSV_URL)? };
     let rdr = csv::ReaderBuilder::new()
         .has_headers(true)
         .trim(csv::Trim::All)
@@ -236,9 +235,15 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
         let req = Request::get(URL)
             .in_path(OBJECTS_PATH)
             .append_path_segment(obj_id.to_string());
-        let Ok(object_info) = Web::fetch_text(req) else {
-            Log::error(format!("Failed to fetch object info for {obj_id}"))?;
-            continue;
+        let object_info = match Web::fetch_text(req) {
+            Ok(s) => s,
+            Err(TextFetchError::HttpError(code)) => {
+                Log::error(format!("Failed to fetch object info for {obj_id}: HTTP {code}"))?;
+                continue;
+            }
+            Err(other) => {
+                return Err(other.into());
+            }
         };
         let object = serde_json::from_str::<ObjectInfo>(&object_info)?;
         if !object.primaryImage.is_empty() {

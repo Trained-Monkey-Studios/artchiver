@@ -169,11 +169,23 @@ impl<'a> SyncViewer<'a> {
         egui::CollapsingHeader::new("Tasks")
             .id_salt(format!("tasks_section_{}", plugin.name()))
             .show(ui, |ui| {
-                let task = match plugin.active_task() {
-                    Some(task) => task.to_string(),
-                    None => "Inactive".to_owned(),
-                };
-                ui.label(format!("Current Task: {task}"));
+                match plugin.active_task() {
+                    Some(task) => {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("Current Task: {task}"));
+                            if !plugin.cancellation().is_cancelled() {
+                                if ui.small_button("x Cancel").clicked() {
+                                    plugin.cancellation().cancel();
+                                }
+                            } else {
+                                ui.label("Cancelling...");
+                            }
+                        });
+                    }
+                    None => {
+                        ui.label("Inactive");
+                    }
+                }
                 ui.separator();
                 let mut removed = None;
                 for (i, task) in plugin.task_queue().enumerate() {
@@ -331,6 +343,9 @@ impl<'a> SyncViewer<'a> {
             .pool_mut()
             .works_count(&self.state.tag_selection)?
             .try_into()?;
+        if works_count == 0 {
+            self.state.selected_work = WorkSelection::None;
+        }
         ui.horizontal(|ui| {
             ui.heading(self.state.tag_selection.to_string());
             if ui.button("x").clicked() {

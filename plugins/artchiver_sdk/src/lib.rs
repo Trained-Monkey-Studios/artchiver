@@ -1,6 +1,7 @@
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr, time::Duration};
+use thiserror::Error;
 
 #[macro_export]
 macro_rules! import_section {
@@ -11,7 +12,7 @@ macro_rules! import_section {
             fn progress_percent(current: i32, total: i32);
             fn progress_clear();
             fn log_message(level: u32, message: &str);
-            fn fetch_text(req: Json<Request>) -> Json<HttpTextResult>;
+            fn fetch_text(req: Json<Request>) -> Json<TextResponse>;
         }
 
         pub struct Progress;
@@ -52,16 +53,13 @@ macro_rules! import_section {
 
         pub struct Web;
         impl Web {
-            pub fn fetch_text(req: Request) -> extism_pdk::FnResult<String> {
-                match unsafe { fetch_text(Json(req)) }?.into_inner() {
-                    HttpTextResult::Ok(text) => Ok(text),
-                    HttpTextResult::Err {
-                        status_code,
-                        message,
-                    } => {
-                        // FIXME: give this a useful type
-                        Err(extism_pdk::Error::msg(format!("{status_code}: {message}")).into())
-                    }
+            pub fn fetch_text(req: Request) -> TextResponse {
+                // Unwrap the outer plugin transit error and wrap it back into the inner error
+                // so that the caller only has to deal with one layer of errors.
+                match unsafe { fetch_text(Json(req)) } {
+                    Ok(Json(Ok(text))) => Ok(text),
+                    Ok(Json(Err(e))) => Err(e),
+                    Err(e) => Err(TextFetchError::HostError(e.to_string())),
                 }
             }
         }
@@ -344,8 +342,33 @@ impl Request {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum HttpTextResult {
-    Ok(String),
-    Err { status_code: u16, message: String },
+pub type TextResponse = Result<String, TextFetchError>;
+
+#[derive(Error, Clone, Debug, Serialize, Deserialize)]
+pub enum TextFetchError {
+    #[error("timeout")]
+    Timeout,
+    #[error("io error: {0}")]
+    IoError(String),
+    #[error("http error: {0}")]
+    HttpError(u16),
+    #[error("task was cancelled")]
+    Cancellation,
+    #[error("host error: {0}")]
+    HostError(String),
+}
+
+impl From<std::io::Error> for TextFetchError {
+    fn from(e: std::io::Error) -> Self {
+        TextFetchError::IoError(e.to_string())
+    }
+}
+
+impl From<ureq::Error> for TextFetchError {
+    fn from(value: ureq::Error) -> Self {
+        match value {
+            ureq::Error::StatusCode(code) => TextFetchError::HttpError(code),
+            _ => TextFetchError::HostError(value.to_string()),
+        }
+    }
 }

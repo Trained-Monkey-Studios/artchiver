@@ -1,3 +1,4 @@
+use crate::shared::plugin::PluginCancellation;
 use crate::{
     shared::{
         environment::Environment,
@@ -53,11 +54,12 @@ impl PluginHost {
             let (tx_to_plugin, rx_from_runner) = channel::unbounded();
             let (tx_to_runner, rx_from_plugin) = channel::unbounded();
 
-            let plugin_task =
+            let (plugin_task, cancellation) =
                 create_plugin_task(&source, env, pool.clone(), rx_from_runner, tx_to_runner)?;
             plugins.push(PluginHandle::new(
                 source,
                 plugin_task,
+                cancellation,
                 tx_to_plugin,
                 rx_from_plugin,
             ));
@@ -138,9 +140,10 @@ impl PluginHost {
     }
 
     pub fn cleanup_for_exit(&mut self) -> Result<()> {
-        for handle in self.plugins.drain(..) {
-            handle.tx_to_plugin.send(PluginRequest::Shutdown)?;
-            handle.task.join().ok();
+        for plugin in self.plugins.drain(..) {
+            plugin.cancellation.cancel();
+            plugin.tx_to_plugin.send(PluginRequest::Shutdown)?;
+            plugin.task.join().ok();
         }
         Ok(())
     }
@@ -161,6 +164,7 @@ pub struct PluginHandle {
 
     // Maintenance state
     task: JoinHandle<()>,
+    cancellation: PluginCancellation,
     tx_to_plugin: channel::Sender<PluginRequest>,
     rx_from_plugin: channel::Receiver<PluginResponse>,
 }
@@ -171,6 +175,7 @@ impl PluginHandle {
     fn new(
         source: PathBuf,
         task: JoinHandle<()>,
+        cancellation: PluginCancellation,
         tx_to_plugin: channel::Sender<PluginRequest>,
         rx_from_plugin: channel::Receiver<PluginResponse>,
     ) -> Self {
@@ -182,6 +187,7 @@ impl PluginHandle {
             active_task: None,
             task_queue: VecDeque::new(),
             task,
+            cancellation,
             tx_to_plugin,
             rx_from_plugin,
         }
@@ -241,6 +247,10 @@ impl PluginHandle {
 
     pub fn remove_queued_task(&mut self, index: usize) {
         self.task_queue.remove(index);
+    }
+
+    pub fn cancellation(&self) -> &PluginCancellation {
+        &self.cancellation
     }
 
     pub fn refresh_tags(&mut self) {
