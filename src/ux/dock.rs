@@ -30,6 +30,84 @@ impl TabMetadata {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub enum WorkSelection {
+    #[default]
+    None,
+    Work {
+        work_id: i64,
+        offset: usize,
+    },
+}
+
+impl WorkSelection {
+    pub fn new(work_id: i64, offset: usize) -> Self {
+        Self::Work { work_id, offset }
+    }
+
+    pub fn is_selected(&self, work_id: i64) -> bool {
+        match self {
+            Self::None => false,
+            Self::Work { work_id: id, .. } => *id == work_id,
+        }
+    }
+
+    pub fn get_selected(&self) -> Option<i64> {
+        match self {
+            Self::None => None,
+            Self::Work { work_id, .. } => Some(*work_id),
+        }
+    }
+
+    pub fn get_offset(&self) -> Option<usize> {
+        match self {
+            Self::None => None,
+            Self::Work { offset, .. } => Some(*offset),
+        }
+    }
+
+    pub fn has_selection(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UxState {
+    mode: UxMode,
+    show_preferences: bool,
+    show_about: bool,
+    tag_filter: String,
+    tag_selection: TagSet,
+    selected_work: WorkSelection,
+
+    #[serde(default = "LruCache::unbounded")]
+    #[serde(skip)]
+    works_lru: LruCache<String, u32>,
+
+    #[serde(skip)]
+    per_frame_work_upload_count: usize,
+}
+
+impl Default for UxState {
+    fn default() -> Self {
+        Self {
+            mode: UxMode::Browser,
+            show_preferences: false,
+            show_about: false,
+            tag_filter: String::new(),
+            tag_selection: TagSet::default(),
+            works_lru: LruCache::unbounded(),
+            per_frame_work_upload_count: 0,
+            selected_work: WorkSelection::None,
+        }
+    }
+}
+
+impl UxState {
+    const LRU_CACHE_SIZE: usize = 1_000;
+    const MAX_PER_FRAME_UPLOADS: usize = 3;
+}
+
 struct SyncViewer<'a> {
     sync: &'a mut PluginHost,
     state: &'a mut UxState,
@@ -240,12 +318,13 @@ impl<'a> SyncViewer<'a> {
 
                 // We subtracted off range_len, but may have clipped with zero, so we have to reconstruct.
                 let works_start = start_index - works_range.start;
+                let mut offset = works_start;
                 for row in works[works_start..end_index].chunks(n_wide) {
                     ui.horizontal(|ui| {
                         for work in row {
                             if let Some(uri) = self.ensure_work_cached(work, ui.ctx()) {
                                 // Selection uses the selection color for the background
-                                let selected = self.state.selected_work == Some(work.id());
+                                let is_selected = self.state.selected_work.is_selected(work.id());
 
                                 let img = egui::Image::new(uri)
                                     .alt_text(work.name())
@@ -267,13 +346,13 @@ impl<'a> SyncViewer<'a> {
 
                                 let btn = egui::ImageButton::new(img)
                                     .frame(false)
-                                    .selected(selected)
+                                    .selected(is_selected)
                                     .sense(Sense::click());
 
                                 let mut frm = egui::Frame::default()
                                     .outer_margin(Margin::ZERO)
                                     .inner_margin(inner_margin);
-                                if selected {
+                                if is_selected {
                                     frm = frm.fill(sel_color);
                                 }
 
@@ -286,13 +365,15 @@ impl<'a> SyncViewer<'a> {
                                 frm.show(ui, |ui| {
                                     rsz.show(ui, |ui| {
                                         if ui.add(btn).clicked() {
-                                            self.state.selected_work = Some(work.id());
+                                            self.state.selected_work =
+                                                WorkSelection::new(work.id(), offset);
                                         }
                                     });
                                 });
                             } else {
                                 ui.add(egui::Spinner::new().size(SIZE));
                             }
+                            offset += 1;
                         }
                     });
                 }
@@ -303,7 +384,7 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
-        if let Some(work_id) = self.state.selected_work
+        if let Some(work_id) = self.state.selected_work.get_selected()
             && let Ok(work) = self.sync.pool_mut().lookup_work(work_id)
         {
             egui::Grid::new("work_info_grid").show(ui, |ui| {
@@ -323,11 +404,15 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn render_slideshow(&mut self, ctx: &egui::Context) -> Result<()> {
-        if self.state.selected_work.is_none() {
+        if !self.state.selected_work.has_selection() {
             self.state.mode = UxMode::Browser;
             return Ok(());
         }
-        let work_id = self.state.selected_work.expect("selected work");
+        let work_id = self
+            .state
+            .selected_work
+            .get_selected()
+            .expect("selected work");
         let work = self.sync.pool_mut().lookup_work(work_id)?;
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -414,43 +499,6 @@ pub enum UxMode {
     Slideshow,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UxState {
-    mode: UxMode,
-    show_preferences: bool,
-    show_about: bool,
-    tag_filter: String,
-    tag_selection: TagSet,
-    selected_work: Option<i64>,
-
-    #[serde(default = "LruCache::unbounded")]
-    #[serde(skip)]
-    works_lru: LruCache<String, u32>,
-
-    #[serde(skip)]
-    per_frame_work_upload_count: usize,
-}
-
-impl Default for UxState {
-    fn default() -> Self {
-        Self {
-            mode: UxMode::Browser,
-            show_preferences: false,
-            show_about: false,
-            tag_filter: String::new(),
-            tag_selection: TagSet::default(),
-            works_lru: LruCache::unbounded(),
-            per_frame_work_upload_count: 0,
-            selected_work: None,
-        }
-    }
-}
-
-impl UxState {
-    const LRU_CACHE_SIZE: usize = 1_000;
-    const MAX_PER_FRAME_UPLOADS: usize = 3;
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UxToplevel {
     dock_state: DockState<TabMetadata>,
@@ -506,16 +554,16 @@ impl UxToplevel {
             }
         }
 
-        self.handle_shortcuts(ctx);
+        self.handle_shortcuts(host, ctx).expect("failed to handle shortcuts");
 
         Ok(())
     }
 
-    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+    fn handle_shortcuts(&mut self, host: &mut PluginHost, ctx: &egui::Context) -> Result<()> {
         let mut focus = None;
         ctx.memory(|mem| focus = mem.focused());
 
-        const KEYS: [Key; 7] = [
+        const KEYS: [Key; 9] = [
             Key::Escape,
             Key::F1,
             Key::F,
@@ -523,6 +571,8 @@ impl UxToplevel {
             Key::Space,
             Key::ArrowLeft,
             Key::ArrowRight,
+            Key::N,
+            Key::P,
         ];
         let mut pressed = HashSet::new();
         ctx.input_mut(|input| {
@@ -541,7 +591,7 @@ impl UxToplevel {
             ctx.memory_mut(|mem| {
                 mem.surrender_focus(id);
             });
-            return;
+            return Ok(());
         }
 
         // Each of the modes interprets keys a bit differently, out of necessity.
@@ -551,9 +601,10 @@ impl UxToplevel {
                     || pressed.contains(&Key::F11)
                     || pressed.contains(&Key::Space)
                 {
-                    if self.state.selected_work.is_some() {
+                    if self.state.selected_work.has_selection() {
                         self.state.mode = UxMode::Slideshow;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+                        return Ok(());
                     }
                 } else if pressed.contains(&Key::Escape) {
                     if self.state.show_about {
@@ -569,13 +620,47 @@ impl UxToplevel {
                 if pressed.contains(&Key::Escape) {
                     self.state.mode = UxMode::Browser;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
-                } else if pressed.contains(&Key::ArrowLeft) || pressed.contains(&Key::P) {
-                    // self.state.selected_work = 
                 }
-                // TODO: left/space/n and right/p to switch to next and previous works...
-                //       figure out how to do this quickly
             }
         }
+
+        // Some keys work the same in any mode
+        if let Some(mut offset) = self.state.selected_work.get_offset() {
+            let pressed_left = pressed.contains(&Key::ArrowLeft) || pressed.contains(&Key::P);
+            let pressed_right = pressed.contains(&Key::ArrowRight)
+                || pressed.contains(&Key::N)
+                || pressed.contains(&Key::Space);
+            if pressed_left || pressed_right {
+                let count: usize = host
+                    .pool_mut()
+                    .works_count(&self.state.tag_selection)?
+                    .try_into()?;
+
+                if pressed_right {
+                    if offset >= count - 1 {
+                        offset = 0;
+                    } else {
+                        offset += 1;
+                    }
+                } else if pressed_left {
+                    if offset == 0 {
+                        offset = count - 1;
+                    } else {
+                        offset -= 1;
+                    }
+                }
+
+                if let Ok(works) = host
+                    .pool_mut()
+                    .works_list(offset..offset + 1, &self.state.tag_selection)
+                    && let Some(work) = works.first()
+                {
+                    self.state.selected_work = WorkSelection::new(work.id(), offset);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn render_menu(&mut self, ctx: &egui::Context) {
