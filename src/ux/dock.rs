@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use artchiver_sdk::Work;
-use egui::{self, Key, Margin, Modifiers, Sense, SizeHint, TextWrapMode, Vec2};
+use egui::{self, Key, Margin, Modifiers, Rect, Sense, SizeHint, TextWrapMode, Vec2};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
@@ -418,7 +418,23 @@ impl<'a> SyncViewer<'a> {
         egui::CentralPanel::default().show(ctx, |ui| {
             let size = ui.available_size();
             if let Some(uri) = self.ensure_work_cached(&work, ui.ctx()) {
-                ui.image(uri);
+                let avail = ui.available_size();
+
+                let img = egui::Image::new(uri)
+                    .alt_text(work.name())
+                    .show_loading_spinner(true)
+                    .maintain_aspect_ratio(true);
+
+                if let Some(size) = img.load_and_calc_size(ui, avail) {
+                    let (left, right, top, bottom) = if size.y > size.x {
+                        let left = (avail.x - size.x) / 2.;
+                        (left, avail.x - left, 0., avail.y)
+                    } else {
+                        let top = (avail.y - size.y) / 2.;
+                        (0., avail.x, top, avail.y - top)
+                    };
+                    img.paint_at(ui, Rect::from_x_y_ranges(left..=right, top..=bottom));
+                }
             } else {
                 ui.add(egui::Spinner::new().size(size.x.min(size.y)));
             }
@@ -554,7 +570,8 @@ impl UxToplevel {
             }
         }
 
-        self.handle_shortcuts(host, ctx).expect("failed to handle shortcuts");
+        self.handle_shortcuts(host, ctx)
+            .expect("failed to handle shortcuts");
 
         Ok(())
     }

@@ -17,6 +17,8 @@ o Center works in their viewports and figure out how to kill spacing between wor
 o Associate refresh tags with the plugin rather than a global
 o Cache works lookups
 o Zoom mode to show full size image
+o Keys to browse a gallery
+o Center the slideshow image
 * Resizable works gallery images
 * Unify plugin logging
 * Task system and task cancellation
