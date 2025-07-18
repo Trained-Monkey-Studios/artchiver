@@ -19,7 +19,7 @@ o Cache works lookups
 o Zoom mode to show full size image
 o Keys to browse a gallery
 o Center the slideshow image
+o Unify plugin logging
 * Resizable works gallery images
-* Unify plugin logging
 * Task system and task cancellation
 * Support negative tags

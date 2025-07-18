@@ -5,17 +5,16 @@ use crate::{
         progress::ProgressSender,
         throttle::CallingThrottle,
     },
-    sync::db::model::MetadataPool,
+    sync::db::{model::MetadataPool, tag::upsert_tags},
 };
 use anyhow::Result;
-use artchiver_sdk::{HttpTextResult, PluginMetadata, Work};
+use artchiver_sdk::{HttpTextResult, PluginMetadata, Request, TagInfo, Work};
 use crossbeam::channel::{Receiver, Sender};
 use extism::{
     Manifest, PTR, Plugin as ExtPlugin, PluginBuilder, UserData, Wasm, convert::Json, host_fn,
 };
 use io_tee::TeeWriter;
-use log::{error, info};
-use progress_streams::{ProgressReader, ProgressWriter};
+use log::info;
 use rand::{Rng as _, distr::Alphanumeric};
 use sha2::{Digest as _, Sha256};
 use std::{
@@ -43,22 +42,8 @@ fn make_plugin(
             progress_percent,
         )
         .with_function("progress_clear", [], [], state.clone(), progress_clear)
-        .with_function(
-            "progress_message",
-            [PTR],
-            [],
-            state.clone(),
-            progress_message,
-        )
-        .with_function("progress_trace", [PTR], [], state.clone(), progress_trace)
+        .with_function("log_message", [PTR, PTR], [], state.clone(), log_message)
         .with_function("fetch_text", [PTR], [PTR], state.clone(), fetch_text)
-        .with_function(
-            "fetch_large_text",
-            [PTR],
-            [PTR],
-            state.clone(),
-            fetch_large_text,
-        )
         .build()?;
     Ok(plugin)
 }
@@ -73,6 +58,7 @@ pub(crate) fn create_plugin_task(
     info!("Loading plugin: {}", source.display());
     let progress = ProgressSender::wrap(tx_to_runner.clone());
     let state = UserData::new(PluginState::new(env, pool, progress.clone()));
+    // let config = pool.load_configurations(plugin_id)?;
     let plugin = make_plugin(source, vec![], &state)?;
 
     let plugin_source = source.to_owned();
@@ -80,13 +66,8 @@ pub(crate) fn create_plugin_task(
         let rv = plugin_main(&plugin_source, plugin, &state, &rx_from_runner, progress);
         if let Err(e) = rv.as_ref() {
             let mut progress = ProgressSender::wrap(tx_to_runner);
-            progress.message("Plugin shutting down");
-            progress.message(format!("Error: {e}"));
-            error!(
-                "Plugin {} shutting down with error: {}",
-                plugin_source.display(),
-                e
-            );
+            progress.error("Plugin shutting down");
+            progress.error(format!("Error: {e}"));
         }
     });
     Ok(plugin_task)
@@ -150,7 +131,7 @@ fn plugin_main(
     rx_from_runner: &Receiver<PluginRequest>,
     mut progress: ProgressSender,
 ) -> Result<()> {
-    progress.message("Getting plugin metadata");
+    progress.info(format!("Starting plugin {}", plugin_source.display()));
     let mut metadata = plugin.call::<(), Json<PluginMetadata>>("startup", ())?.0;
     let plugin_id = {
         let state_ref = state.get()?;
@@ -163,7 +144,9 @@ fn plugin_main(
         }
         plugin_id
     };
-    progress.message(format!(
+    // Note: restart plugin with configuration in place this time
+    plugin = make_plugin(plugin_source, metadata.configurations().to_owned(), state)?;
+    progress.info(format!(
         "Started plugin id:{plugin_id}, \"{}\"",
         metadata.name()
     ));
@@ -172,7 +155,7 @@ fn plugin_main(
     'outer: while let Ok(msg) = rx_from_runner.recv() {
         let rv = match msg {
             PluginRequest::Shutdown => {
-                progress.message(format!("Shutting down plugin: {plugin_id}"));
+                progress.info(format!("Shutting down plugin: {plugin_id}"));
                 break 'outer;
             }
             PluginRequest::ApplyConfiguration { config } => {
@@ -194,8 +177,7 @@ fn plugin_main(
             }
         };
         if let Err(e) = rv {
-            progress.message(format!("Error handling plugin message: {e}"));
-            error!("Error handling plugin message: {e}");
+            progress.error(format!("Error handling plugin message: {e}"));
         }
     }
     Ok(())
@@ -209,12 +191,12 @@ fn refresh_tags(
 ) -> Result<()> {
     // Progress will get sent for the download or file read.
     progress.trace("Calling plugin->list_tags");
-    let tags = plugin.call::<(), Json<Vec<String>>>("list_tags", ())?.0;
+    let tags = plugin.call::<(), Json<Vec<TagInfo>>>("list_tags", ())?.0;
 
     // Progress will get sent a second time for writing to the DB.
     let state_ref = state.get()?;
-    let mut state = state_ref.lock().expect("poison");
-    state.pool.upsert_tags(plugin_id, &tags, progress)?;
+    let state = state_ref.lock().expect("poison");
+    upsert_tags(&state.pool.get()?, plugin_id, &tags, progress)?;
 
     Ok(())
 }
@@ -240,7 +222,7 @@ fn refresh_works_for_tag(
     }
 
     // Fetch preview images eagerly.
-    progress.message(format!("Downloading {} works to disk...", works.len()));
+    progress.info(format!("Downloading {} works to disk...", works.len()));
     let works_len = works.len();
     let mut works = works;
     rayon::scope(|s| {
@@ -250,8 +232,7 @@ fn refresh_works_for_tag(
                 progress.set_percent(i, works_len);
                 if let Err(e) = ensure_work_data_is_cached(state, &work) {
                     // Note: ignore download failures and let the user re-try, if needed.
-                    progress.message(format!("Error downloading work {}: {e}", work.name()));
-                    error!("Error downloading work {}: {e}", work.name());
+                    progress.error(format!("Error downloading work {}: {e}", work.name()));
                 }
             });
         }
@@ -275,77 +256,40 @@ host_fn!(progress_clear(state: PluginState;) {
     Ok(())
 });
 
-host_fn!(progress_message(state: PluginState; msg: String) {
-    state.get()?.lock().expect("poison").progress.message(msg);
+host_fn!(log_message(state: PluginState; level: u32, msg: String) {
+    state.get()?.lock().expect("poison").progress.log_message(level, msg);
     Ok(())
 });
 
-host_fn!(progress_trace(state: PluginState; msg: String) {
-    state.get()?.lock().expect("poison").progress.trace(msg);
-    Ok(())
-});
-
-fn fetch_text_inner(state: &mut PluginState, url: &str, progress: bool) -> Result<String> {
-    if progress {
-        state.progress.set_spinner();
-    }
+fn fetch_text_inner(state: &mut PluginState, request: &Request) -> Result<String> {
+    let url = request.to_url();
 
     // Check our cache first
-    let key = Sha256::digest(url.as_bytes());
+    let key = Sha256::digest(&url);
     let key_path = state.cache_dir.join(format!("{key:x}"));
     if let Ok(mut cache_fp) = fs::File::open(&key_path) {
         state.progress.trace(format!("cached: fetch_text({url})"));
-        if progress {
-            state.progress.message(format!("Cache hit: {url}"));
-            let cache_len = cache_fp.metadata()?.len() as usize;
-            let mut cache_reader = ProgressReader::new(cache_fp, |progress: usize| {
-                state.progress.set_percent(progress, cache_len);
-            });
-            let mut buffer = Vec::new();
-            io::copy(&mut cache_reader, &mut buffer)?;
-            let out = String::from_utf8_lossy(&buffer).to_string();
-            state.progress.clear();
-            return Ok(out);
-        } else {
-            let mut buffer = Vec::new();
-            io::copy(&mut cache_fp, &mut buffer)?;
-            let out = String::from_utf8_lossy(&buffer).to_string();
-            return Ok(out);
-        }
+        let mut buffer = Vec::new();
+        io::copy(&mut cache_fp, &mut buffer)?;
+        let out = String::from_utf8_lossy(&buffer).to_string();
+        return Ok(out);
     }
 
     // Stream the response simultaneously to the cache file and to a string for use by the plugin.
     state.progress.trace(format!("fetch_text({url})"));
     let tmp_path = make_temp_path(&state.tmp_dir);
     state.throttle.throttle();
-    let buffer = if progress {
-        let mut response = state.agent.get(url).call()?;
-        let content_len = response.body().content_length();
-        if let Some(content_len) = content_len {
-            state
-                .progress
-                .message(format!("Reading {content_len} bytes"));
+    let buffer = {
+        let mut req = state.agent.get(&url);
+        for (key, value) in request.headers() {
+            req = req.header(key, value);
         }
-        let mut tmp_fp = fs::File::create(&tmp_path)?;
-        let mut buffer = Vec::new();
-        let mut tee = TeeWriter::new(&mut tmp_fp, &mut buffer);
-        let mut writer = ProgressWriter::new(&mut tee, |progress: usize| {
-            if let Some(content_len) = content_len {
-                state.progress.set_percent(progress, content_len as usize);
-            }
-        });
-        io::copy(&mut response.body_mut().as_reader(), &mut writer)?;
-        let out = String::from_utf8_lossy(&buffer).to_string();
-        state.progress.clear();
-        out
-    } else {
-        let mut response = match state.agent.get(url).call() {
+        let mut response = match req.call() {
             Ok(response) => response,
             Err(e) => {
                 state
                     .progress
-                    .message(format!("Request failed for {url}: {e}"));
-                error!("Request failed for {url}: {e}");
+                    .error(format!("Request failed for {url}: {e}"));
                 return Err(e.into());
             }
         };
@@ -359,19 +303,10 @@ fn fetch_text_inner(state: &mut PluginState, url: &str, progress: bool) -> Resul
     Ok(buffer)
 }
 
-host_fn!(fetch_text(state: PluginState; url: &str) -> Json<HttpTextResult> {
+host_fn!(fetch_text(state: PluginState; req: Json<Request>) -> Json<HttpTextResult> {
     // Note: it is fine to hold our plugin lock across long-running tasks;
     //       there is no conflict on this lock, by design.
-    Ok(Json(match fetch_text_inner(&mut state.get()?.lock().expect("poison"), url, false) {
-        Ok(s) => HttpTextResult::Ok(s),
-        Err(e) => HttpTextResult::Err { status_code: 0, message: e.to_string() }
-    }))
-});
-
-host_fn!(fetch_large_text(state: PluginState; url: &str) -> Json<HttpTextResult> {
-    // Note: it is fine to hold our plugin lock across long-running tasks;
-    //       there is no conflict on this lock, by design.
-    Ok(Json(match fetch_text_inner(&mut state.get()?.lock().expect("poison"), url, true) {
+    Ok(Json(match fetch_text_inner(&mut state.get()?.lock().expect("poison"), &req.0) {
         Ok(s) => HttpTextResult::Ok(s),
         Err(e) => HttpTextResult::Err { status_code: 0, message: e.to_string() }
     }))

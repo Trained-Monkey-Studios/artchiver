@@ -1,6 +1,12 @@
-use crate::{shared::tag::TagSet, sync::db::model::MetadataPool};
+use crate::{
+    shared::tag::TagSet,
+    sync::db::{
+        model::MetadataPool,
+        tag::{TagEntry, count_tags, list_plugins_for_tag, list_tags},
+    },
+};
 use anyhow::Result;
-use artchiver_sdk::{TagInfo, Work};
+use artchiver_sdk::Work;
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
@@ -18,7 +24,7 @@ struct TagsListCache {
     db_gen: u64,
     filter: String,
     range: Range<usize>,
-    tags: Vec<TagInfo>,
+    tags: Vec<TagEntry>,
 }
 
 #[derive(Debug)]
@@ -79,14 +85,14 @@ impl CachingPool {
         self.database_generation += 1;
     }
 
-    pub fn tags_count(&mut self, filter: &str) -> Result<i64> {
+    pub fn count_tags(&mut self, filter: &str) -> Result<i64> {
         if let Some(cache) = &self.tag_count_cache
             && cache.db_gen == self.database_generation
             && cache.filter == filter
         {
             return Ok(cache.count);
         }
-        let count = self.pool.tags_count(filter)?;
+        let count = count_tags(&self.pool.get()?, filter)?;
         self.tag_count_cache = Some(TagCountCache {
             db_gen: self.database_generation,
             filter: filter.to_owned(),
@@ -95,7 +101,7 @@ impl CachingPool {
         Ok(count)
     }
 
-    pub fn tags_list(&mut self, range: Range<usize>, filter: &str) -> Result<Vec<TagInfo>> {
+    pub fn list_tags(&mut self, range: Range<usize>, filter: &str) -> Result<Vec<TagEntry>> {
         if let Some(cache) = self.tags_list_cache.as_ref()
             && cache.db_gen == self.database_generation
             && cache.filter == filter
@@ -103,7 +109,7 @@ impl CachingPool {
         {
             return Ok(cache.tags.clone());
         }
-        let tags = self.pool.tags_list(range.clone(), filter)?;
+        let tags = list_tags(&self.pool.get()?, range.clone(), filter)?;
         let out = tags.clone();
         self.tags_list_cache = Some(TagsListCache {
             db_gen: self.database_generation,
@@ -120,7 +126,7 @@ impl CachingPool {
         {
             return Ok(cache.plugins.clone());
         }
-        let plugins = self.pool.list_plugins_for_tag(tag)?;
+        let plugins = list_plugins_for_tag(&self.pool.get()?, tag)?;
         self.tag_plugins_cache.insert(
             tag.to_owned(),
             TagPluginCache {

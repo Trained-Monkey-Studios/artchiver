@@ -1,10 +1,11 @@
 use crate::shared::{environment::Environment, progress::ProgressSender, tag::TagSet};
 use anyhow::Result;
-use artchiver_sdk::{TagInfo, Work};
+use artchiver_sdk::Work;
 use log::info;
+use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, types::Value};
-use std::{collections::HashSet, ops::Range, rc::Rc};
+use std::{ops::Range, rc::Rc};
 
 const MIGRATIONS: [&str; 9] = [
     // Migrations
@@ -28,7 +29,11 @@ const MIGRATIONS: [&str; 9] = [
     // Tags: Attributes of a work, such as the author, subject-matter, etc.
     r#"CREATE TABLE tags (
         id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE
+        name TEXT NOT NULL UNIQUE,
+        kind TEXT DEFAULT 'default',
+        presumed_work_count INTEGER,
+        hidden BOOLEAN NOT NULL DEFAULT false,
+        favorite BOOLEAN NOT NULL DEFAULT false
     );"#,
     r#"CREATE UNIQUE INDEX tag_name_idx ON tags(name);"#,
     // Works: A work of art
@@ -139,6 +144,10 @@ impl MetadataPool {
         Ok(Self { pool })
     }
 
+    pub fn get(&self) -> Result<PooledConnection<SqliteConnectionManager>> {
+        Ok(self.pool.get()?)
+    }
+
     pub fn load_configurations(&self, plugin_id: i64) -> Result<Vec<(String, String)>> {
         let conn = self.pool.get()?;
         Ok(conn
@@ -182,46 +191,6 @@ impl MetadataPool {
         Ok(plugin_id)
     }
 
-    pub fn upsert_tags(
-        &mut self,
-        plugin_id: i64,
-        tags: &[String],
-        progress: &mut ProgressSender,
-    ) -> Result<()> {
-        progress.set_spinner();
-
-        let conn = self.pool.get()?;
-        let mut insert_tag_stmt = conn.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)")?;
-        let mut select_tag_id_stmt = conn.prepare("SELECT id FROM tags WHERE name = ?")?;
-        let mut insert_plugin_tag_stmt =
-            conn.prepare("INSERT OR IGNORE INTO plugin_tags (plugin_id, tag_id) VALUES (?, ?)")?;
-
-        let total_count = tags.len();
-        let mut current_pos = 0;
-        progress.message(format!("Writing {total_count} tags to the database..."));
-        for chunk in tags.chunks(10_000) {
-            progress.trace(format!("db->upsert_tags chunk of {}", chunk.len()));
-            conn.execute("BEGIN TRANSACTION", ())?;
-            for tag in chunk {
-                let row_cnt = insert_tag_stmt.execute(params![tag])?;
-                let tag_id = if row_cnt > 0 {
-                    conn.last_insert_rowid()
-                } else {
-                    select_tag_id_stmt.query_row(params![tag], |row| row.get(0))?
-                };
-                insert_plugin_tag_stmt.execute(params![plugin_id, tag_id])?;
-            }
-            conn.execute("COMMIT TRANSACTION", ())?;
-
-            current_pos += chunk.len();
-            progress.set_percent(current_pos, total_count);
-            progress.database_changed()?;
-        }
-
-        progress.clear();
-        Ok(())
-    }
-
     pub fn upsert_works(&mut self, works: &[Work], progress: &mut ProgressSender) -> Result<()> {
         let conn = self.pool.get()?;
         let mut insert_work_stmt = conn.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")?;
@@ -233,7 +202,7 @@ impl MetadataPool {
 
         let total_count = works.len();
         let mut current_pos = 0;
-        progress.message(format!("Writing {total_count} works to the database..."));
+        progress.info(format!("Writing {total_count} works to the database..."));
 
         for chunk in works.chunks(10_000) {
             progress.trace(format!("db->upsert_works chunk of {}", chunk.len()));
@@ -261,7 +230,7 @@ impl MetadataPool {
                     {
                         work_id
                     } else {
-                        progress.message(format!(
+                        progress.warn(format!(
                             "Detected duplicate URL in work {}, skipping",
                             work.name()
                         ));
@@ -284,43 +253,6 @@ impl MetadataPool {
         }
 
         Ok(())
-    }
-
-    pub fn tags_count(&self, filter: &str) -> Result<i64> {
-        let conn = self.pool.get()?;
-        let cnt = conn.query_row(
-            "SELECT COUNT(*) FROM tags WHERE name LIKE ? ORDER BY name ASC",
-            [format!("%{filter}%")],
-            |row| row.get(0),
-        )?;
-        Ok(cnt)
-    }
-
-    pub fn tags_list(&self, range: Range<usize>, filter: &str) -> Result<Vec<TagInfo>> {
-        let conn = self.pool.get()?;
-        let mut stmt = conn.prepare(
-            r#"SELECT tags.name, COUNT(work_tags.id) FROM tags
-            LEFT JOIN work_tags ON tags.id == work_tags.tag_id WHERE tags.name LIKE ?
-            GROUP BY tags.name ORDER BY tags.name ASC LIMIT ? OFFSET ?"#,
-        )?;
-        // SELECT tags.name, COUNT(work_tags.id) FROM tags LEFT JOIN work_tags ON tags.id == work_tags.tag_id WHERE tags.name LIKE 'A%' GROUP BY tags.name ORDER BY tags.name DESC LIMIT 20 OFFSET 20;
-        let rows = stmt.query_map(
-            params![format!("%{filter}%"), range.end - range.start, range.start],
-            |row| Ok(TagInfo::new(row.get::<usize, String>(0)?, row.get(1)?)),
-        )?;
-        Ok(rows.flatten().collect())
-    }
-
-    pub fn list_plugins_for_tag(&self, tag: &str) -> Result<HashSet<String>> {
-        let conn = self.pool.get()?;
-        let tag_id: i64 = conn.query_one("SELECT id FROM tags WHERE name = ?", [tag], |row| {
-            row.get(0)
-        })?;
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT p.name FROM plugins AS p INNER JOIN plugin_tags AS pt WHERE pt.tag_id = ? AND p.id = pt.plugin_id",
-        )?;
-        let rows = stmt.query_map(params![tag_id], |row| row.get(0))?;
-        Ok(rows.flatten().collect())
     }
 
     fn make_works_query(order: &str, postfix: &str) -> String {

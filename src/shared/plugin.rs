@@ -1,5 +1,6 @@
 use crate::shared::progress::Progress;
 use artchiver_sdk::PluginMetadata;
+use log::Level;
 
 #[derive(Clone, Debug)]
 pub enum PluginRequest {
@@ -13,7 +14,6 @@ pub enum PluginRequest {
 pub enum PluginResponse {
     PluginInfo(PluginMetadata),
     Progress(Progress),
-    Message(String),
-    Trace(String),
+    Log(Level, String),
     DatabaseChanged,
 }

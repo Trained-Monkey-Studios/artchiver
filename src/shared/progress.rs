@@ -1,7 +1,8 @@
 use crate::shared::plugin::PluginResponse;
 use anyhow::Result;
 use crossbeam::channel::Sender;
-use log::{info, trace};
+use log::{Level, debug, error, info, trace, warn};
+use std::fmt;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Progress {
@@ -51,22 +52,48 @@ impl ProgressSender {
             .ok();
     }
 
-    pub fn message(&mut self, message: impl AsRef<str>) {
-        let msg = message.as_ref();
-        info!("{msg}");
+    pub fn trace<S: fmt::Display>(&mut self, message: S) {
+        trace!("{message}");
         self.tx_to_runner
-            .send(PluginResponse::Message(msg.to_owned()))
-            .ok();
-        self.tx_to_runner
-            .send(PluginResponse::Trace(msg.to_owned()))
+            .send(PluginResponse::Log(Level::Trace, message.to_string()))
             .ok();
     }
 
-    pub fn trace(&mut self, message: impl AsRef<str>) {
-        let msg = message.as_ref();
-        trace!("{msg}");
+    pub fn debug<S: fmt::Display>(&mut self, message: S) {
+        debug!("{message}");
         self.tx_to_runner
-            .send(PluginResponse::Trace(msg.to_owned()))
+            .send(PluginResponse::Log(Level::Debug, message.to_string()))
             .ok();
+    }
+
+    pub fn info<S: fmt::Display>(&mut self, message: S) {
+        info!("{message}");
+        self.tx_to_runner
+            .send(PluginResponse::Log(Level::Info, message.to_string()))
+            .ok();
+    }
+
+    pub fn warn<S: fmt::Display>(&mut self, message: S) {
+        warn!("{message}");
+        self.tx_to_runner
+            .send(PluginResponse::Log(Level::Warn, message.to_string()))
+            .ok();
+    }
+
+    pub fn error<S: fmt::Display>(&mut self, message: S) {
+        error!("{message}");
+        self.tx_to_runner
+            .send(PluginResponse::Log(Level::Error, message.to_string()))
+            .ok();
+    }
+
+    pub fn log_message<S: fmt::Display>(&mut self, level: u32, message: S) {
+        match level {
+            0 => self.trace(message),
+            1 => self.debug(message),
+            2 => self.info(message),
+            3 => self.warn(message),
+            _ => self.error(message),
+        };
     }
 }

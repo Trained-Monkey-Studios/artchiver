@@ -6,6 +6,7 @@ use anyhow::Result;
 use artchiver_sdk::Work;
 use egui::{self, Key, Margin, Modifiers, Rect, Sense, SizeHint, TextWrapMode, Vec2};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
+use log::Level;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, path::Path};
@@ -44,7 +45,12 @@ pub enum WorkSelection {
 
 impl WorkSelection {
     pub fn new(work_id: i64, offset: usize) -> Self {
-        Self::Work { work_id, offset, zoom: 1., pan: (0., 0.) }
+        Self::Work {
+            work_id,
+            offset,
+            zoom: 1.,
+            pan: (0., 0.),
+        }
     }
 
     pub fn is_selected(&self, work_id: i64) -> bool {
@@ -183,23 +189,20 @@ impl<'a> SyncViewer<'a> {
                                         .inner?;
                                     Ok(())
                                 });
-                            egui::CollapsingHeader::new("Messages")
-                                .id_salt(format!("messages_section_{}", plugin.name()))
+                            egui::CollapsingHeader::new("Logs")
+                                .id_salt(format!("logs_section_{}", plugin.name()))
                                 .show(ui, |ui| {
-                                    for message in plugin.messages() {
+                                    for (level, message) in plugin.log_messages() {
+                                        let msg = egui::RichText::new(message);
+                                        let msg = match level {
+                                            Level::Error => msg.strong().color(egui::Color32::RED),
+                                            Level::Warn => msg.color(egui::Color32::YELLOW),
+                                            Level::Info => msg.color(egui::Color32::GREEN),
+                                            Level::Debug => msg.color(egui::Color32::LIGHT_BLUE),
+                                            Level::Trace => msg.color(egui::Color32::LIGHT_GRAY),
+                                        };
                                         ui.add(
-                                            egui::Label::new(message)
-                                                .wrap_mode(TextWrapMode::Truncate),
-                                        );
-                                    }
-                                });
-                            egui::CollapsingHeader::new("Traces")
-                                .id_salt(format!("traces_section_{}", plugin.name()))
-                                .show(ui, |ui| {
-                                    for message in plugin.traces() {
-                                        ui.add(
-                                            egui::Label::new(message)
-                                                .wrap_mode(TextWrapMode::Truncate),
+                                            egui::Label::new(msg).wrap_mode(TextWrapMode::Truncate),
                                         );
                                     }
                                 });
@@ -214,8 +217,8 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_tags(&mut self, ui: &mut egui::Ui) -> Result<()> {
-        let tag_cnt = self.sync.pool_mut().tags_count(&self.state.tag_filter)?;
-        // Show the filter and global refresh-all-tags button.
+        let tag_cnt = self.sync.pool_mut().count_tags(&self.state.tag_filter)?;
+        // Filter and view bar
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.state.tag_filter);
             if ui.button("x").clicked() {
@@ -235,7 +238,7 @@ impl<'a> SyncViewer<'a> {
                     let tags = self
                         .sync
                         .pool_mut()
-                        .tags_list(row_range, &self.state.tag_filter)?;
+                        .list_tags(row_range, &self.state.tag_filter)?;
 
                     egui::Grid::new("tag_grid")
                         .num_columns(1)
@@ -264,7 +267,16 @@ impl<'a> SyncViewer<'a> {
                                     self.sync.refresh_works_for_tag(tag.name()).ok();
                                 }
                                 ui.label("   ");
-                                let content = format!("{} ({})", tag.name(), tag.work_count());
+                                let content = if let Some(work_count) = tag.presumed_work_count() {
+                                    format!(
+                                        "{} ({} of {})",
+                                        tag.name(),
+                                        tag.actual_work_count(),
+                                        work_count
+                                    )
+                                } else {
+                                    format!("{} ({})", tag.name(), tag.actual_work_count())
+                                };
                                 if status.disabled() {
                                     ui.label(egui::RichText::new(content).strikethrough());
                                 } else if status.enabled() {
@@ -320,8 +332,9 @@ impl<'a> SyncViewer<'a> {
 
                 // We subtracted off range_len, but may have clipped with zero, so we have to reconstruct.
                 let works_start = start_index - works_range.start;
+                let works_end = (works_start + (end_index - start_index)).min(works.len());
                 let mut offset = works_start;
-                for row in works[works_start..end_index].chunks(n_wide) {
+                for row in works[works_start..works_end].chunks(n_wide) {
                     ui.horizontal(|ui| {
                         for work in row {
                             if let Some(uri) = self.ensure_work_cached(work, ui.ctx()) {
@@ -431,13 +444,15 @@ impl<'a> SyncViewer<'a> {
                     .maintain_aspect_ratio(true);
 
                 if let Some(size) = img.load_and_calc_size(ui, avail) {
-                    let (left, right, top, bottom) = if size.y > size.x {
-                        let left = (avail.x - size.x) / 2.;
-                        (left, avail.x - left, 0., avail.y)
-                    } else {
-                        let top = (avail.y - size.y) / 2.;
-                        (0., avail.x, top, avail.y - top)
-                    };
+                    let (mut left, mut right, mut top, mut bottom) = (0., avail.x, 0., avail.y);
+                    if avail.y > size.y {
+                        top = (avail.y - size.y) / 2.;
+                        bottom = avail.y - top;
+                    }
+                    if avail.x > size.x {
+                        left = (avail.x - size.x) / 2.;
+                        right = avail.x - left;
+                    }
                     img.paint_at(ui, Rect::from_x_y_ranges(left..=right, top..=bottom));
                 }
             } else {

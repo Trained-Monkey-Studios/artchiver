@@ -54,7 +54,6 @@ jiff = { version ="0.2", features = ["serde"] }
 lru = "0.16"
 parking_lot = "0.12"
 platform-dirs = "0.3"
-progress-streams = "1.1"
 r2d2 = "0.8"
 r2d2_sqlite = "0.31"
 rand = "0.9" # as pulled in by glam 29.2

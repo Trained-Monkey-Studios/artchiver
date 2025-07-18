@@ -1,6 +1,6 @@
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{fmt, str::FromStr, time::Duration};
 
 #[macro_export]
 macro_rules! import_section {
@@ -10,10 +10,8 @@ macro_rules! import_section {
             fn progress_spinner();
             fn progress_percent(current: i32, total: i32);
             fn progress_clear();
-            fn progress_message(message: &str);
-            fn progress_trace(message: &str);
-            fn fetch_text(url: &str) -> Json<HttpTextResult>;
-            fn fetch_large_text(url: &str) -> Json<HttpTextResult>;
+            fn log_message(level: u32, message: &str);
+            fn fetch_text(req: Json<Request>) -> Json<HttpTextResult>;
         }
 
         pub struct Progress;
@@ -27,31 +25,35 @@ macro_rules! import_section {
             pub fn clear() -> extism_pdk::FnResult<()> {
                 Ok(unsafe { progress_clear() }?)
             }
-            pub fn message<S: AsRef<str>>(msg: S) -> extism_pdk::FnResult<()> {
-                Ok(unsafe { progress_message(msg.as_ref()) }?)
-            }
+        }
+
+        pub struct Log;
+        impl Log {
             pub fn trace<S: AsRef<str>>(msg: S) -> extism_pdk::FnResult<()> {
-                Ok(unsafe { progress_trace(msg.as_ref()) }?)
+                Ok(unsafe { log_message(0, msg.as_ref()) }?)
+            }
+
+            pub fn debug<S: AsRef<str>>(msg: S) -> extism_pdk::FnResult<()> {
+                Ok(unsafe { log_message(1, msg.as_ref()) }?)
+            }
+
+            pub fn info<S: AsRef<str>>(msg: S) -> extism_pdk::FnResult<()> {
+                Ok(unsafe { log_message(2, msg.as_ref()) }?)
+            }
+
+            pub fn warn<S: AsRef<str>>(msg: S) -> extism_pdk::FnResult<()> {
+                Ok(unsafe { log_message(3, msg.as_ref()) }?)
+            }
+
+            pub fn error<S: AsRef<str>>(msg: S) -> extism_pdk::FnResult<()> {
+                Ok(unsafe { log_message(4, msg.as_ref()) }?)
             }
         }
 
         pub struct Web;
         impl Web {
-            pub fn fetch_text<S: AsRef<str>>(url: S) -> extism_pdk::FnResult<String> {
-                match unsafe { fetch_text(url.as_ref()) }?.into_inner() {
-                    HttpTextResult::Ok(text) => Ok(text),
-                    HttpTextResult::Err {
-                        status_code,
-                        message,
-                    } => {
-                        // FIXME: give this a useful type
-                        Err(extism_pdk::Error::msg(format!("{status_code}: {message}")).into())
-                    }
-                }
-            }
-
-            pub fn fetch_large_text<S: AsRef<str>>(url: S) -> extism_pdk::FnResult<String> {
-                match unsafe { fetch_large_text(url.as_ref()) }?.into_inner() {
+            pub fn fetch_text(req: Request) -> extism_pdk::FnResult<String> {
+                match unsafe { fetch_text(Json(req)) }?.into_inner() {
                     HttpTextResult::Ok(text) => Ok(text),
                     HttpTextResult::Err {
                         status_code,
@@ -136,23 +138,58 @@ impl PluginMetadata {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum HttpTextResult {
-    Ok(String),
-    Err { status_code: u16, message: String },
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub enum TagKind {
+    #[default]
+    Default,
+    Artist,
+    Character,
+    Series,
+    Copyright,
+    Meta,
 }
 
+impl FromStr for TagKind {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "artist" => TagKind::Artist,
+            "character" => TagKind::Character,
+            "series" => TagKind::Series,
+            "copyright" => TagKind::Copyright,
+            "meta" => TagKind::Meta,
+            _ => TagKind::Default,
+        })
+    }
+}
+
+impl fmt::Display for TagKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TagKind::Artist => write!(f, "artist"),
+            TagKind::Character => write!(f, "character"),
+            TagKind::Series => write!(f, "series"),
+            TagKind::Copyright => write!(f, "copyright"),
+            TagKind::Meta => write!(f, "meta"),
+            _ => write!(f, "default"),
+        }
+    }
+}
+
+// An API sourced tag
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TagInfo {
     name: String,
-    work_count: u64,
+    kind: TagKind,
+    presumed_work_count: Option<u64>,
 }
 
 impl TagInfo {
-    pub fn new<S: ToString>(name: S, work_count: u64) -> Self {
+    pub fn new<N: ToString>(name: N, kind: TagKind, work_count: Option<u64>) -> Self {
         Self {
             name: name.to_string(),
-            work_count,
+            kind,
+            presumed_work_count: work_count,
         }
     }
 
@@ -160,8 +197,12 @@ impl TagInfo {
         &self.name
     }
 
-    pub fn work_count(&self) -> u64 {
-        self.work_count
+    pub fn kind(&self) -> TagKind {
+        self.kind
+    }
+
+    pub fn presumed_work_count(&self) -> u64 {
+        self.presumed_work_count.unwrap_or_default()
     }
 }
 
@@ -240,4 +281,71 @@ impl Work {
     pub fn tags(&self) -> &[String] {
         &self.tags
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Request {
+    method: String,
+    url: String,
+    path: String,
+    query: Vec<(String, String)>,
+    headers: Vec<(String, String)>,
+}
+
+impl Request {
+    pub fn get<S: ToString>(url: S) -> Self {
+        Self {
+            method: "GET".to_string(),
+            url: url.to_string(),
+            path: "/".to_string(),
+            query: Vec::new(),
+            headers: Vec::new(),
+        }
+    }
+
+    pub fn add_header<K: ToString, V: ToString>(mut self, key: K, value: V) -> Self {
+        self.headers.push((key.to_string(), value.to_string()));
+        self
+    }
+
+    pub fn add_query<K: ToString, V: ToString>(mut self, key: K, value: V) -> Self {
+        self.query.push((key.to_string(), value.to_string()));
+        self
+    }
+
+    pub fn in_path<P: ToString>(mut self, path: P) -> Self {
+        self.path = path.to_string();
+        self
+    }
+
+    pub fn append_path_segment<P: AsRef<str>>(mut self, path: P) -> Self {
+        if !self.path.ends_with('/') {
+            self.path.push('/');
+        }
+        self.path.push_str(path.as_ref());
+        self
+    }
+
+    pub fn headers(&self) -> &[(String, String)] {
+        &self.headers
+    }
+
+    pub fn to_url(&self) -> String {
+        let query = self
+            .query
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        if query.is_empty() {
+            return format!("{}{}", self.url, self.path);
+        }
+        format!("{}{}?{}", self.url, self.path, query)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum HttpTextResult {
+    Ok(String),
+    Err { status_code: u16, message: String },
 }

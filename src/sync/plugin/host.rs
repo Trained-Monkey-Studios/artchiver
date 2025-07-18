@@ -12,6 +12,7 @@ use crate::{
 use anyhow::Result;
 use artchiver_sdk::PluginMetadata;
 use crossbeam::channel;
+use log::Level;
 use std::{
     collections::VecDeque,
     fs,
@@ -113,16 +114,10 @@ impl PluginHost {
                     PluginResponse::Progress(progress) => {
                         handle.progress = progress;
                     }
-                    PluginResponse::Message(message) => {
-                        handle.messages.push_back(message);
-                        while handle.messages.len() > PluginHandle::MAX_MESSAGES {
-                            handle.messages.pop_front();
-                        }
-                    }
-                    PluginResponse::Trace(message) => {
-                        handle.traces.push_back(message);
-                        while handle.traces.len() > PluginHandle::MAX_TRACES {
-                            handle.traces.pop_front();
+                    PluginResponse::Log(level, message) => {
+                        handle.log_messages.push_front((level, message));
+                        while handle.log_messages.len() > PluginHandle::MAX_MESSAGES {
+                            handle.log_messages.pop_back();
                         }
                     }
                     PluginResponse::PluginInfo(info) => {
@@ -155,8 +150,7 @@ pub struct PluginHandle {
     source: PathBuf,
     metadata: Option<PluginMetadata>,
     progress: Progress,
-    messages: VecDeque<String>,
-    traces: VecDeque<String>,
+    log_messages: VecDeque<(Level, String)>,
 
     // Maintenance state
     task: JoinHandle<()>,
@@ -165,8 +159,7 @@ pub struct PluginHandle {
 }
 
 impl PluginHandle {
-    const MAX_MESSAGES: usize = 20;
-    const MAX_TRACES: usize = 100;
+    const MAX_MESSAGES: usize = 50;
 
     fn new(
         source: PathBuf,
@@ -178,8 +171,7 @@ impl PluginHandle {
             source,
             metadata: None,
             progress: Progress::None,
-            messages: VecDeque::new(),
-            traces: VecDeque::new(),
+            log_messages: VecDeque::new(),
             task,
             tx_to_plugin,
             rx_from_plugin,
@@ -222,12 +214,8 @@ impl PluginHandle {
         }
     }
 
-    pub fn messages(&self) -> impl Iterator<Item = &str> {
-        self.messages.iter().map(|s| s.as_str())
-    }
-
-    pub fn traces(&self) -> impl Iterator<Item = &str> {
-        self.traces.iter().map(|s| s.as_str())
+    pub fn log_messages(&self) -> impl Iterator<Item = (Level, &str)> {
+        self.log_messages.iter().map(|(lvl, s)| (*lvl, s.as_str()))
     }
 
     pub fn progress(&self) -> &Progress {

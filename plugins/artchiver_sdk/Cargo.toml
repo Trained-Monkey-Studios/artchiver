@@ -6,6 +6,8 @@ edition = "2024"
 license = "GPL-3"
 
 [dependencies]
+anyhow = "1.0"
+extism-pdk = "1.0"
 jiff = { version ="0.2", features = ["serde"] }
 serde = "1.0"
-extism-pdk = "1.0"
+urlencoding = "2.1"

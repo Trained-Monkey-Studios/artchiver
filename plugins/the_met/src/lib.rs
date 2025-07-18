@@ -2,7 +2,7 @@ use artchiver_sdk::*;
 use extism_pdk::*;
 use jiff::civil::Date;
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 import_section!();
 
@@ -88,21 +88,26 @@ fn get_record_tags(record: &csv::StringRecord) -> impl Iterator<Item = &str> {
 }
 
 #[plugin_fn]
-pub fn list_tags() -> FnResult<Json<Vec<String>>> {
-    let mut all_tags = HashSet::new();
-    let raw = Web::fetch_large_text(CSV_URL)?;
-
+pub fn list_tags() -> FnResult<Json<Vec<TagInfo>>> {
     Progress::spinner()?;
+    let mut all_names: HashMap<String, usize> = HashMap::new();
+    let raw = Web::fetch_text(Request::get(CSV_URL))?;
     let mut rdr = make_reader(&raw)?;
     for result in rdr.records() {
         let record = result?;
         let tags = get_record_tags(&record).map(|s| s.to_owned());
-        all_tags.extend(tags);
+        for tag in tags {
+            all_names.entry(tag).and_modify(|c| *c += 1).or_insert(1);
+        }
     }
+    Log::info(format!("found {} tags", all_names.len()))?;
+    info!("Found {} tags", all_names.len());
     Progress::clear()?;
-
-    info!("Found {} tags", all_tags.len());
-    Ok(all_tags.drain().collect::<Vec<String>>().into())
+    Ok(all_names
+        .drain()
+        .map(|(k, v)| TagInfo::new(k, TagKind::default(), Some(v as u64)))
+        .collect::<Vec<TagInfo>>()
+        .into())
 }
 
 #[allow(non_snake_case, unused)]
@@ -209,13 +214,18 @@ struct ObjectInfo {
     GalleryNumber: String,
 }
 
+const URL: &str = "https://collectionapi.metmuseum.org";
+const SEARCH_PATH: &str = "/public/collection/v1/search";
+const OBJECTS_PATH: &str = "/public/collection/v1/objects";
+
 #[plugin_fn]
 pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
     // Query the search api with tags= to get the list of works by id
-    let search_results = Web::fetch_text(format!(
-        "https://collectionapi.metmuseum.org/public/collection/v1/search?tags=true&q={})",
-        urlencoding::encode(&tag)
-    ))?;
+    let req = Request::get(URL)
+        .in_path(SEARCH_PATH)
+        .add_query("tags", "true")
+        .add_query("q", &tag);
+    let search_results = Web::fetch_text(req)?;
     let search = serde_json::from_str::<SearchResults>(&search_results)?;
     info!("Found {} works matching tag {tag}", search.total);
 
@@ -223,10 +233,11 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
     let mut matching_works = Vec::new();
     for (i, obj_id) in search.objectIDs.iter().enumerate() {
         Progress::percent(i.try_into()?, search.objectIDs.len().try_into()?)?;
-        let Ok(object_info) = Web::fetch_text(format!(
-            "https://collectionapi.metmuseum.org/public/collection/v1/objects/{obj_id}"
-        )) else {
-            Progress::trace(format!("Failed to fetch object info for {obj_id}"))?;
+        let req = Request::get(URL)
+            .in_path(OBJECTS_PATH)
+            .append_path_segment(obj_id.to_string());
+        let Ok(object_info) = Web::fetch_text(req) else {
+            Log::error(format!("Failed to fetch object info for {obj_id}"))?;
             continue;
         };
         let object = serde_json::from_str::<ObjectInfo>(&object_info)?;
