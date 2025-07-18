@@ -37,12 +37,14 @@ pub enum WorkSelection {
     Work {
         work_id: i64,
         offset: usize,
+        zoom: f32,
+        pan: (f32, f32),
     },
 }
 
 impl WorkSelection {
     pub fn new(work_id: i64, offset: usize) -> Self {
-        Self::Work { work_id, offset }
+        Self::Work { work_id, offset, zoom: 1., pan: (0., 0.) }
     }
 
     pub fn is_selected(&self, work_id: i64) -> bool {
@@ -416,6 +418,9 @@ impl<'a> SyncViewer<'a> {
         let work = self.sync.pool_mut().lookup_work(work_id)?;
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            // See https://github.com/emilk/egui/blob/0f6310c598b5be92f339c9275a00d5decd838c1b/examples/custom_plot_manipulation/src/main.rs
+            // for an example of how to do zoom and pan on a paint-like thing.
+
             let size = ui.available_size();
             if let Some(uri) = self.ensure_work_cached(&work, ui.ctx()) {
                 let avail = ui.available_size();
