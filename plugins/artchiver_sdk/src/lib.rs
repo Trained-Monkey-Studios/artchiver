@@ -180,14 +180,21 @@ pub struct TagInfo {
     name: String,
     kind: TagKind,
     presumed_work_count: Option<u64>,
+    wiki_url: Option<String>,
 }
 
 impl TagInfo {
-    pub fn new<N: ToString>(name: N, kind: TagKind, work_count: Option<u64>) -> Self {
+    pub fn new<N: ToString, W: ToString>(
+        name: N,
+        kind: TagKind,
+        work_count: Option<u64>,
+        wiki_url: Option<W>,
+    ) -> Self {
         Self {
             name: name.to_string(),
             kind,
             presumed_work_count: work_count,
+            wiki_url: wiki_url.map(|s| s.to_string()),
         }
     }
 
@@ -201,6 +208,10 @@ impl TagInfo {
 
     pub fn presumed_work_count(&self) -> u64 {
         self.presumed_work_count.unwrap_or_default()
+    }
+
+    pub fn wiki_url(&self) -> Option<&str> {
+        self.wiki_url.as_deref()
     }
 }
 

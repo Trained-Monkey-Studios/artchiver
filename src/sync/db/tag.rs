@@ -74,7 +74,7 @@ pub fn upsert_tags(
     progress.set_spinner();
 
     let mut insert_tag_stmt = conn
-        .prepare("INSERT OR IGNORE INTO tags (name, kind, presumed_work_count) VALUES (?, ?, ?)")?;
+        .prepare("INSERT OR IGNORE INTO tags (name, kind, presumed_work_count, wiki_url) VALUES (?, ?, ?, ?)")?;
     let mut select_tag_id_stmt = conn.prepare("SELECT id FROM tags WHERE name = ?")?;
     let mut insert_plugin_tag_stmt =
         conn.prepare("INSERT OR IGNORE INTO plugin_tags (plugin_id, tag_id) VALUES (?, ?)")?;
@@ -90,6 +90,7 @@ pub fn upsert_tags(
                 tag.name(),
                 tag.kind().to_string(),
                 tag.presumed_work_count(),
+                tag.wiki_url(),
             ])?;
             let tag_id = if row_cnt > 0 {
                 conn.last_insert_rowid()

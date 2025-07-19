@@ -1,8 +1,7 @@
-use crate::shared::plugin::PluginCancellation;
 use crate::{
     shared::{
         environment::Environment,
-        plugin::{PluginRequest, PluginResponse},
+        plugin::{PluginCancellation, PluginRequest, PluginResponse},
         progress::Progress,
     },
     sync::{
@@ -13,7 +12,7 @@ use crate::{
 use anyhow::Result;
 use artchiver_sdk::PluginMetadata;
 use crossbeam::channel;
-use log::Level;
+use log::{Level, error};
 use std::{
     collections::VecDeque,
     fs,
@@ -45,28 +44,38 @@ fn search_for_plugins_to_load(env: &Environment) -> Result<Vec<PathBuf>> {
 pub struct PluginHost {
     plugins: Vec<PluginHandle>,
     pool: CachingPool,
+    errors: Vec<String>,
 }
 
 impl PluginHost {
     pub fn new(pool: MetadataPool, env: &Environment) -> Result<Self> {
+        let mut errors = Vec::new();
         let mut plugins = Vec::new();
         for source in search_for_plugins_to_load(env)?.drain(..) {
             let (tx_to_plugin, rx_from_runner) = channel::unbounded();
             let (tx_to_runner, rx_from_plugin) = channel::unbounded();
 
-            let (plugin_task, cancellation) =
-                create_plugin_task(&source, env, pool.clone(), rx_from_runner, tx_to_runner)?;
-            plugins.push(PluginHandle::new(
-                source,
-                plugin_task,
-                cancellation,
-                tx_to_plugin,
-                rx_from_plugin,
-            ));
+            match create_plugin_task(&source, env, pool.clone(), rx_from_runner, tx_to_runner) {
+                Ok((plugin_task, cancellation)) => {
+                    plugins.push(PluginHandle::new(
+                        source,
+                        plugin_task,
+                        cancellation,
+                        tx_to_plugin,
+                        rx_from_plugin,
+                    ));
+                }
+                Err(e) => {
+                    let msg = format!("Failed to load plugin {}: {}", source.display(), e);
+                    error!("{msg}");
+                    errors.push(msg);
+                }
+            }
         }
         Ok(Self {
             plugins,
             pool: CachingPool::new(pool),
+            errors,
         })
     }
 
@@ -84,6 +93,14 @@ impl PluginHost {
 
     pub fn plugins_mut(&mut self) -> impl Iterator<Item = &mut PluginHandle> {
         self.plugins.iter_mut()
+    }
+
+    pub fn errors(&self) -> impl Iterator<Item = &str> {
+        self.errors.iter().map(|v| v.as_str())
+    }
+
+    pub fn remove_error(&mut self, index: usize) {
+        self.errors.remove(index);
     }
 
     pub fn refresh_works_for_tag(&mut self, tag: &str) -> Result<()> {

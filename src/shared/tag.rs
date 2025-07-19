@@ -57,6 +57,10 @@ impl TagSet {
         self.disabled.clear();
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.enabled.is_empty()
+    }
+
     pub fn enabled(&self) -> impl Iterator<Item = &String> {
         self.enabled.iter()
     }

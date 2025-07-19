@@ -32,6 +32,7 @@ const MIGRATIONS: [&str; 9] = [
         name TEXT NOT NULL UNIQUE,
         kind TEXT DEFAULT 'default',
         presumed_work_count INTEGER,
+        wiki_url TEXT,
         hidden BOOLEAN NOT NULL DEFAULT false,
         favorite BOOLEAN NOT NULL DEFAULT false
     );"#,

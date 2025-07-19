@@ -60,15 +60,17 @@ import_section!();
 // 51: Tags,
 // 52: Tags AAT URL,
 // 53: Tags Wikidata URL
-const CSV_URL: &str = "https://media.githubusercontent.com/media/metmuseum/openaccess/refs/heads/master/MetObjects.csv";
+
+const OBJECTS_URL: &str =
+    "https://github.com/NationalGalleryOfArt/opendata/raw/refs/heads/main/data/objects.csv";
 
 #[plugin_fn]
 pub fn startup() -> FnResult<Json<PluginMetadata>> {
     Ok(Json(
         PluginMetadata::new(
-            "The Metropolitan Gallery of Art",
+            "The National Gallery of Art",
             "0.0.1",
-            "A plugin for Artchiver to provide The Metropolitan Gallery of the Arts open data.",
+            "A plugin for Artchiver to provide The National Gallery of the Art (nga.gov) open data.",
         )
         .with_rate_limit(1, 2.0),
     ))
@@ -94,6 +96,13 @@ fn get_record_tags(record: &csv::StringRecord) -> impl Iterator<Item = (&str, &s
 #[plugin_fn]
 pub fn list_tags() -> FnResult<Json<Vec<TagInfo>>> {
     Progress::spinner()?;
+    let raw = Web::fetch_text(Request::get(OBJECTS_URL))?;
+    let mut rdr = make_reader(&raw)?;
+    for result in rdr.records() {
+        let record = result?;
+        Log::info(format!("{record:?}"))?;
+    }
+    /*
     let mut all_names: HashMap<String, usize> = HashMap::new();
     let mut wiki_map: HashMap<String, String> = HashMap::new();
     let raw = Web::fetch_text(Request::get(CSV_URL))?;
@@ -124,6 +133,9 @@ pub fn list_tags() -> FnResult<Json<Vec<TagInfo>>> {
         })
         .collect::<Vec<TagInfo>>()
         .into())
+     */
+    Progress::clear()?;
+    Ok(Vec::new().into())
 }
 
 #[allow(non_snake_case, unused)]
