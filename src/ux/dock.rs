@@ -11,7 +11,7 @@ use egui::{
     self, Key, Margin, Modifiers, Rect, Sense, SizeHint, TextWrapMode, Vec2, include_image,
 };
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
-use log::{Level, trace};
+use log::Level;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, path::Path, time::Duration};
@@ -49,96 +49,42 @@ pub enum WorkSelection {
     #[default]
     None,
     Work {
-        // The id of the selected image.
-        work_id: i64,
-        prev_id: Option<i64>,
-        next_id: Option<i64>,
-
-        zoom: f32,
-        pan: (f32, f32),
+        offset: usize,
+        // zoom: f32,
+        // pan: (f32, f32),
     },
 }
 
 impl WorkSelection {
-    pub fn new(work_id: i64, offset: usize) -> Self {
-        Self::Work {
-            work_id,
-            prev_id: None,
-            next_id: None,
-            zoom: 1.,
-            pan: (0., 0.),
-        }
+    pub fn new(offset: usize) -> Self {
+        Self::Work { offset }
     }
 
-    pub fn is_selected(&self, work_id: i64) -> bool {
+    pub fn is_selected(&self, offset: usize) -> bool {
         match self {
             Self::None => false,
-            Self::Work { work_id: id, .. } => *id == work_id,
+            Self::Work { offset: idx, .. } => *idx == offset,
         }
     }
 
-    pub fn get_selected(&self) -> Option<i64> {
+    pub fn get_selected_offset(&self) -> Option<usize> {
         match self {
             Self::None => None,
-            Self::Work { work_id, .. } => Some(*work_id),
-        }
-    }
-
-    pub fn clear_prior_id(&mut self) {
-        match self {
-            Self::None => {}
-            Self::Work { prev_id, .. } => *prev_id = None,
-        }
-    }
-
-    pub fn clear_next_id(&mut self) {
-        match self {
-            Self::None => {}
-            Self::Work { next_id, .. } => *next_id = None,
-        }
-    }
-
-    pub fn set_prior_id(&mut self, id: i64) {
-        match self {
-            Self::None => {}
-            Self::Work { prev_id, .. } => *prev_id = Some(id),
-        }
-    }
-
-    pub fn set_next_id(&mut self, id: i64) {
-        match self {
-            Self::None => {}
-            Self::Work { next_id, .. } => *next_id = Some(id),
+            Self::Work { offset, .. } => Some(*offset),
         }
     }
 
     pub fn move_to_next(&mut self) {
         match self {
             Self::None => {}
-            Self::Work {
-                work_id, next_id, ..
-            } => {
-                trace!("Move to Next: {work_id} to {next_id:?}");
-                if let Some(id) = next_id {
-                    *work_id = *id;
-                    *next_id = None;
-                }
-            }
+            Self::Work { offset } => *offset = offset.wrapping_add(1),
         }
     }
 
     pub fn move_to_prev(&mut self) {
         match self {
             Self::None => {}
-            Self::Work {
-                work_id, prev_id, ..
-            } => {
-                trace!("Move to Prev: {work_id} to {prev_id:?}");
-                if let Some(id) = prev_id {
-                    *work_id = *id;
-                    *prev_id = None;
-                }
-            }
+            Self::Work { offset } => *offset = offset.saturating_sub(1),
         }
     }
 
@@ -445,8 +391,6 @@ impl<'a> SyncViewer<'a> {
         const PREVIEW_SIZE: f32 = 256.;
         const SIZE: f32 = PREVIEW_SIZE;
 
-        let mut slices = "".to_owned();
-        let mut selection = "".to_owned();
         let start = std::time::Instant::now();
 
         let width = ui.available_width();
@@ -497,83 +441,67 @@ impl<'a> SyncViewer<'a> {
                     self.ensure_work_cached(ui.ctx(), work);
                 }
 
-                // Pre-scan the works slice to recompute prev and next pointers for the selection.
-                for (i, work) in query_works.iter().enumerate() {
-                    if self.state.selected_work.is_selected(work.id()) {
-                        let prev = query_works.get(i.saturating_sub(1));
-                        let next = query_works.get(i.saturating_add(1));
-                        if let Some(prev) = prev {
-                            self.state.selected_work.set_prior_id(prev.id());
-                        }
-                        if let Some(next) = next {
-                            self.state.selected_work.set_next_id(next.id());
-                        }
-                        break;
-                    }
-                }
-                selection = format!("sel: {:#?}", self.state.selected_work);
-
                 // Re-clamp the works slice after we fetch.
                 let works_slice = works_slice.start.clamp(0, query_works.len())
                     ..works_slice.end.clamp(0, query_works.len());
-                slices = format!("all:0..{works_count}; query:{query_slice:?}; visible:{visible_slice:?}; works:{works_slice:?}");
+                let mut work_offset = works_slice.start;
                 let visible_works = &query_works[works_slice];
 
                 let sel_color = ui.style().visuals.selection.bg_fill;
                 ui.style_mut().spacing.item_spacing = Vec2::ZERO;
 
-                let mut query_offset = 0;
                 for row in visible_works.chunks(n_wide) {
                     ui.horizontal(|ui| {
                         for work in row {
                             // Selection uses the selection color for the background
-                            let is_selected = self.state.selected_work.is_selected(work.id());
+                            // let is_selected = self.state.selected_work.is_selected(work.id());
+                            let is_selected = self.state.selected_work.is_selected(work_offset);
 
-                            let img = self.get_best_image(work, WorkSize::Preview)
-                                    .alt_text(work.name())
-                                    .show_loading_spinner(true)
-                                    .maintain_aspect_ratio(true);
+                            let img = self
+                                .get_best_image(work, WorkSize::Preview)
+                                .alt_text(work.name())
+                                .show_loading_spinner(true)
+                                .maintain_aspect_ratio(true);
 
-                                let mut pad = 0.;
-                                let mut inner_margin = Margin::ZERO;
-                                if let Some(size) = img
-                                    .load_and_calc_size(ui, Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE))
-                                {
-                                    // Wide things are already centered for some reason,
-                                    // so we only need to care about tall images
-                                    if size.y > size.x {
-                                        pad = (SIZE - size.x) / 2.;
-                                        inner_margin.left = pad as i8;
+                            let mut pad = 0.;
+                            let mut inner_margin = Margin::ZERO;
+                            if let Some(size) =
+                                img.load_and_calc_size(ui, Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE))
+                            {
+                                // Wide things are already centered for some reason,
+                                // so we only need to care about tall images
+                                if size.y > size.x {
+                                    pad = (SIZE - size.x) / 2.;
+                                    inner_margin.left = pad as i8;
+                                }
+                            }
+
+                            let btn = egui::ImageButton::new(img)
+                                .frame(false)
+                                .selected(is_selected)
+                                .sense(Sense::click());
+
+                            let mut frm = egui::Frame::default()
+                                .outer_margin(Margin::ZERO)
+                                .inner_margin(inner_margin);
+                            if is_selected {
+                                frm = frm.fill(sel_color);
+                            }
+
+                            let rsz = egui::Resize::default()
+                                .min_size(Vec2::new(SIZE - pad, SIZE))
+                                .max_size(Vec2::new(SIZE - pad, SIZE))
+                                .default_size(Vec2::new(SIZE - pad, SIZE))
+                                .resizable([false, false]);
+
+                            frm.show(ui, |ui| {
+                                rsz.show(ui, |ui| {
+                                    if ui.add(btn).clicked() {
+                                        self.state.selected_work = WorkSelection::new(work_offset);
                                     }
-                                }
-
-                                let btn = egui::ImageButton::new(img)
-                                    .frame(false)
-                                    .selected(is_selected)
-                                    .sense(Sense::click());
-
-                                let mut frm = egui::Frame::default()
-                                    .outer_margin(Margin::ZERO)
-                                    .inner_margin(inner_margin);
-                                if is_selected {
-                                    frm = frm.fill(sel_color);
-                                }
-
-                                let rsz = egui::Resize::default()
-                                    .min_size(Vec2::new(SIZE - pad, SIZE))
-                                    .max_size(Vec2::new(SIZE - pad, SIZE))
-                                    .default_size(Vec2::new(SIZE - pad, SIZE))
-                                    .resizable([false, false]);
-
-                                frm.show(ui, |ui| {
-                                    rsz.show(ui, |ui| {
-                                        if ui.add(btn).clicked() {
-                                            self.state.selected_work =
-                                                WorkSelection::new(work.id(), query_offset);
-                                        }
-                                    });
                                 });
-                            query_offset += 1;
+                            });
+                            work_offset += 1;
                         }
                     });
                 }
@@ -582,8 +510,6 @@ impl<'a> SyncViewer<'a> {
             });
 
         egui::Window::new("WorksStats").show(ui.ctx(), |ui| {
-            ui.label(slices);
-            ui.label(selection);
             ui.label(format!("{:?}", start.elapsed()));
         });
 
@@ -591,8 +517,11 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
-        if let Some(work_id) = self.state.selected_work.get_selected()
-            && let Ok(work) = self.sync.pool_mut().lookup_work(work_id)
+        if let Some(offset) = self.state.selected_work.get_selected_offset()
+            && let Ok(work) = self
+                .sync
+                .pool_mut()
+                .lookup_work_at_offset(offset, &self.state.tag_selection)
         {
             egui::Grid::new("work_info_grid").show(ui, |ui| {
                 ui.label("Name");
@@ -610,18 +539,25 @@ impl<'a> SyncViewer<'a> {
         }
     }
 
-    fn render_slideshow(&mut self, ctx: &egui::Context) -> Result<()> {
+    fn render_slideshow(&mut self, ctx: &egui::Context) {
         // Bail back to the browser if we lose our selection.
         if !self.state.selected_work.has_selection() {
             self.state.mode = UxMode::Browser;
-            return Ok(());
+            return;
         }
-        let work_id = self
+        let work_offset = self
             .state
             .selected_work
-            .get_selected()
-            .expect("selected work");
-        let work = self.sync.pool_mut().lookup_work(work_id)?;
+            .get_selected_offset()
+            .expect("no work selected in slideshow");
+        let Ok(work) = self
+            .sync
+            .pool_mut()
+            .lookup_work_at_offset(work_offset, &self.state.tag_selection)
+        else {
+            self.state.mode = UxMode::Browser;
+            return;
+        };
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // See https://github.com/emilk/egui/blob/0f6310c598b5be92f339c9275a00d5decd838c1b/examples/custom_plot_manipulation/src/main.rs
@@ -630,14 +566,8 @@ impl<'a> SyncViewer<'a> {
             let avail = ui.available_size();
             let img = self
                 .get_best_image(&work, WorkSize::Screen)
-                .alt_text(work.name())
-                .show_loading_spinner(true)
+                .show_loading_spinner(false)
                 .maintain_aspect_ratio(true);
-
-            // let img = egui::Image::new(uri)
-            //     .alt_text(work.name())
-            //     .show_loading_spinner(true)
-            //     .maintain_aspect_ratio(true);
 
             if let Some(size) = img.load_and_calc_size(ui, avail) {
                 let (mut left, mut right, mut top, mut bottom) = (0., avail.x, 0., avail.y);
@@ -652,8 +582,6 @@ impl<'a> SyncViewer<'a> {
                 img.paint_at(ui, Rect::from_x_y_ranges(left..=right, top..=bottom));
             }
         });
-
-        Ok(())
     }
 
     fn get_best_image<'b>(&'a self, work: &'b Work, req_sz: WorkSize) -> egui::Image<'b> {
@@ -795,18 +723,18 @@ impl UxToplevel {
                 self.render_about(ctx);
             }
             UxMode::Slideshow => {
-                SyncViewer::wrap(host, &mut self.state, &env.data_dir()).render_slideshow(ctx)?;
+                SyncViewer::wrap(host, &mut self.state, &env.data_dir()).render_slideshow(ctx);
             }
         }
 
-        self.handle_shortcuts(host, ctx);
+        self.handle_shortcuts(ctx);
 
         ctx.request_repaint_after(Duration::from_micros(1_000_000 / 60));
 
         Ok(())
     }
 
-    fn handle_shortcuts(&mut self, host: &mut PluginHost, ctx: &egui::Context) {
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         let mut focus = None;
         ctx.memory(|mem| focus = mem.focused());
 

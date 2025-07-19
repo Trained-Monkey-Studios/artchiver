@@ -188,4 +188,8 @@ impl CachingPool {
         });
         Ok(out)
     }
+
+    pub fn lookup_work_at_offset(&self, offset: usize, tag_set: &TagSet) -> Result<Work> {
+        self.pool.lookup_work_at_offset(offset, tag_set)
+    }
 }

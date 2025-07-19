@@ -1,5 +1,5 @@
 use crate::shared::{environment::Environment, progress::ProgressSender, tag::TagSet};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use artchiver_sdk::Work;
 use log::info;
 use r2d2::PooledConnection;
@@ -342,5 +342,33 @@ impl MetadataPool {
             r#"SELECT tags.name FROM tags LEFT JOIN work_tags ON work_tags.tag_id = tags.id WHERE work_tags.work_id = ?"#)?
             .query_map([work_id], |row| row.get(0))?.flatten().collect();
         Ok(work.with_tags(tags))
+    }
+
+    pub fn lookup_work_at_offset(&self, offset: usize, tag_set: &TagSet) -> Result<Work> {
+        let conn = self.pool.get()?;
+        let enabled_count = tag_set.enabled_count();
+        if enabled_count == 0 {
+            bail!("No enabled tags");
+        }
+        let mut stmt = conn.prepare(&Self::make_works_query(
+            "ORDER BY works.date ASC",
+            "LIMIT 1 OFFSET ?;",
+        ))?;
+        let work: Work = stmt.query_one(
+            params![tag_set.enabled_rarray(), enabled_count, offset,],
+            |row| {
+                Ok(Work::new(
+                    row.get::<usize, String>(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    None,
+                    vec![],
+                )
+                .with_id(row.get(0)?))
+            },
+        )?;
+        Ok(work)
     }
 }
