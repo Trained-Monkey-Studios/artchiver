@@ -33,7 +33,6 @@ image = { version = "0.25.6", default-features = false, features = [
     "webp",
     "rayon", # we have it anyway
 ] }
-egui = "0.32"
 eframe = { version = "0.32", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
@@ -42,16 +41,19 @@ eframe = { version = "0.32", default-features = false, features = [
     "wayland",       # To support Linux (and CI)
     "x11",           # To support older Linux distributions (restores one of the default features)
 ] }
-log = "0.4.27"
 
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
+egui = "0.32"
 egui_dock = { version = "0.17", features = ["serde"] }
 egui_extras = { version = "0.32", features = ["image", "file", "gif", "webp"] } # matching bevy_egui
+egui_plot = "0.33"
+extism = "1.0"
 io_tee = "0.1"
 itertools = "0.14"
 jiff = { version ="0.2", features = ["serde"] }
+log = "0.4.27"
 lru = "0.16"
 parking_lot = "0.12"
 platform-dirs = "0.3"
@@ -59,9 +61,9 @@ r2d2 = "0.8"
 r2d2_sqlite = "0.31"
 rand = "0.9" # as pulled in by glam 29.2
 rayon = "1.10"
+ringbuffer = "0.16"
 rusqlite = { version = "0.37", features = ["array", "bundled", "load_extension", "jiff", "rusqlite-macros", "vtab"] }
 sha2 = "0.10"
-extism = "1.0"
 ureq = { version = "3.0", features = ["json"] }
 
 artchiver_sdk = { path = "plugins/artchiver_sdk" }

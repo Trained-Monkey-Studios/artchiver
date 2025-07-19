@@ -7,7 +7,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, types::Value};
 use std::{ops::Range, rc::Rc};
 
-const MIGRATIONS: [&str; 9] = [
+const MIGRATIONS: [&str; 13] = [
     // Migrations
     r#"CREATE TABLE migrations (
         id INTEGER PRIMARY KEY,
@@ -48,6 +48,8 @@ const MIGRATIONS: [&str; 9] = [
         archive_url TEXT
         -- TODO: FOREIGN KEY(artist_id) REFERENCES artists(id)
     );"#,
+    r#"CREATE INDEX work_name_idx ON works(name);"#,
+    r#"CREATE INDEX work_date_idx ON works(date);"#,
     // Artists: The creator of a work of art
     r#"CREATE TABLE artists (
         id INTEGER PRIMARY KEY,
@@ -68,6 +70,8 @@ const MIGRATIONS: [&str; 9] = [
         FOREIGN KEY(work_id) REFERENCES works(id),
         UNIQUE (tag_id, work_id)
     );"#,
+    r#"CREATE INDEX work_tags_tag_idx ON work_tags(tag_id);"#,
+    r#"CREATE INDEX work_tags_work_idx ON work_tags(work_id);"#,
     // Plugin<->Tag: tag each tag with the plugin it came from, so we know
     //               what plugins to query for data about each tag.
     r#"CREATE TABLE plugin_tags (

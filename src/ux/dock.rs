@@ -1,5 +1,5 @@
 use crate::{
-    shared::{environment::Environment, progress::Progress, tag::TagSet},
+    shared::{environment::Environment, performance::PerfTrack, progress::Progress, tag::TagSet},
     sync::plugin::{
         client::get_data_path_for_url,
         host::{PluginHandle, PluginHost},
@@ -14,7 +14,11 @@ use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use log::Level;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, path::Path, time::Duration};
+use std::{
+    collections::HashSet,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 // Utility function to get an egui margin inset from the left.
 fn indented(px: i8) -> Margin {
@@ -97,13 +101,16 @@ impl WorkSelection {
 pub struct UxState {
     mode: UxMode,
     show_preferences: bool,
+    show_performance: bool,
     show_about: bool,
     tag_filter: String,
     tag_selection: TagSet,
     selected_work: WorkSelection,
 
-    #[serde(default = "LruCache::unbounded")]
     #[serde(skip)]
+    perf: PerfTrack,
+
+    #[serde(skip, default = "LruCache::unbounded")]
     works_lru: LruCache<String, u32>,
 
     #[serde(skip)]
@@ -115,9 +122,11 @@ impl Default for UxState {
         Self {
             mode: UxMode::Browser,
             show_preferences: false,
+            show_performance: false,
             show_about: false,
             tag_filter: String::new(),
             tag_selection: TagSet::default(),
+            perf: PerfTrack::default(),
             works_lru: LruCache::unbounded(),
             per_frame_work_upload_count: 0,
             selected_work: WorkSelection::None,
@@ -391,8 +400,6 @@ impl<'a> SyncViewer<'a> {
         const PREVIEW_SIZE: f32 = 256.;
         const SIZE: f32 = PREVIEW_SIZE;
 
-        let start = std::time::Instant::now();
-
         let width = ui.available_width();
         let n_wide = (width / SIZE).floor().max(1.) as usize;
         let n_rows = works_count.div_ceil(n_wide);
@@ -429,17 +436,23 @@ impl<'a> SyncViewer<'a> {
 
                 // Attempt to query with the query slice, but things might have been added or
                 // removed since we queried for the works_count.
+                let query_start = Instant::now();
                 let query_works = self
                     .sync
                     .pool_mut()
                     .works_list(query_slice.clone(), &self.state.tag_selection)?;
+                self.state.perf.sample("Query Works", query_start.elapsed());
 
                 // Pre-scan the works slice to ask to pre-load all the images that
                 // are in our query window (Note: this extends outside the visible area
                 // to make scrolling faster).
+                let cache_start = Instant::now();
                 for work in &query_works {
                     self.ensure_work_cached(ui.ctx(), work);
                 }
+                self.state
+                    .perf
+                    .sample("Cache Images", cache_start.elapsed());
 
                 // Re-clamp the works slice after we fetch.
                 let works_slice = works_slice.start.clamp(0, query_works.len())
@@ -450,6 +463,7 @@ impl<'a> SyncViewer<'a> {
                 let sel_color = ui.style().visuals.selection.bg_fill;
                 ui.style_mut().spacing.item_spacing = Vec2::ZERO;
 
+                let draw_start = Instant::now();
                 for row in visible_works.chunks(n_wide) {
                     ui.horizontal(|ui| {
                         for work in row {
@@ -505,18 +519,16 @@ impl<'a> SyncViewer<'a> {
                         }
                     });
                 }
+                self.state.perf.sample("Draw Works", draw_start.elapsed());
                 self.flush_works_lru(ui.ctx());
                 Ok(())
             });
-
-        egui::Window::new("WorksStats").show(ui.ctx(), |ui| {
-            ui.label(format!("{:?}", start.elapsed()));
-        });
 
         Ok(())
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
+        let start = Instant::now();
         if let Some(offset) = self.state.selected_work.get_selected_offset()
             && let Ok(work) = self
                 .sync
@@ -537,6 +549,7 @@ impl<'a> SyncViewer<'a> {
                 }
             }
         }
+        self.state.perf.sample("Work Info", start.elapsed());
     }
 
     fn render_slideshow(&mut self, ctx: &egui::Context) {
@@ -705,6 +718,8 @@ impl UxToplevel {
         host: &mut PluginHost,
         ctx: &egui::Context,
     ) -> Result<()> {
+        let frame_start = Instant::now();
+
         match self.state.mode {
             UxMode::Browser => {
                 self.render_menu(ctx);
@@ -720,6 +735,7 @@ impl UxToplevel {
                     });
 
                 self.render_preferences(ctx);
+                self.render_performance(ctx);
                 self.render_about(ctx);
             }
             UxMode::Slideshow => {
@@ -731,6 +747,7 @@ impl UxToplevel {
 
         ctx.request_repaint_after(Duration::from_micros(1_000_000 / 60));
 
+        self.state.perf.sample("Total", frame_start.elapsed());
         Ok(())
     }
 
@@ -738,14 +755,15 @@ impl UxToplevel {
         let mut focus = None;
         ctx.memory(|mem| focus = mem.focused());
 
-        const KEYS: [Key; 9] = [
+        const KEYS: [Key; 10] = [
             Key::Escape,
             Key::F1,
-            Key::F,
+            Key::F3,
             Key::F11,
             Key::Space,
             Key::ArrowLeft,
             Key::ArrowRight,
+            Key::F,
             Key::N,
             Key::P,
         ];
@@ -784,11 +802,15 @@ impl UxToplevel {
                 } else if pressed.contains(&Key::Escape) {
                     if self.state.show_about {
                         self.state.show_about = false;
+                    } else if self.state.show_performance {
+                        self.state.show_performance = false;
                     } else if self.state.show_preferences {
                         self.state.show_preferences = false;
                     } else if pressed.contains(&Key::Escape) {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
+                } else if pressed.contains(&Key::F3) {
+                    self.state.show_performance = true;
                 }
             }
             UxMode::Slideshow => {
@@ -824,6 +846,10 @@ impl UxToplevel {
                     }
                 });
                 ui.menu_button("Help", |ui| {
+                    if ui.button("Performance...").clicked() {
+                        self.state.show_performance = true;
+                    }
+                    ui.separator();
                     if ui.button("About...").clicked() {
                         self.state.show_about = true;
                     }
@@ -837,6 +863,14 @@ impl UxToplevel {
             .open(&mut self.state.show_preferences)
             .show(ctx, |ui| {
                 egui::widgets::global_theme_preference_buttons(ui);
+            });
+    }
+
+    fn render_performance(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Performance")
+            .open(&mut self.state.show_performance)
+            .show(ctx, |ui| {
+                self.state.perf.show(ui);
             });
     }
 

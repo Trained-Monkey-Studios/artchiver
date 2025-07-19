@@ -6,11 +6,8 @@ pub mod shared;
 pub mod sync;
 pub mod ux;
 
+use crate::{app::ArtchiverApp, shared::environment::Environment};
 use eframe::HardwareAcceleration;
-use crate::{
-    shared::environment::Environment,
-    app::ArtchiverApp
-};
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]

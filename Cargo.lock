@@ -318,6 +318,7 @@ dependencies = [
  "egui",
  "egui_dock",
  "egui_extras",
+ "egui_plot",
  "env_logger",
  "extism",
  "image",
@@ -332,6 +333,7 @@ dependencies = [
  "r2d2_sqlite",
  "rand 0.9.1",
  "rayon",
+ "ringbuffer",
  "rusqlite",
  "serde",
  "sha2",
@@ -1582,6 +1584,17 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "winit",
+]
+
+[[package]]
+name = "egui_plot"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "524318041a8ea90c81c738e8985f8ad9e3f9bed636b03c2ff37b218113ed5121"
+dependencies = [
+ "ahash",
+ "egui",
+ "emath",
 ]
 
 [[package]]
@@ -4122,6 +4135,12 @@ dependencies = [
  "untrusted",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "ringbuffer"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57b0b88a509053cbfd535726dcaaceee631313cef981266119527a1d110f6d2b"
 
 [[package]]
 name = "rmp"

@@ -49,9 +49,16 @@ struct WorksListCache {
 }
 
 #[derive(Debug)]
-struct WorksLookupCache {
+struct WorksLookupIdCache {
     db_gen: u64,
     work_id: i64,
+    work: Work,
+}
+
+#[derive(Debug)]
+struct WorksLookupOffsetCache {
+    db_gen: u64,
+    offset: usize,
     work: Work,
 }
 
@@ -64,7 +71,8 @@ pub struct CachingPool {
     tag_plugins_cache: HashMap<String, TagPluginCache>,
     works_count_cache: Option<WorksCountCache>,
     works_list_cache: Option<WorksListCache>,
-    works_lookup_cache: Option<WorksLookupCache>,
+    works_lookup_id_cache: Option<WorksLookupIdCache>,
+    works_lookup_offset_cache: Option<WorksLookupOffsetCache>,
 }
 
 impl CachingPool {
@@ -77,7 +85,8 @@ impl CachingPool {
             tag_plugins_cache: HashMap::new(),
             works_count_cache: None,
             works_list_cache: None,
-            works_lookup_cache: None,
+            works_lookup_id_cache: None,
+            works_lookup_offset_cache: None,
         }
     }
 
@@ -173,7 +182,7 @@ impl CachingPool {
     }
 
     pub fn lookup_work(&mut self, work_id: i64) -> Result<Work> {
-        if let Some(cache) = self.works_lookup_cache.as_ref()
+        if let Some(cache) = self.works_lookup_id_cache.as_ref()
             && cache.db_gen == self.database_generation
             && cache.work_id == work_id
         {
@@ -181,7 +190,7 @@ impl CachingPool {
         }
         let work = self.pool.lookup_work(work_id)?;
         let out = work.clone();
-        self.works_lookup_cache = Some(WorksLookupCache {
+        self.works_lookup_id_cache = Some(WorksLookupIdCache {
             db_gen: self.database_generation,
             work_id,
             work,
@@ -189,7 +198,20 @@ impl CachingPool {
         Ok(out)
     }
 
-    pub fn lookup_work_at_offset(&self, offset: usize, tag_set: &TagSet) -> Result<Work> {
-        self.pool.lookup_work_at_offset(offset, tag_set)
+    pub fn lookup_work_at_offset(&mut self, offset: usize, tag_set: &TagSet) -> Result<Work> {
+        if let Some(cache) = self.works_lookup_offset_cache.as_ref()
+            && cache.db_gen == self.database_generation
+            && cache.offset == offset
+        {
+            return Ok(cache.work.clone());
+        }
+        let work = self.pool.lookup_work_at_offset(offset, tag_set)?;
+        let out = work.clone();
+        self.works_lookup_offset_cache = Some(WorksLookupOffsetCache {
+            db_gen: self.database_generation,
+            offset,
+            work,
+        });
+        Ok(out)
     }
 }
