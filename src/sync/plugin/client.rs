@@ -237,10 +237,10 @@ fn refresh_works_for_tag(
     progress.info(format!("Downloading {} works to disk...", works.len()));
     let works_len = works.len();
     let mut works = works;
-    rayon::scope(|s| {
+    rayon::scope_fifo(|s| {
         for (i, work) in works.drain(..).enumerate() {
             let mut progress = progress.clone();
-            s.spawn(move |_| {
+            s.spawn_fifo(move |_| {
                 progress.set_percent(i, works_len);
                 if let Err(e) = ensure_work_data_is_cached(state, &work) {
                     // Note: ignore download failures and let the user re-try, if needed.

@@ -397,8 +397,7 @@ impl<'a> SyncViewer<'a> {
             return Ok(());
         }
 
-        const PREVIEW_SIZE: f32 = 256.;
-        const SIZE: f32 = PREVIEW_SIZE;
+        const SIZE: f32 = 256.;
 
         let width = ui.available_width();
         let n_wide = (width / SIZE).floor().max(1.) as usize;
@@ -457,7 +456,7 @@ impl<'a> SyncViewer<'a> {
                 // Re-clamp the works slice after we fetch.
                 let works_slice = works_slice.start.clamp(0, query_works.len())
                     ..works_slice.end.clamp(0, query_works.len());
-                let mut work_offset = works_slice.start;
+                let mut work_offset = query_slice.start + works_slice.start;
                 let visible_works = &query_works[works_slice];
 
                 let sel_color = ui.style().visuals.selection.bg_fill;
@@ -480,7 +479,7 @@ impl<'a> SyncViewer<'a> {
                             let mut pad = 0.;
                             let mut inner_margin = Margin::ZERO;
                             if let Some(size) =
-                                img.load_and_calc_size(ui, Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE))
+                                img.load_and_calc_size(ui, Vec2::new(SIZE, SIZE))
                             {
                                 // Wide things are already centered for some reason,
                                 // so we only need to care about tall images
@@ -536,9 +535,16 @@ impl<'a> SyncViewer<'a> {
                 .lookup_work_at_offset(offset, &self.state.tag_selection)
         {
             egui::Grid::new("work_info_grid").show(ui, |ui| {
+                ui.label("Offset");
+                ui.label(format!("{offset}"));
+                ui.end_row();
+
                 ui.label("Name");
                 ui.label(work.name());
                 ui.end_row();
+
+                ui.label("Date");
+                ui.label(format!("{}", work.date()));
             });
             ui.label(" ");
             ui.heading("Tags");
@@ -824,8 +830,7 @@ impl UxToplevel {
         // Some keys work the same in any mode
         let pressed_left = pressed.contains(&Key::ArrowLeft) || pressed.contains(&Key::P);
         let pressed_right = pressed.contains(&Key::ArrowRight)
-            || pressed.contains(&Key::N)
-            || pressed.contains(&Key::Space);
+            || pressed.contains(&Key::N);
         if pressed_left {
             self.state.selected_work.move_to_prev();
         } else if pressed_right {
