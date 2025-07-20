@@ -357,7 +357,7 @@ impl<'a> SyncViewer<'a> {
                         row_range,
                         &self.state.tag_filter,
                         self.state.tag_source.as_deref(),
-                        self.state.tag_order
+                        self.state.tag_order,
                     )?;
 
                     egui::Grid::new("tag_grid")
@@ -616,6 +616,27 @@ impl<'a> SyncViewer<'a> {
 
                 ui.label("Date");
                 ui.label(format!("{}", work.date()));
+                ui.end_row();
+
+                ui.label("Preview");
+                ui.label(work.preview_url());
+                ui.end_row();
+
+                ui.label("Screen");
+                ui.label(work.screen_url());
+                ui.end_row();
+
+                ui.label("Archive");
+                ui.label(work.archive_url().unwrap_or(""));
+                ui.end_row();
+
+                if let Ok(path) = get_data_path_for_url(self.data_dir, work.screen_url())
+                    && path.exists()
+                {
+                    ui.label("Path");
+                    ui.label(path.display().to_string());
+                    ui.end_row();
+                }
             });
             ui.label(" ");
             ui.heading("Tags");
@@ -658,6 +679,7 @@ impl<'a> SyncViewer<'a> {
             // for an example of how to do zoom and pan on a paint-like thing.
 
             let avail = ui.available_size();
+            self.ensure_work_cached(ui.ctx(), &work);
             let img = self
                 .get_best_image(&work, WorkSize::Screen)
                 .show_loading_spinner(false)
@@ -683,7 +705,8 @@ impl<'a> SyncViewer<'a> {
 
     fn get_best_image<'b>(&'a self, work: &'b Work, req_sz: WorkSize) -> egui::Image<'b> {
         if matches!(req_sz, WorkSize::Screen) {
-            let screen_path = get_data_path_for_url(self.data_dir, work.screen_url());
+            let screen_path = get_data_path_for_url(self.data_dir, work.screen_url())
+                .expect("filed to create data path");
             let screen_uri = format!("file://{}", screen_path.display());
             if self.state.works_lru.contains(&screen_uri) {
                 return egui::Image::new(screen_uri);
@@ -691,7 +714,8 @@ impl<'a> SyncViewer<'a> {
             // Fall through to try to load the preview image
         }
 
-        let preview_path = get_data_path_for_url(self.data_dir, work.preview_url());
+        let preview_path = get_data_path_for_url(self.data_dir, work.preview_url())
+            .expect("failed to create data path");
         let preview_uri = format!("file://{}", preview_path.display());
         if self.state.works_lru.contains(&preview_uri) {
             egui::Image::new(preview_uri)
@@ -711,7 +735,8 @@ impl<'a> SyncViewer<'a> {
             height: 256,
             maintain_aspect_ratio: true,
         };
-        let screen_path = get_data_path_for_url(self.data_dir, work.screen_url());
+        let screen_path = get_data_path_for_url(self.data_dir, work.screen_url())
+            .expect("failed to create data path");
         if screen_path.exists() {
             let screen_uri = format!("file://{}", screen_path.display());
             if !self.state.works_lru.contains(&screen_uri) {
@@ -721,7 +746,8 @@ impl<'a> SyncViewer<'a> {
             self.state.works_lru.get_or_insert(screen_uri, || 0);
         }
 
-        let preview_path = get_data_path_for_url(self.data_dir, work.preview_url());
+        let preview_path = get_data_path_for_url(self.data_dir, work.preview_url())
+            .expect("failed to create data path");
         if preview_path.exists() {
             let preview_uri = format!("file://{}", preview_path.display());
             if !self.state.works_lru.contains(&preview_uri) {

@@ -7,15 +7,27 @@ pub mod sync;
 pub mod ux;
 
 use crate::{app::ArtchiverApp, shared::environment::Environment};
+use clap::Parser;
 use eframe::HardwareAcceleration;
+
+#[derive(Clone, Debug, Parser)]
+pub struct ArtchiverArgs {
+    /// Migrate a data directory
+    #[arg(long, short)]
+    migrate_data: bool,
+}
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+    let args = ArtchiverArgs::parse();
 
     let pwd = std::env::current_dir().expect("failed to get working directory");
     let env = Environment::new(&pwd).expect("failed to create environment");
+    if args.migrate_data {
+        env.migrate_data_dir().expect("failed to migrate data dir");
+    }
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_min_inner_size([300.0, 220.0])

@@ -178,7 +178,7 @@ pub fn count_tags(
             LEFT JOIN work_tags ON tags.id == work_tags.tag_id
             LEFT JOIN plugin_tags ON tags.id == plugin_tags.tag_id
             LEFT JOIN plugins ON plugin_tags.plugin_id == plugins.id
-            WHERE tags.name LIKE ? AND plugins.name LIKE ?
+            WHERE tags.name LIKE ? AND plugins.name LIKE ? AND plugin_tags.presumed_work_count > 0
             GROUP BY tags.name
             ORDER BY tags.name ASC)"#,
         params![format!("%{filter}%"), source.unwrap_or("%"),],
@@ -194,17 +194,25 @@ pub fn list_tags(
     source: Option<&str>,
     order: TagOrder,
 ) -> anyhow::Result<Vec<TagEntry>> {
+    // SELECT id,name,kind,actual_work_count,SUM(presumed_work_count) FROM
+    //   (SELECT tags.id, tags.name, tags.kind, plugin_tags.presumed_work_count, tags.hidden, tags.favorite, COUNT(work_tags.id) as actual_work_count
+    //   FROM tags LEFT JOIN work_tags ON tags.id == work_tags.tag_id LEFT JOIN plugin_tags ON tags.id == plugin_tags.tag_id LEFT JOIN plugins ON plugin_tags.plugin_id == plugins.id
+    //   WHERE tags.name LIKE 'Lovers' AND plugins.name LIKE '%' GROUP BY tags.name, plugin_tags.presumed_work_count ORDER BY tags.name ASC LIMIT 10 OFFSET 0) GROUP BY name;
+    // id|name|kind|actual_work_count|SUM(presumed_work_count)
+    // 1132|Lovers|default|117|666
     let mut stmt = conn.prepare(&format!(
-        r#"SELECT tags.id, tags.name, tags.kind, SUM(plugin_tags.presumed_work_count), tags.hidden, tags.favorite, COUNT(work_tags.id)
-            FROM tags
-            LEFT JOIN work_tags ON tags.id == work_tags.tag_id
-            LEFT JOIN plugin_tags ON tags.id == plugin_tags.tag_id
-            LEFT JOIN plugins ON plugin_tags.plugin_id == plugins.id
-            WHERE tags.name LIKE ? AND plugins.name LIKE ?
-            GROUP BY tags.name
-            {order}
-            -- ORDER BY tags.name ASC
-            LIMIT ? OFFSET ?"#,
+        r#"SELECT id, name, kind, favorite, actual_work_count, SUM(presumed_work_count) FROM
+            (SELECT tags.id, tags.name, tags.kind, plugin_tags.presumed_work_count, tags.hidden, tags.favorite, COUNT(work_tags.id) as actual_work_count
+                FROM tags
+                LEFT JOIN work_tags ON tags.id == work_tags.tag_id
+                LEFT JOIN plugin_tags ON tags.id == plugin_tags.tag_id
+                LEFT JOIN plugins ON plugin_tags.plugin_id == plugins.id
+                WHERE tags.name LIKE ? AND plugins.name LIKE ? AND plugin_tags.presumed_work_count > 0
+                GROUP BY tags.name, plugin_tags.presumed_work_count
+                {order}
+                LIMIT ? OFFSET ?)
+            GROUP BY name;
+        "#,
     ))?;
     let rows = stmt.query_map(
         params![
@@ -221,17 +229,16 @@ pub fn list_tags(
                 .parse()
                 .ok()
                 .unwrap_or_default();
-            let presumed_work_count = row.get(3)?;
-            let hidden = row.get(4)?;
-            let favorite = row.get(5)?;
-            let actual_work_count = row.get(6)?;
+            let favorite = row.get(3)?;
+            let actual_work_count = row.get(4)?;
+            let presumed_work_count = row.get(5)?;
             Ok(TagEntry::new(
                 id,
                 name,
                 kind,
                 presumed_work_count,
                 actual_work_count,
-                hidden,
+                false,
                 favorite,
             ))
         },

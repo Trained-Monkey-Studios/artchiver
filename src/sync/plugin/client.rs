@@ -333,10 +333,16 @@ fn ensure_work_data_is_cached(state: &UserData<PluginState>, work: &Work) -> Res
     Ok(())
 }
 
-pub fn get_data_path_for_url(data_dir: &Path, url: &str) -> PathBuf {
+pub fn get_data_path_for_url(data_dir: &Path, url: &str) -> Result<PathBuf> {
     let ext = url.rsplit('.').next().unwrap_or_default();
     let key = Sha256::digest(url.as_bytes());
-    data_dir.join(format!("{key:x}.{ext}"))
+    let key = format!("{key:x}");
+    let level1 = &key[0..2];
+    let level2 = &key[2..4];
+    let file_name = format!("{}.{ext}", &key[4..]);
+    let dir_path = data_dir.join(level1).join(level2);
+    fs::create_dir_all(&dir_path)?;
+    Ok(dir_path.join(file_name))
 }
 
 fn make_temp_path(tmp_dir: &Path) -> PathBuf {
@@ -363,7 +369,7 @@ fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<()> {
         )
     };
 
-    let data_path = get_data_path_for_url(&data_dir, url);
+    let data_path = get_data_path_for_url(&data_dir, url)?;
     if data_path.exists() {
         progress.trace(format!("cached: ensure_data_url({url})"));
         return Ok(());

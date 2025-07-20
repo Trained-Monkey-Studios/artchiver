@@ -245,7 +245,7 @@ impl MetadataPool {
         let mut current_pos = 0;
         progress.info(format!("Writing {total_count} works to the database..."));
 
-        for chunk in works.chunks(10_000) {
+        for chunk in works.chunks(1_000) {
             progress.trace(format!("db->upsert_works chunk of {}", chunk.len()));
             conn.execute("BEGIN TRANSACTION", ())?;
             for work in chunk {

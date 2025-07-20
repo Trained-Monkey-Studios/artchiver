@@ -145,6 +145,7 @@ pub enum TagKind {
     Series,
     Copyright,
     Meta,
+    Deprecated,
 }
 
 impl FromStr for TagKind {

@@ -214,6 +214,7 @@ impl CachingPool {
     }
 
     pub fn lookup_work_at_offset(&mut self, offset: usize, tag_set: &TagSet) -> Result<Work> {
+        // FIXME: put in an LRU so we can check prev and next per-frame
         if let Some(cache) = self.works_lookup_offset_cache.as_ref()
             && cache.db_gen == self.database_generation
             && cache.offset == offset
