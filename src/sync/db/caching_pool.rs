@@ -2,7 +2,7 @@ use crate::{
     shared::tag::TagSet,
     sync::db::{
         model::MetadataPool,
-        tag::{TagEntry, count_tags, list_plugins_for_tag, list_tags},
+        tag::{TagEntry, TagOrder, count_tags, list_plugins_for_tag, list_tags},
     },
 };
 use anyhow::Result;
@@ -16,6 +16,7 @@ use std::{
 struct TagCountCache {
     db_gen: u64,
     filter: String,
+    source: Option<String>,
     count: i64,
 }
 
@@ -24,6 +25,8 @@ struct TagsListCache {
     db_gen: u64,
     filter: String,
     range: Range<usize>,
+    source: Option<String>,
+    order: TagOrder,
     tags: Vec<TagEntry>,
 }
 
@@ -94,36 +97,48 @@ impl CachingPool {
         self.database_generation += 1;
     }
 
-    pub fn count_tags(&mut self, filter: &str) -> Result<i64> {
+    pub fn count_tags(&mut self, filter: &str, source: Option<&str>) -> Result<i64> {
         if let Some(cache) = &self.tag_count_cache
             && cache.db_gen == self.database_generation
             && cache.filter == filter
+            && cache.source.as_deref() == source
         {
             return Ok(cache.count);
         }
-        let count = count_tags(&self.pool.get()?, filter)?;
+        let count = count_tags(&self.pool.get()?, filter, source)?;
         self.tag_count_cache = Some(TagCountCache {
             db_gen: self.database_generation,
             filter: filter.to_owned(),
+            source: source.map(|s| s.to_owned()),
             count,
         });
         Ok(count)
     }
 
-    pub fn list_tags(&mut self, range: Range<usize>, filter: &str) -> Result<Vec<TagEntry>> {
+    pub fn list_tags(
+        &mut self,
+        range: Range<usize>,
+        filter: &str,
+        tag_source: Option<&str>,
+        order: TagOrder,
+    ) -> Result<Vec<TagEntry>> {
         if let Some(cache) = self.tags_list_cache.as_ref()
             && cache.db_gen == self.database_generation
-            && cache.filter == filter
             && cache.range == range
+            && cache.filter == filter
+            && cache.source.as_deref() == tag_source
+            && cache.order == order
         {
             return Ok(cache.tags.clone());
         }
-        let tags = list_tags(&self.pool.get()?, range.clone(), filter)?;
+        let tags = list_tags(&self.pool.get()?, range.clone(), filter, tag_source, order)?;
         let out = tags.clone();
         self.tags_list_cache = Some(TagsListCache {
             db_gen: self.database_generation,
-            filter: filter.to_owned(),
             range,
+            filter: filter.to_owned(),
+            source: tag_source.map(|s| s.to_owned()),
+            order,
             tags,
         });
         Ok(out)

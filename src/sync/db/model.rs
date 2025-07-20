@@ -5,7 +5,8 @@ use log::info;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, types::Value};
-use std::{ops::Range, rc::Rc};
+use serde::{Deserialize, Serialize};
+use std::{fmt, ops::Range, rc::Rc};
 
 const MIGRATIONS: [&str; 13] = [
     // Migrations
@@ -31,7 +32,6 @@ const MIGRATIONS: [&str; 13] = [
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         kind TEXT DEFAULT 'default',
-        presumed_work_count INTEGER,
         wiki_url TEXT,
         hidden BOOLEAN NOT NULL DEFAULT false,
         favorite BOOLEAN NOT NULL DEFAULT false
@@ -78,11 +78,47 @@ const MIGRATIONS: [&str; 13] = [
         id INTEGER PRIMARY KEY,
         plugin_id INTEGER NOT NULL,
         tag_id INTEGER NOT NULL,
+        presumed_work_count INTEGER,
         FOREIGN KEY(plugin_id) REFERENCES plugins(id),
         FOREIGN KEY(tag_id) REFERENCES tags(id),
         UNIQUE (plugin_id, tag_id)
     );"#,
 ];
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum OrderDir {
+    #[default]
+    Asc,
+    Desc,
+}
+
+impl fmt::Display for OrderDir {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Asc => "ASC",
+            Self::Desc => "DESC",
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl OrderDir {
+    pub fn ui(&mut self, salt: &str, ui: &mut egui::Ui) {
+        let mut selected = match self {
+            Self::Asc => 0,
+            Self::Desc => 1,
+        };
+        let options = ["Ascending", "Descending"];
+        egui::ComboBox::new(format!("order_dir_{salt}"), "Order")
+            .wrap_mode(egui::TextWrapMode::Truncate)
+            .show_index(ui, &mut selected, options.len(), |i| options[i]);
+        *self = match selected {
+            0 => Self::Asc,
+            1 => Self::Desc,
+            _ => panic!("invalid column selected"),
+        };
+    }
+}
 
 fn string_to_rarray(v: &[String]) -> Rc<Vec<Value>> {
     Rc::new(v.iter().cloned().map(Value::from).collect())
@@ -373,6 +409,9 @@ impl MetadataPool {
                 .with_id(row.get(0)?))
             },
         )?;
-        Ok(work)
+        let tags = conn.prepare(
+            r#"SELECT tags.name FROM tags LEFT JOIN work_tags ON work_tags.tag_id = tags.id WHERE work_tags.work_id = ?"#)?
+            .query_map([work.id()], |row| row.get(0))?.flatten().collect();
+        Ok(work.with_tags(tags))
     }
 }

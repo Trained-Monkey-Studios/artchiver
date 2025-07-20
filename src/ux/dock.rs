@@ -1,8 +1,11 @@
 use crate::{
     shared::{environment::Environment, performance::PerfTrack, progress::Progress, tag::TagSet},
-    sync::plugin::{
-        client::get_data_path_for_url,
-        host::{PluginHandle, PluginHost},
+    sync::{
+        db::tag::TagOrder,
+        plugin::{
+            client::get_data_path_for_url,
+            host::{PluginHandle, PluginHost},
+        },
     },
 };
 use anyhow::Result;
@@ -11,6 +14,7 @@ use egui::{
     self, Key, Margin, Modifiers, Rect, Sense, SizeHint, TextWrapMode, Vec2, include_image,
 };
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
+use itertools::Itertools as _;
 use log::Level;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
@@ -105,7 +109,10 @@ pub struct UxState {
     show_about: bool,
     tag_filter: String,
     tag_selection: TagSet,
+    tag_source: Option<String>,
+    tag_order: TagOrder,
     selected_work: WorkSelection,
+    thumb_size: f32,
 
     #[serde(skip)]
     perf: PerfTrack,
@@ -126,6 +133,9 @@ impl Default for UxState {
             show_about: false,
             tag_filter: String::new(),
             tag_selection: TagSet::default(),
+            tag_source: None,
+            tag_order: TagOrder::default(),
+            thumb_size: 256.,
             perf: PerfTrack::default(),
             works_lru: LruCache::unbounded(),
             per_frame_work_upload_count: 0,
@@ -300,7 +310,10 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_tags(&mut self, ui: &mut egui::Ui) -> Result<()> {
-        let tag_cnt = self.sync.pool_mut().count_tags(&self.state.tag_filter)?;
+        let tag_cnt = self
+            .sync
+            .pool_mut()
+            .count_tags(&self.state.tag_filter, self.state.tag_source.as_deref())?;
         // Filter and view bar
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.state.tag_filter);
@@ -308,7 +321,29 @@ impl<'a> SyncViewer<'a> {
                 self.state.tag_filter.clear();
             }
             ui.label(format!("({tag_cnt})",));
+
+            let mut selected = 0usize;
+            let mut options = self.sync.plugins().map(|p| p.name()).collect::<Vec<_>>();
+            options.insert(0, "All".to_owned());
+            if let Some(source) = self.state.tag_source.as_deref() {
+                if let Some((offset, _)) = options.iter().find_position(|v| v == &source) {
+                    selected = offset;
+                }
+            }
+            egui::ComboBox::new("tag_filter_sources", "Source:")
+                .wrap_mode(TextWrapMode::Truncate)
+                .show_index(ui, &mut selected, options.len(), |i| &options[i]);
+            if options[selected] == "All" {
+                self.state.tag_source = None;
+            } else {
+                self.state.tag_source = Some(options[selected].clone());
+            }
         });
+        // Sorting
+        ui.horizontal(|ui| {
+            self.state.tag_order.ui(ui);
+        });
+
         let text_style = egui::TextStyle::Body;
         let row_height = ui.text_style_height(&text_style);
         egui::ScrollArea::vertical()
@@ -318,10 +353,12 @@ impl<'a> SyncViewer<'a> {
                 row_height,
                 tag_cnt.try_into()?,
                 |ui, row_range| -> Result<()> {
-                    let tags = self
-                        .sync
-                        .pool_mut()
-                        .list_tags(row_range, &self.state.tag_filter)?;
+                    let tags = self.sync.pool_mut().list_tags(
+                        row_range,
+                        &self.state.tag_filter,
+                        self.state.tag_source.as_deref(),
+                        self.state.tag_order
+                    )?;
 
                     egui::Grid::new("tag_grid")
                         .num_columns(1)
@@ -332,21 +369,35 @@ impl<'a> SyncViewer<'a> {
                                 let status = self.state.tag_selection.status(tag.name());
                                 if ui
                                     .add(egui::Button::new("✔").small().selected(status.enabled()))
+                                    .on_hover_text("replace filter")
+                                    .clicked()
+                                {
+                                    self.state.tag_selection.clear();
+                                    self.state.tag_selection.enable(tag.name());
+                                }
+                                if ui
+                                    .add(egui::Button::new("+").small().selected(status.enabled()))
+                                    .on_hover_text("add filter")
                                     .clicked()
                                 {
                                     self.state.tag_selection.enable(tag.name());
                                 }
-                                if ui.add(egui::Button::new(" ").small()).clicked() {
-                                    self.state.tag_selection.unselect(tag.name());
-                                }
                                 if ui
-                                    .add(egui::Button::new("x").small().selected(status.disabled()))
+                                    .add(egui::Button::new(" ").small())
+                                    .on_hover_text("remove filter")
                                     .clicked()
                                 {
-                                    self.state.tag_selection.disable(tag.name());
+                                    self.state.tag_selection.unselect(tag.name());
                                 }
+                                // if ui
+                                //     .add(egui::Button::new("x").small().selected(status.disabled()))
+                                //     .on_hover_text("filter on negation")
+                                //     .clicked()
+                                // {
+                                //     self.state.tag_selection.disable(tag.name());
+                                // }
                                 ui.label("   ");
-                                if ui.button("⟳").clicked() {
+                                if ui.button("⟳").on_hover_text("refresh works").clicked() {
                                     self.sync.refresh_works_for_tag(tag.name()).ok();
                                 }
                                 ui.label("   ");
@@ -387,24 +438,44 @@ impl<'a> SyncViewer<'a> {
             self.state.selected_work = WorkSelection::None;
         }
         ui.horizontal(|ui| {
-            ui.heading(self.state.tag_selection.to_string());
+            let mut remove = None;
+            for enabled in self.state.tag_selection.enabled() {
+                if ui
+                    .button(format!("+{enabled}"))
+                    .on_hover_text("Remove Filter")
+                    .clicked()
+                {
+                    remove = Some(enabled.to_owned());
+                }
+            }
+            if let Some(tag) = remove {
+                self.state.tag_selection.disable(&tag);
+            }
             if ui.button("x").clicked() {
                 self.state.tag_selection.clear();
             }
             ui.label(format!("({works_count})"));
+            ui.add(
+                egui::Slider::new(&mut self.state.thumb_size, 64f32..=1024f32)
+                    .text("Thumbnail Size")
+                    .step_by(128.)
+                    .fixed_decimals(0)
+                    .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.3 })
+                    .show_value(true)
+                    .suffix("px"),
+            );
         });
         if self.state.tag_selection.is_empty() {
             return Ok(());
         }
 
-        const SIZE: f32 = 256.;
-
+        let size = self.state.thumb_size;
         let width = ui.available_width();
-        let n_wide = (width / SIZE).floor().max(1.) as usize;
+        let n_wide = (width / size).floor().max(1.) as usize;
         let n_rows = works_count.div_ceil(n_wide);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show_rows(ui, SIZE, n_rows, |ui, rows| -> Result<()> {
+            .show_rows(ui, size, n_rows, |ui, rows| -> Result<()> {
                 // Overfetch by 1x our current visible area in both directions so we can
                 // usually scroll in either direction without pause or loading spinners.
                 //
@@ -478,13 +549,13 @@ impl<'a> SyncViewer<'a> {
 
                             let mut pad = 0.;
                             let mut inner_margin = Margin::ZERO;
-                            if let Some(size) =
-                                img.load_and_calc_size(ui, Vec2::new(SIZE, SIZE))
+                            if let Some(loaded_size) =
+                                img.load_and_calc_size(ui, Vec2::new(size, size))
                             {
                                 // Wide things are already centered for some reason,
                                 // so we only need to care about tall images
-                                if size.y > size.x {
-                                    pad = (SIZE - size.x) / 2.;
+                                if loaded_size.y > loaded_size.x {
+                                    pad = (size - loaded_size.x) / 2.;
                                     inner_margin.left = pad as i8;
                                 }
                             }
@@ -502,9 +573,9 @@ impl<'a> SyncViewer<'a> {
                             }
 
                             let rsz = egui::Resize::default()
-                                .min_size(Vec2::new(SIZE - pad, SIZE))
-                                .max_size(Vec2::new(SIZE - pad, SIZE))
-                                .default_size(Vec2::new(SIZE - pad, SIZE))
+                                .min_size(Vec2::new(size - pad, size))
+                                .max_size(Vec2::new(size - pad, size))
+                                .default_size(Vec2::new(size - pad, size))
                                 .resizable([false, false]);
 
                             frm.show(ui, |ui| {
@@ -558,11 +629,11 @@ impl<'a> SyncViewer<'a> {
         self.state.perf.sample("Work Info", start.elapsed());
     }
 
-    fn render_slideshow(&mut self, ctx: &egui::Context) {
+    fn render_slideshow(&mut self, ctx: &egui::Context) -> Result<()> {
         // Bail back to the browser if we lose our selection.
         if !self.state.selected_work.has_selection() {
             self.state.mode = UxMode::Browser;
-            return;
+            return Ok(());
         }
         let work_offset = self
             .state
@@ -575,8 +646,12 @@ impl<'a> SyncViewer<'a> {
             .lookup_work_at_offset(work_offset, &self.state.tag_selection)
         else {
             self.state.mode = UxMode::Browser;
-            return;
+            return Ok(());
         };
+        let works_count = self
+            .sync
+            .pool_mut()
+            .works_count(&self.state.tag_selection)?;
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // See https://github.com/emilk/egui/blob/0f6310c598b5be92f339c9275a00d5decd838c1b/examples/custom_plot_manipulation/src/main.rs
@@ -600,7 +675,10 @@ impl<'a> SyncViewer<'a> {
                 }
                 img.paint_at(ui, Rect::from_x_y_ranges(left..=right, top..=bottom));
             }
+            ui.label(format!("{work_offset} of {works_count}"));
         });
+
+        Ok(())
     }
 
     fn get_best_image<'b>(&'a self, work: &'b Work, req_sz: WorkSize) -> egui::Image<'b> {
@@ -745,7 +823,7 @@ impl UxToplevel {
                 self.render_about(ctx);
             }
             UxMode::Slideshow => {
-                SyncViewer::wrap(host, &mut self.state, &env.data_dir()).render_slideshow(ctx);
+                SyncViewer::wrap(host, &mut self.state, &env.data_dir()).render_slideshow(ctx)?;
             }
         }
 
@@ -829,8 +907,7 @@ impl UxToplevel {
 
         // Some keys work the same in any mode
         let pressed_left = pressed.contains(&Key::ArrowLeft) || pressed.contains(&Key::P);
-        let pressed_right = pressed.contains(&Key::ArrowRight)
-            || pressed.contains(&Key::N);
+        let pressed_right = pressed.contains(&Key::ArrowRight) || pressed.contains(&Key::N);
         if pressed_left {
             self.state.selected_work.move_to_prev();
         } else if pressed_right {
