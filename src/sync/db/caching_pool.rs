@@ -10,6 +10,7 @@ use artchiver_sdk::Work;
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
+    path::Path,
 };
 
 #[derive(Debug)]
@@ -52,13 +53,6 @@ struct WorksListCache {
 }
 
 #[derive(Debug)]
-struct WorksLookupIdCache {
-    db_gen: u64,
-    work_id: i64,
-    work: Work,
-}
-
-#[derive(Debug)]
 struct WorksLookupOffsetCache {
     db_gen: u64,
     offset: usize,
@@ -74,7 +68,6 @@ pub struct CachingPool {
     tag_plugins_cache: HashMap<String, TagPluginCache>,
     works_count_cache: Option<WorksCountCache>,
     works_list_cache: Option<WorksListCache>,
-    works_lookup_id_cache: Option<WorksLookupIdCache>,
     works_lookup_offset_cache: Option<WorksLookupOffsetCache>,
 }
 
@@ -88,7 +81,6 @@ impl CachingPool {
             tag_plugins_cache: HashMap::new(),
             works_count_cache: None,
             works_list_cache: None,
-            works_lookup_id_cache: None,
             works_lookup_offset_cache: None,
         }
     }
@@ -161,14 +153,14 @@ impl CachingPool {
         Ok(plugins)
     }
 
-    pub fn works_count(&mut self, tag_set: &TagSet) -> Result<i64> {
+    pub fn count_works(&mut self, tag_set: &TagSet) -> Result<i64> {
         if let Some(cache) = self.works_count_cache.as_ref()
             && cache.db_gen == self.database_generation
             && &cache.tag_set == tag_set
         {
             return Ok(cache.count);
         }
-        let count = self.pool.works_count(tag_set)?;
+        let count = self.pool.count_works(tag_set)?;
         self.works_count_cache = Some(WorksCountCache {
             db_gen: self.database_generation,
             tag_set: tag_set.clone(),
@@ -196,23 +188,6 @@ impl CachingPool {
         Ok(out)
     }
 
-    pub fn lookup_work(&mut self, work_id: i64) -> Result<Work> {
-        if let Some(cache) = self.works_lookup_id_cache.as_ref()
-            && cache.db_gen == self.database_generation
-            && cache.work_id == work_id
-        {
-            return Ok(cache.work.clone());
-        }
-        let work = self.pool.lookup_work(work_id)?;
-        let out = work.clone();
-        self.works_lookup_id_cache = Some(WorksLookupIdCache {
-            db_gen: self.database_generation,
-            work_id,
-            work,
-        });
-        Ok(out)
-    }
-
     pub fn lookup_work_at_offset(&mut self, offset: usize, tag_set: &TagSet) -> Result<Work> {
         // FIXME: put in an LRU so we can check prev and next per-frame
         if let Some(cache) = self.works_lookup_offset_cache.as_ref()
@@ -229,5 +204,9 @@ impl CachingPool {
             work,
         });
         Ok(out)
+    }
+
+    pub fn migrate_data_paths(&self, data_dir: &Path) -> Result<()> {
+        self.pool.migrate_data_paths(data_dir)
     }
 }

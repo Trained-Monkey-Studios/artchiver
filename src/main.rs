@@ -12,9 +12,13 @@ use eframe::HardwareAcceleration;
 
 #[derive(Clone, Debug, Parser)]
 pub struct ArtchiverArgs {
-    /// Migrate a data directory
-    #[arg(long, short)]
-    migrate_data: bool,
+    /// Migrate a data directory to nested layout
+    #[arg(long)]
+    migrate_data_dir: bool,
+
+    /// Migrate to database-sourced presence
+    #[arg(long)]
+    migrate_db_paths: bool,
 }
 
 // When compiling natively:
@@ -25,9 +29,6 @@ fn main() -> eframe::Result {
 
     let pwd = std::env::current_dir().expect("failed to get working directory");
     let env = Environment::new(&pwd).expect("failed to create environment");
-    if args.migrate_data {
-        env.migrate_data_dir().expect("failed to migrate data dir");
-    }
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_min_inner_size([300.0, 220.0])
@@ -46,7 +47,19 @@ fn main() -> eframe::Result {
         native_options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(ArtchiverApp::new(cc)))
+            let app = ArtchiverApp::new(cc);
+            if args.migrate_data_dir {
+                app.environment()
+                    .migrate_data_dir()
+                    .expect("failed to migrate data dir");
+            }
+            if args.migrate_db_paths {
+                app.host()
+                    .pool()
+                    .migrate_data_paths(&app.environment().data_dir())
+                    .expect("Failed to migrate data paths into the database");
+            }
+            Ok(Box::new(app))
         }),
     )
 }

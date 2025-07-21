@@ -49,6 +49,14 @@ impl ArtchiverApp {
             Default::default()
         }
     }
+
+    pub fn environment(&self) -> &Environment {
+        &self.env
+    }
+
+    pub fn host(&self) -> &PluginHost {
+        &self.host
+    }
 }
 
 impl eframe::App for ArtchiverApp {

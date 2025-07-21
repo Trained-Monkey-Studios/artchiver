@@ -1,6 +1,11 @@
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr, time::Duration};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::Duration,
+};
 use thiserror::Error;
 
 #[macro_export]
@@ -216,7 +221,7 @@ impl TagInfo {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Work {
     id: i64,
     name: String,
@@ -225,6 +230,11 @@ pub struct Work {
     preview_url: String,
     screen_url: String,
     archive_url: Option<String>,
+
+    preview_path: Option<PathBuf>,
+    screen_path: Option<PathBuf>,
+    archive_path: Option<PathBuf>,
+
     tags: Vec<String>,
 }
 
@@ -246,6 +256,9 @@ impl Work {
             preview_url: preview_url.to_string(),
             screen_url: screen_url.to_string(),
             archive_url: archive_url.map(|s| s.to_string()),
+            preview_path: None,
+            screen_path: None,
+            archive_path: None,
             tags,
         }
     }
@@ -258,6 +271,26 @@ impl Work {
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = tags;
         self
+    }
+
+    pub fn with_preview_path(mut self, path: Option<String>) -> Self {
+        self.preview_path = path.map(|p| p.into());
+        self
+    }
+
+    pub fn with_screen_path(mut self, path: Option<String>) -> Self {
+        self.screen_path = path.map(|p| p.into());
+        self
+    }
+
+    pub fn with_archive_path(mut self, path: Option<String>) -> Self {
+        self.archive_path = path.map(|p| p.into());
+        self
+    }
+
+    pub fn set_id(&mut self, id: i64) {
+        assert_eq!(self.id, 0, "id must be uninitialized before assignment");
+        self.id = id;
     }
 
     pub fn id(&self) -> i64 {
@@ -286,6 +319,18 @@ impl Work {
 
     pub fn archive_url(&self) -> Option<&str> {
         self.archive_url.as_deref()
+    }
+
+    pub fn preview_path(&self) -> Option<&Path> {
+        self.preview_path.as_deref()
+    }
+
+    pub fn screen_path(&self) -> Option<&Path> {
+        self.screen_path.as_deref()
+    }
+
+    pub fn archive_path(&self) -> Option<&Path> {
+        self.archive_path.as_deref()
     }
 
     pub fn tags(&self) -> &[String] {

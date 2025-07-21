@@ -93,9 +93,22 @@ struct PluginState {
     throttle: CallingThrottle,
 }
 
+fn make_agent() -> Agent {
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    Agent::new_with_config(
+        Agent::config_builder()
+            .no_delay(true)
+            .user_agent(format!("Artchiver/{VERSION}"))
+            .redirect_auth_headers(RedirectAuthHeaders::SameHost)
+            .max_response_header_size(256 * 1024)
+            .timeout_global(Some(Duration::from_secs(30)))
+            .timeout_recv_body(Some(Duration::from_secs(60)))
+            .build(),
+    )
+}
+
 impl PluginState {
     fn new(env: &Environment, pool: MetadataPool, progress: ProgressSender) -> Self {
-        const VERSION: &str = env!("CARGO_PKG_VERSION");
         Self {
             cache_dir: env.cache_dir().clone(),
             data_dir: env.data_dir().clone(),
@@ -103,16 +116,7 @@ impl PluginState {
             progress,
             cancellation: PluginCancellation::default(),
             pool,
-            agent: Agent::new_with_config(
-                Agent::config_builder()
-                    .no_delay(true)
-                    .user_agent(format!("Artchiver/{VERSION}"))
-                    .redirect_auth_headers(RedirectAuthHeaders::SameHost)
-                    .max_response_header_size(256 * 1024)
-                    .timeout_global(Some(Duration::from_secs(30)))
-                    .timeout_recv_body(Some(Duration::from_secs(60)))
-                    .build(),
-            ),
+            agent: make_agent(),
             throttle: CallingThrottle::default(),
         }
     }
@@ -183,6 +187,8 @@ fn plugin_main(
         };
         if let Err(e) = rv {
             progress.error(format!("Error handling plugin message: {e}"));
+            // Note: reset the agent if we fail, to hopefully break any bad connections.
+            state.get()?.lock().expect("poison").agent = make_agent();
         }
         // Note: we want to fail and crash out of the plugin if nobody is listening.
         progress.note_completed_task()?;
@@ -222,7 +228,7 @@ fn refresh_works_for_tag(
     // Ask the plugin to figure out what works we have for this tag.
     progress.set_spinner();
     progress.trace(format!("Calling plugin->list_tags_for_work(\"{tag}\")"));
-    let works = plugin
+    let mut works = plugin
         .call::<String, Json<Vec<Work>>>("list_works_for_tag", tag.to_owned())?
         .0;
 
@@ -230,13 +236,12 @@ fn refresh_works_for_tag(
     {
         let state_ref = state.get()?;
         let mut state = state_ref.lock().expect("poison");
-        state.pool.upsert_works(&works, progress)?;
+        state.pool.upsert_works(&mut works, progress)?;
     }
 
-    // Fetch preview images eagerly.
+    // Fetch images eagerly.
     progress.info(format!("Downloading {} works to disk...", works.len()));
     let works_len = works.len();
-    let mut works = works;
     rayon::scope_fifo(|s| {
         for (i, work) in works.drain(..).enumerate() {
             let mut progress = progress.clone();
@@ -246,9 +251,14 @@ fn refresh_works_for_tag(
                     // Note: ignore download failures and let the user re-try, if needed.
                     progress.error(format!("Error downloading work {}: {e}", work.name()));
                 }
+                if i % 10 == 0 {
+                    progress.database_changed().ok();
+                }
             });
         }
     });
+    progress.info(format!("Finished downloads for tag {tag}..."));
+    progress.database_changed()?;
     progress.clear();
     Ok(())
 }
@@ -280,7 +290,7 @@ fn fetch_text_inner(state: &mut PluginState, request: &Request) -> TextResponse 
     let key = Sha256::digest(&url);
     let key_path = state.cache_dir.join(format!("{key:x}"));
     if let Ok(mut cache_fp) = fs::File::open(&key_path) {
-        state.progress.trace(format!("cached: fetch_text({url})"));
+        // state.progress.trace(format!("cached: fetch_text({url})"));
         let mut buffer = Vec::new();
         io::copy(&mut cache_fp, &mut buffer)?;
         let out = String::from_utf8_lossy(&buffer).to_string();
@@ -325,24 +335,50 @@ host_fn!(fetch_text(state: PluginState; req: Json<Request>) -> Json<TextResponse
 });
 
 fn ensure_work_data_is_cached(state: &UserData<PluginState>, work: &Work) -> Result<()> {
-    ensure_data_url(state, work.preview_url())?;
-    ensure_data_url(state, work.screen_url())?;
+    let preview_path = ensure_data_url(state, work.preview_url())?;
+    {
+        let state_ref = state.get()?;
+        let state = state_ref.lock().expect("poison");
+        state
+            .pool
+            .update_work_preview_path(work.id(), &preview_path)?;
+    }
+
+    let screen_path = ensure_data_url(state, work.screen_url())?;
+    {
+        let state_ref = state.get()?;
+        let mut state = state_ref.lock().expect("poison");
+        state
+            .pool
+            .update_work_screen_path(work.id(), &screen_path)?;
+        state.progress.database_changed()?;
+    }
+
     if let Some(archive_url) = work.archive_url() {
-        ensure_data_url(state, archive_url)?;
+        let archive_path = ensure_data_url(state, archive_url)?;
+        {
+            let state_ref = state.get()?;
+            let state = state_ref.lock().expect("poison");
+            state
+                .pool
+                .update_work_archive_path(work.id(), &archive_path)?;
+        }
     }
     Ok(())
 }
 
-pub fn get_data_path_for_url(data_dir: &Path, url: &str) -> Result<PathBuf> {
+// Returns the absolute path for I/O and the relative path in the data directory for metadata.
+pub fn get_data_path_for_url(data_dir: &Path, url: &str) -> Result<(PathBuf, String)> {
     let ext = url.rsplit('.').next().unwrap_or_default();
     let key = Sha256::digest(url.as_bytes());
     let key = format!("{key:x}");
     let level1 = &key[0..2];
     let level2 = &key[2..4];
-    let file_name = format!("{}.{ext}", &key[4..]);
+    let file_base = &key[4..];
+    let relative = format!("{level1}/{level2}/{file_base}.{ext}");
     let dir_path = data_dir.join(level1).join(level2);
     fs::create_dir_all(&dir_path)?;
-    Ok(dir_path.join(file_name))
+    Ok((data_dir.join(&relative), relative))
 }
 
 fn make_temp_path(tmp_dir: &Path) -> PathBuf {
@@ -354,7 +390,8 @@ fn make_temp_path(tmp_dir: &Path) -> PathBuf {
     tmp_dir.join(tmp_name)
 }
 
-fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<()> {
+// Reads the data to disk and returns the data-dir-relative path for storage.
+fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<String> {
     // Take our lock early to extract data and sub-Arc-mutexes for progress, throttle, etc.
     let (data_dir, tmp_dir, agent, mut progress, throttle, cancellation) = {
         let state_ref = state.get()?;
@@ -369,10 +406,10 @@ fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<()> {
         )
     };
 
-    let data_path = get_data_path_for_url(&data_dir, url)?;
-    if data_path.exists() {
-        progress.trace(format!("cached: ensure_data_url({url})"));
-        return Ok(());
+    let (abs_path, rel_path) = get_data_path_for_url(&data_dir, url)?;
+    if abs_path.exists() {
+        // progress.trace(format!("cached: ensure_data_url({url})"));
+        return Ok(rel_path);
     }
 
     // Note: check throttle before opening files, etc, but after we might bail for caching.
@@ -389,6 +426,6 @@ fn ensure_data_url(state: &UserData<PluginState>, url: &str) -> Result<()> {
             &mut io::BufWriter::new(tmp_fp),
         )?;
     }
-    fs::rename(&tmp_path, &data_path)?;
-    Ok(())
+    fs::rename(&tmp_path, &abs_path)?;
+    Ok(rel_path)
 }

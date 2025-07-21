@@ -68,14 +68,14 @@ impl TagEntry {
 pub enum TagSortCol {
     #[default]
     Name,
-    Count,
+    TotalCount,
 }
 
 impl fmt::Display for TagSortCol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
             Self::Name => "tags.name",
-            Self::Count => "SUM(plugin_tags.presumed_work_count)",
+            Self::TotalCount => "SUM(plugin_tags.presumed_work_count)",
         };
         write!(f, "{s}")
     }
@@ -85,15 +85,15 @@ impl TagSortCol {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let mut selected = match self {
             Self::Name => 0,
-            Self::Count => 1,
+            Self::TotalCount => 1,
         };
-        let options = ["Name", "Count"];
+        let labels = ["Name", "Total Count"];
         egui::ComboBox::new("tag_order_column", "Column")
             .wrap_mode(egui::TextWrapMode::Truncate)
-            .show_index(ui, &mut selected, options.len(), |i| options[i]);
+            .show_index(ui, &mut selected, labels.len(), |i| labels[i]);
         *self = match selected {
             0 => Self::Name,
-            1 => Self::Count,
+            1 => Self::TotalCount,
             _ => panic!("invalid column selected"),
         };
     }
@@ -194,12 +194,6 @@ pub fn list_tags(
     source: Option<&str>,
     order: TagOrder,
 ) -> anyhow::Result<Vec<TagEntry>> {
-    // SELECT id,name,kind,actual_work_count,SUM(presumed_work_count) FROM
-    //   (SELECT tags.id, tags.name, tags.kind, plugin_tags.presumed_work_count, tags.hidden, tags.favorite, COUNT(work_tags.id) as actual_work_count
-    //   FROM tags LEFT JOIN work_tags ON tags.id == work_tags.tag_id LEFT JOIN plugin_tags ON tags.id == plugin_tags.tag_id LEFT JOIN plugins ON plugin_tags.plugin_id == plugins.id
-    //   WHERE tags.name LIKE 'Lovers' AND plugins.name LIKE '%' GROUP BY tags.name, plugin_tags.presumed_work_count ORDER BY tags.name ASC LIMIT 10 OFFSET 0) GROUP BY name;
-    // id|name|kind|actual_work_count|SUM(presumed_work_count)
-    // 1132|Lovers|default|117|666
     let mut stmt = conn.prepare(&format!(
         r#"SELECT id, name, kind, favorite, actual_work_count, SUM(presumed_work_count) FROM
             (SELECT tags.id, tags.name, tags.kind, plugin_tags.presumed_work_count, tags.hidden, tags.favorite, COUNT(work_tags.id) as actual_work_count

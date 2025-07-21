@@ -1,14 +1,24 @@
-use crate::shared::{environment::Environment, progress::ProgressSender, tag::TagSet};
-use anyhow::{Result, bail};
+use crate::{
+    shared::{environment::Environment, progress::ProgressSender, tag::TagSet},
+    sync::plugin::client::get_data_path_for_url,
+};
+use anyhow::{Result, bail, ensure};
 use artchiver_sdk::Work;
-use log::info;
+use itertools::Itertools as _;
+use log::{debug, info, warn};
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, types::Value};
 use serde::{Deserialize, Serialize};
-use std::{fmt, ops::Range, rc::Rc};
+use std::{
+    fmt,
+    ops::Range,
+    path::Path,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
-const MIGRATIONS: [&str; 13] = [
+const MIGRATIONS: [&str; 17] = [
     // Migrations
     r#"CREATE TABLE migrations (
         id INTEGER PRIMARY KEY,
@@ -45,11 +55,15 @@ const MIGRATIONS: [&str; 13] = [
         date TIMESTAMP,
         preview_url TEXT NOT NULL,
         screen_url TEXT NOT NULL UNIQUE,
-        archive_url TEXT
-        -- TODO: FOREIGN KEY(artist_id) REFERENCES artists(id)
+        archive_url TEXT,
+        preview_path TEXT,
+        screen_path TEXT,
+        archive_path TEXT
     );"#,
+    // TODO: FOREIGN KEY(artist_id) REFERENCES artists(id)
     r#"CREATE INDEX work_name_idx ON works(name);"#,
     r#"CREATE INDEX work_date_idx ON works(date);"#,
+    r#"CREATE INDEX work_id_date_idx ON works(id, date);"#,
     // Artists: The creator of a work of art
     r#"CREATE TABLE artists (
         id INTEGER PRIMARY KEY,
@@ -83,6 +97,9 @@ const MIGRATIONS: [&str; 13] = [
         FOREIGN KEY(tag_id) REFERENCES tags(id),
         UNIQUE (plugin_id, tag_id)
     );"#,
+    r#"CREATE INDEX plugin_tags_tag_idx ON plugin_tags(tag_id);"#,
+    r#"CREATE INDEX plugin_tags_plugin_idx ON plugin_tags(plugin_id);"#,
+    r#"CREATE INDEX plugin_tags_work_count_idx ON plugin_tags(presumed_work_count);"#,
 ];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -232,7 +249,11 @@ impl MetadataPool {
         Ok(plugin_id)
     }
 
-    pub fn upsert_works(&mut self, works: &[Work], progress: &mut ProgressSender) -> Result<()> {
+    pub fn upsert_works(
+        &mut self,
+        works: &mut [Work],
+        progress: &mut ProgressSender,
+    ) -> Result<()> {
         let conn = self.pool.get()?;
         let mut insert_work_stmt = conn.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")?;
         let mut select_tag_ids_from_names =
@@ -245,10 +266,10 @@ impl MetadataPool {
         let mut current_pos = 0;
         progress.info(format!("Writing {total_count} works to the database..."));
 
-        for chunk in works.chunks(1_000) {
+        for chunk in works.chunks_mut(1_000) {
             progress.trace(format!("db->upsert_works chunk of {}", chunk.len()));
             conn.execute("BEGIN TRANSACTION", ())?;
-            for work in chunk {
+            for work in chunk.iter_mut() {
                 let work_id = if let Ok(work_id) = insert_work_stmt.query_one(
                     params![
                         work.name(),
@@ -261,23 +282,18 @@ impl MetadataPool {
                     |row| row.get::<usize, i64>(0),
                 ) {
                     work_id
+                } else if let Ok(work_id) =
+                    select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))
+                {
+                    work_id
                 } else {
-                    progress.trace(format!(
-                        "db->upsert_works work {} already exists",
+                    progress.warn(format!(
+                        "Detected duplicate URL in work {}, skipping",
                         work.name()
                     ));
-                    if let Ok(work_id) =
-                        select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))
-                    {
-                        work_id
-                    } else {
-                        progress.warn(format!(
-                            "Detected duplicate URL in work {}, skipping",
-                            work.name()
-                        ));
-                        continue;
-                    }
+                    continue;
                 };
+                work.set_id(work_id);
                 let tag_ids: Vec<i64> = select_tag_ids_from_names
                     .query_map([string_to_rarray(work.tags())], |row| row.get(0))?
                     .flatten()
@@ -296,122 +312,227 @@ impl MetadataPool {
         Ok(())
     }
 
-    fn make_works_query(order: &str, postfix: &str) -> String {
+    pub fn update_work_preview_path(&self, work_id: i64, path: &str) -> Result<()> {
+        assert_ne!(work_id, 0, "uninitialized preview work_id");
+        assert!(!path.is_empty(), "attemp to cache empty path");
+        let conn = self.pool.get()?;
+        let row_cnt = conn.execute(
+            "UPDATE works SET preview_path = ? WHERE id = ?",
+            params![path, work_id],
+        )?;
+        ensure!(row_cnt == 1);
+        Ok(())
+    }
+
+    pub fn update_work_screen_path(&self, work_id: i64, path: &str) -> Result<()> {
+        assert_ne!(work_id, 0, "uninitialized screen work_id");
+        assert!(!path.is_empty(), "attemp to cache empty path");
+        let conn = self.pool.get()?;
+        let row_cnt = conn.execute(
+            "UPDATE works SET screen_path = ? WHERE id = ?",
+            params![path, work_id],
+        )?;
+        ensure!(row_cnt == 1);
+        Ok(())
+    }
+
+    pub fn update_work_archive_path(&self, work_id: i64, path: &str) -> Result<()> {
+        assert_ne!(work_id, 0, "uninitialized archive work_id");
+        assert!(!path.is_empty(), "attemp to cache empty path");
+        let conn = self.pool.get()?;
+        let row_cnt = conn.execute(
+            "UPDATE works SET archive_path = ? WHERE id = ?",
+            params![path, work_id],
+        )?;
+        ensure!(row_cnt == 1);
+        Ok(())
+    }
+
+    fn report_slow_query(start: Instant, name: &str, query: &str) {
+        let elapsed = start.elapsed();
+        if elapsed > Duration::from_millis(30) {
+            warn!("Slow query {name} took {elapsed:?}");
+            debug!(
+                "SQL:    {}",
+                query.replace('\n', " ").replace("            ", " ")
+            );
+        }
+    }
+
+    fn make_works_query(tag_set: &TagSet, order: &str, bounds: &str) -> String {
+        let enabled = tag_set
+            .enabled()
+            .map(|s| format!("'{}'", s.replace('\'', "\\'")))
+            .join(", ");
         format!(
-            r#"SELECT works.id, works.name, works.artist_id, works.date, works.preview_url, works.screen_url, works.archive_url
+            r#"SELECT works.id, works.name, works.artist_id, works.date,
+                  works.preview_url, works.screen_url, works.archive_url,
+                  works.preview_path, works.screen_path, works.archive_path
             FROM works
             LEFT JOIN work_tags ON work_tags.work_id = works.id
-            LEFT JOIN tags ON tags.id = work_tags.tag_id
-            WHERE tags.name in rarray(?)
-            GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = ?
+            LEFT JOIN tags ON tags.id = work_tags.tag_id AND tags.name IN ({enabled})
+            WHERE tags.name IN ({enabled})
             {order}
-            {postfix}"#
+            {bounds}"#
         )
     }
 
-    pub fn works_count(&self, tag_set: &TagSet) -> Result<i64> {
+    pub fn count_works(&self, tag_set: &TagSet) -> Result<i64> {
+        let start = Instant::now();
+
         if tag_set.enabled_count() == 0 {
             return Ok(0);
         }
         let conn = self.pool.get()?;
-        let count: i64 = conn.query_one(
-            &format!("SELECT COUNT(*) FROM ({});", Self::make_works_query("", "")),
-            params![tag_set.enabled_rarray(), tag_set.enabled_count()],
-            |row| row.get(0),
-        )?;
+        let sub_query = Self::make_works_query(tag_set, "", "");
+        let query = format!("SELECT COUNT(*) FROM ({sub_query});");
+        let count: i64 = conn.query_one(&query, [], |row| row.get(0))?;
+
+        Self::report_slow_query(start, "count_works", &query);
         Ok(count)
     }
 
     pub fn works_list(&self, range: Range<usize>, tag_set: &TagSet) -> Result<Vec<Work>> {
-        let conn = self.pool.get()?;
-        let enabled_count = tag_set.enabled_count();
-        if enabled_count == 0 {
+        if tag_set.is_empty() {
             return Ok(vec![]);
         }
-        let mut stmt = conn.prepare(&Self::make_works_query(
-            "ORDER BY works.date ASC",
-            "LIMIT ? OFFSET ?;",
-        ))?;
-        let works: Vec<Work> = stmt
-            .query_map(
-                params![
-                    tag_set.enabled_rarray(),
-                    enabled_count,
-                    range.end - range.start,
-                    range.start
-                ],
-                |row| {
-                    Ok(Work::new(
-                        row.get::<usize, String>(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        None,
-                        vec![],
-                    )
-                    .with_id(row.get(0)?))
-                },
-            )?
+        let start = Instant::now();
+
+        let conn = self.pool.get()?;
+        let query = Self::make_works_query(tag_set, "ORDER BY works.date ASC", "LIMIT ? OFFSET ?");
+        let mut stmt = conn.prepare(&query)?;
+        let works = stmt
+            .query_map(params![range.end - range.start, range.start], |row| {
+                let work = Work::new(
+                    row.get::<usize, String>(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    None,
+                    vec![],
+                )
+                .with_id(row.get(0)?)
+                .with_preview_path(row.get::<usize, String>(7).ok())
+                .with_screen_path(row.get::<usize, String>(8).ok())
+                .with_archive_path(row.get::<usize, String>(9).ok());
+                Ok(work)
+            })?
             .flatten()
             .collect();
+
+        Self::report_slow_query(start, "list_works", &query);
         Ok(works)
     }
 
-    pub fn lookup_work(&self, work_id: i64) -> Result<Work> {
-        let conn = self.pool.get()?;
-
-        let work = conn.query_one(
-            r#"SELECT id, name, artist_id, date, preview_url, screen_url, archive_url
-                              FROM works WHERE id = ?"#,
-            [work_id],
-            |row| {
-                Ok(Work::new(
-                    row.get::<usize, String>(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    None,
-                    vec![],
-                )
-                .with_id(row.get(0)?))
-            },
-        )?;
-        let tags = conn.prepare(
-            r#"SELECT tags.name FROM tags LEFT JOIN work_tags ON work_tags.tag_id = tags.id WHERE work_tags.work_id = ?"#)?
-            .query_map([work_id], |row| row.get(0))?.flatten().collect();
-        Ok(work.with_tags(tags))
-    }
-
     pub fn lookup_work_at_offset(&self, offset: usize, tag_set: &TagSet) -> Result<Work> {
-        let conn = self.pool.get()?;
-        let enabled_count = tag_set.enabled_count();
-        if enabled_count == 0 {
+        if tag_set.is_empty() {
             bail!("No enabled tags");
         }
-        let mut stmt = conn.prepare(&Self::make_works_query(
-            "ORDER BY works.date ASC",
-            "LIMIT 1 OFFSET ?;",
-        ))?;
-        let work: Work = stmt.query_one(
-            params![tag_set.enabled_rarray(), enabled_count, offset,],
-            |row| {
-                Ok(Work::new(
-                    row.get::<usize, String>(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    None,
-                    vec![],
-                )
-                .with_id(row.get(0)?))
-            },
-        )?;
+        let start = Instant::now();
+
+        let conn = self.pool.get()?;
+        let query = Self::make_works_query(tag_set, "ORDER BY works.date ASC", "LIMIT 1 OFFSET ?");
+        let mut stmt = conn.prepare(&query)?;
+        let work: Work = stmt.query_one(params![offset,], |row| {
+            Ok(Work::new(
+                row.get::<usize, String>(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                None,
+                vec![],
+            )
+            .with_id(row.get(0)?)
+            .with_preview_path(row.get::<usize, String>(7).ok())
+            .with_screen_path(row.get::<usize, String>(8).ok())
+            .with_archive_path(row.get::<usize, String>(9).ok()))
+        })?;
         let tags = conn.prepare(
             r#"SELECT tags.name FROM tags LEFT JOIN work_tags ON work_tags.tag_id = tags.id WHERE work_tags.work_id = ?"#)?
             .query_map([work.id()], |row| row.get(0))?.flatten().collect();
+
+        Self::report_slow_query(start, "lookup_work_at_offset", &query);
         Ok(work.with_tags(tags))
+    }
+
+    pub fn migrate_data_paths(&self, data_dir: &Path) -> Result<()> {
+        let conn = self.pool.get()?;
+
+        conn.execute("BEGIN TRANSACTION", [])?;
+        let mut stmt = conn.prepare(
+            r#"SELECT works.id, works.name, works.artist_id, works.date,
+                      works.preview_url, works.screen_url, works.archive_url,
+                      works.preview_path, works.screen_path, works.archive_path
+                 FROM works
+                 WHERE preview_path IS NULL OR screen_path IS NULL OR (archive_path IS NULL AND archive_url IS NOT NULL)"#)?;
+        let all_works = stmt
+            .query_map([], |row| {
+                Ok(Work::new(
+                    row.get::<usize, String>(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    None,
+                    vec![],
+                )
+                .with_id(row.get(0)?)
+                .with_preview_path(row.get::<usize, String>(7).ok())
+                .with_screen_path(row.get::<usize, String>(8).ok())
+                .with_archive_path(row.get::<usize, String>(9).ok()))
+            })?
+            .flatten();
+        let mut update_count = 0usize;
+        for work in all_works {
+            let (abs_path, rel_path) = get_data_path_for_url(data_dir, work.preview_url())?;
+            if abs_path.exists() {
+                let cnt = conn.execute(
+                    "UPDATE works SET preview_path = ? WHERE id = ?",
+                    params![rel_path, work.id()],
+                )?;
+                assert_eq!(
+                    cnt,
+                    1,
+                    "Failed to update preview_path at work {}",
+                    work.name()
+                );
+                update_count += 1;
+            }
+            let (abs_path, rel_path) = get_data_path_for_url(data_dir, work.screen_url())?;
+            if abs_path.exists() {
+                let cnt = conn.execute(
+                    "UPDATE works SET screen_path = ? WHERE id = ?",
+                    params![rel_path, work.id()],
+                )?;
+                assert_eq!(
+                    cnt,
+                    1,
+                    "Failed to update screen_path at work {}",
+                    work.name()
+                );
+                update_count += 1;
+            }
+            if let Some(archive_url) = work.archive_url() {
+                let (abs_path, rel_path) = get_data_path_for_url(data_dir, archive_url)?;
+                if abs_path.exists() {
+                    let cnt = conn.execute(
+                        "UPDATE works SET archive_path = ? WHERE id = ?",
+                        params![rel_path, work.id()],
+                    )?;
+                    assert_eq!(
+                        cnt,
+                        1,
+                        "Failed to update archive_path at work {}",
+                        work.name()
+                    );
+                    update_count += 1;
+                }
+            }
+        }
+        conn.execute("COMMIT TRANSACTION", [])?;
+        println!("Migration Done: added {update_count} already-downloaded paths to the database");
+        Ok(())
     }
 }

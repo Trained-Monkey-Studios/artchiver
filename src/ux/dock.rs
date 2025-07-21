@@ -2,10 +2,7 @@ use crate::{
     shared::{environment::Environment, performance::PerfTrack, progress::Progress, tag::TagSet},
     sync::{
         db::tag::TagOrder,
-        plugin::{
-            client::get_data_path_for_url,
-            host::{PluginHandle, PluginHost},
-        },
+        plugin::host::{PluginHandle, PluginHost},
     },
 };
 use anyhow::Result;
@@ -14,6 +11,7 @@ use egui::{
     self, Key, Margin, Modifiers, Rect, Sense, SizeHint, TextWrapMode, Vec2, include_image,
 };
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
+// use egui_video::{AudioDevice, Player};
 use itertools::Itertools as _;
 use log::Level;
 use lru::LruCache;
@@ -432,7 +430,7 @@ impl<'a> SyncViewer<'a> {
         let works_count: usize = self
             .sync
             .pool_mut()
-            .works_count(&self.state.tag_selection)?
+            .count_works(&self.state.tag_selection)?
             .try_into()?;
         if works_count == 0 {
             self.state.selected_work = WorkSelection::None;
@@ -630,10 +628,11 @@ impl<'a> SyncViewer<'a> {
                 ui.label(work.archive_url().unwrap_or(""));
                 ui.end_row();
 
-                if let Ok(path) = get_data_path_for_url(self.data_dir, work.screen_url())
-                    && path.exists()
-                {
-                    ui.label("Path");
+                if let Some(path) = work.screen_path() {
+                    let path = self.data_dir.join(path);
+                    if ui.button("Path 📋").clicked() {
+                        ui.ctx().copy_text(path.display().to_string());
+                    }
                     ui.label(path.display().to_string());
                     ui.end_row();
                 }
@@ -672,7 +671,7 @@ impl<'a> SyncViewer<'a> {
         let works_count = self
             .sync
             .pool_mut()
-            .works_count(&self.state.tag_selection)?;
+            .count_works(&self.state.tag_selection)?;
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // See https://github.com/emilk/egui/blob/0f6310c598b5be92f339c9275a00d5decd838c1b/examples/custom_plot_manipulation/src/main.rs
@@ -704,24 +703,26 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn get_best_image<'b>(&'a self, work: &'b Work, req_sz: WorkSize) -> egui::Image<'b> {
-        if matches!(req_sz, WorkSize::Screen) {
-            let screen_path = get_data_path_for_url(self.data_dir, work.screen_url())
-                .expect("filed to create data path");
-            let screen_uri = format!("file://{}", screen_path.display());
+        if matches!(req_sz, WorkSize::Screen)
+            && let Some(screen_path) = work.screen_path()
+        {
+            let screen_uri = format!("file://{}", self.data_dir.join(screen_path).display());
             if self.state.works_lru.contains(&screen_uri) {
                 return egui::Image::new(screen_uri);
             }
-            // Fall through to try to load the preview image
+            // Note: Fall through to try to load the preview image
         }
 
-        let preview_path = get_data_path_for_url(self.data_dir, work.preview_url())
-            .expect("failed to create data path");
-        let preview_uri = format!("file://{}", preview_path.display());
-        if self.state.works_lru.contains(&preview_uri) {
-            egui::Image::new(preview_uri)
-        } else {
-            egui::Image::new(include_image!("../../assets/loading-preview.png"))
+        if let Some(preview_path) = work.preview_path() {
+            let preview_uri = format!("file://{}", self.data_dir.join(preview_path).display());
+            // println!("Would show: {preview_uri}: {}", self.state.works_lru.contains(&preview_uri));
+            if self.state.works_lru.contains(&preview_uri) {
+                return egui::Image::new(preview_uri);
+            }
+            // Note: fall through to load a fallback image
         }
+
+        egui::Image::new(include_image!("../../assets/loading-preview.png"))
     }
 
     fn ensure_work_cached(&mut self, ctx: &egui::Context, work: &Work) {
@@ -730,33 +731,38 @@ impl<'a> SyncViewer<'a> {
             return;
         }
 
+        // Okay, so this is too slow to run every frame, because we have to hit the file system.
+        // Even building the paths is very slow because of the SHA256.
+        //
+        // We can solve both problems at once by doing the path computation in the writer thread
+        // (we do this anyway) and communicating completion to the foreground. We can do this by
+        // storing the path in the metadata db (it is intrinsically tied to the data/ dir anyway)
+        // and touching the db_gen to get the frontend to refresh.
+        //
+        // Re-fetching from the DB is not cheap, but is cached across frames. We can also rate-
+        // limit the frequency of db-change notifications that cause us to re-load.
         const SIZE_HINT: SizeHint = SizeHint::Size {
             width: 256,
             height: 256,
             maintain_aspect_ratio: true,
         };
-        let screen_path = get_data_path_for_url(self.data_dir, work.screen_url())
-            .expect("failed to create data path");
-        if screen_path.exists() {
-            let screen_uri = format!("file://{}", screen_path.display());
+        if let Some(screen_path) = work.screen_path() {
+            let screen_uri = format!("file://{}", self.data_dir.join(screen_path).display());
             if !self.state.works_lru.contains(&screen_uri) {
                 ctx.try_load_image(&screen_uri, SIZE_HINT).ok();
                 self.state.per_frame_work_upload_count += 1;
+                self.state.works_lru.get_or_insert(screen_uri, || 0);
             }
-            self.state.works_lru.get_or_insert(screen_uri, || 0);
         }
-
-        let preview_path = get_data_path_for_url(self.data_dir, work.preview_url())
-            .expect("failed to create data path");
-        if preview_path.exists() {
-            let preview_uri = format!("file://{}", preview_path.display());
+        if let Some(preview_path) = work.preview_path() {
+            let preview_uri = format!("file://{}", self.data_dir.join(preview_path).display());
             if !self.state.works_lru.contains(&preview_uri) {
                 ctx.try_load_image(&preview_uri, SIZE_HINT).ok();
                 self.state.per_frame_work_upload_count += 1;
+                self.state
+                    .works_lru
+                    .get_or_insert(preview_uri.clone(), || 0);
             }
-            self.state
-                .works_lru
-                .get_or_insert(preview_uri.clone(), || 0);
         }
     }
 
@@ -795,10 +801,18 @@ pub enum UxMode {
     Slideshow,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+// fn init_audio_device() -> AudioDevice {
+//     AudioDevice::new().expect("Failed to create audio output")
+// }
+
+#[derive(Serialize, Deserialize)]
 pub struct UxToplevel {
     dock_state: DockState<TabMetadata>,
     state: UxState,
+    // #[serde(skip, default = "init_audio_device")]
+    // audio_device: AudioDevice,
+    // #[serde(skip, default)]
+    // video_player: Option<Player>,
 }
 
 impl Default for UxToplevel {
@@ -817,6 +831,8 @@ impl Default for UxToplevel {
         Self {
             dock_state,
             state: UxState::default(),
+            // audio_device: init_audio_device(),
+            // video_player: None,
         }
     }
 }

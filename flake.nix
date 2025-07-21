@@ -30,8 +30,11 @@
 
             # misc. libraries
             clang
+            libclang
             pkg-config
             mold-wrapped
+            ffmpeg.dev
+            SDL2
 
             # GUI libs
             libxkbcommon
