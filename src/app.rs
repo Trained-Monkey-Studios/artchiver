@@ -1,6 +1,14 @@
+use crate::shared::progress::ProgressMonitor;
+use crate::sync::db::handle::connect_or_create;
 use crate::{
     shared::environment::Environment,
-    sync::{db::model::MetadataPool, plugin::host::PluginHost},
+    sync::{
+        db::{
+            handle::{DbHandle, DbThreads},
+            model::MetadataPool,
+        },
+        plugin::host::PluginHost,
+    },
     ux::dock::UxToplevel,
 };
 use eframe::glow;
@@ -9,28 +17,48 @@ use eframe::glow;
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct ArtchiverApp {
-    // The main ux container.
-    toplevel: UxToplevel,
-
     // Recreate the environment each run as we need to know where we are.
     #[serde(skip)]
     env: Environment,
 
+    #[serde(skip)]
+    progress_mon: ProgressMonitor,
+
+    // Reconnect to the database each run
+    #[serde(skip)]
+    db_handle: DbHandle,
+    #[serde(skip)]
+    db_threads: DbThreads,
+
     // Rebuild plugins on each run as we don't know where we'll be running from.
     #[serde(skip)]
     host: PluginHost,
+
+    // The main ux container.
+    toplevel: UxToplevel,
 }
 
 impl Default for ArtchiverApp {
     fn default() -> Self {
         let pwd = std::env::current_dir().expect("failed to get working directory");
         let env = Environment::new(&pwd).expect("failed to create environment");
-        let pool = MetadataPool::connect_or_create(&env).expect("failed to connect to database");
-        let host = PluginHost::new(pool, &env).expect("failed to set up plugins");
+        let progress_mon = ProgressMonitor::new();
+        let (db_handle, db_threads) =
+            connect_or_create(&env, &progress_mon).expect("failed to connect to database");
+        let host = PluginHost::new(&env, &progress_mon, db_handle.clone())
+            .expect("failed to set up plugins");
+        let toplevel = UxToplevel::default();
+
+        // Reload tags from DB so we don't have to put them in the app state.
+        db_handle.get_tags();
+
         Self {
-            toplevel: UxToplevel::default(),
             env,
+            progress_mon,
+            db_handle,
+            db_threads,
             host,
+            toplevel,
         }
     }
 }
@@ -41,65 +69,44 @@ impl ArtchiverApp {
         // This is also where you can customize the look and feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
 
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
-        if let Some(storage) = cc.storage {
+        // Load or create a new app.
+        let mut app: Self = if let Some(storage) = cc.storage {
             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         } else {
             Default::default()
-        }
+        };
+        app.toplevel.startup(&app.environment().data_dir());
+        app
     }
 
     pub fn environment(&self) -> &Environment {
         &self.env
     }
-
-    pub fn host(&self) -> &PluginHost {
-        &self.host
-    }
 }
 
 impl eframe::App for ArtchiverApp {
+    /// Called each time the UI needs repainting, which may be many times per second.
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let updates = self.progress_mon.read();
+        self.db_handle.handle_updates(&updates);
+        self.host.handle_updates(&updates);
+        self.toplevel.handle_updates(&updates, &self.db_handle);
+
+        self.toplevel
+            .main(&self.env, &self.db_handle, &mut self.host, ctx)
+            .expect("ux update error");
+    }
+
     /// Called by the framework to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
-    }
-
-    /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.host.maintain_plugins();
-        self.toplevel
-            .main(&self.env, &mut self.host, ctx)
-            .expect("ux update error");
-
-        // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
-        // For inspiration and more examples, go to https://emilk.github.io/egui
-
-        /*
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            // The top panel is often a good place for a menu bar:
-
-            egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Quit").clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-                ui.add_space(16.0);
-
-                // egui::widgets::global_theme_preference_buttons(ui);
-            });
-        });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.label("todo");
-        });
-         */
     }
 
     fn on_exit(&mut self, _gl: Option<&glow::Context>) {
         self.host
             .cleanup_for_exit()
             .expect("failed to cleanup plugins on exit");
+        self.db_handle.send_exit_request();
+        self.db_threads.wait_for_exit();
     }
 }

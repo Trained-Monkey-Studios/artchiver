@@ -15,10 +15,6 @@ pub struct ArtchiverArgs {
     /// Migrate a data directory to nested layout
     #[arg(long)]
     migrate_data_dir: bool,
-
-    /// Migrate to database-sourced presence
-    #[arg(long)]
-    migrate_db_paths: bool,
 }
 
 // When compiling natively:
@@ -52,12 +48,6 @@ fn main() -> eframe::Result {
                 app.environment()
                     .migrate_data_dir()
                     .expect("failed to migrate data dir");
-            }
-            if args.migrate_db_paths {
-                app.host()
-                    .pool()
-                    .migrate_data_paths(&app.environment().data_dir())
-                    .expect("Failed to migrate data paths into the database");
             }
             Ok(Box::new(app))
         }),

@@ -182,14 +182,14 @@ impl fmt::Display for TagKind {
 
 // An API sourced tag
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TagInfo {
+pub struct Tag {
     name: String,
     kind: TagKind,
     presumed_work_count: Option<u64>,
     wiki_url: Option<String>,
 }
 
-impl TagInfo {
+impl Tag {
     pub fn new<N: ToString, W: ToString>(
         name: N,
         kind: TagKind,
@@ -221,6 +221,7 @@ impl TagInfo {
     }
 }
 
+// API-centered [art]work item.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Work {
     id: i64,

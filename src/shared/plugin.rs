@@ -1,4 +1,4 @@
-use crate::shared::progress::Progress;
+use crate::{shared::progress::Progress, sync::db::tag::DbTag};
 use artchiver_sdk::PluginMetadata;
 use log::Level;
 use parking_lot::Mutex;
@@ -23,20 +23,24 @@ impl fmt::Display for PluginRequest {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum PluginResponse {
-    // Startup sequence
-    PluginInfo(PluginMetadata),
-
-    // Informational to keep the UX alive.
-    Progress(Progress),
-    Log(Level, String),
-    DatabaseChanged,
-
-    // Must be returned each time the plugin completes some work; otherwise the plugin will not be
-    // fed more requests to work on.
-    CompletedTask,
-}
+// #[derive(Clone, Debug)]
+// pub enum PluginResponse {
+//     // Startup notifications /////////////////////////////
+//     PluginInfo(PluginMetadata),
+//
+//     // Status notifications //////////////////////////////
+//     Progress(Progress),
+//     Log(Level, String),
+//
+//     // Data change notifications /////////////////////////
+//     // Note: no extra data, since tag refreshes are enormous and rare
+//     TagsRefreshed,
+//
+//     // Task Maintenance //////////////////////////////////
+//     // Must be returned each time the plugin completes some work;
+//     // otherwise the plugin will not be fed more requests to work on.
+//     CompletedTask,
+// }
 
 #[derive(Clone, Debug, Default)]
 pub struct PluginCancellation {

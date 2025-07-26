@@ -1,7 +1,5 @@
-use crate::{
-    shared::{environment::Environment, progress::ProgressSender, tag::TagSet},
-    sync::plugin::client::get_data_path_for_url,
-};
+use crate::shared::{environment::Environment, progress::ProgressSender, tag::TagSet};
+use crate::sync::db::work::DbWork;
 use anyhow::{Result, bail, ensure};
 use artchiver_sdk::Work;
 use itertools::Itertools as _;
@@ -13,12 +11,11 @@ use serde::{Deserialize, Serialize};
 use std::{
     fmt,
     ops::Range,
-    path::Path,
     rc::Rc,
     time::{Duration, Instant},
 };
 
-const MIGRATIONS: [&str; 17] = [
+pub const MIGRATIONS: [&str; 17] = [
     // Migrations
     r#"CREATE TABLE migrations (
         id INTEGER PRIMARY KEY,
@@ -137,6 +134,18 @@ impl OrderDir {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DbPlugin {
+    id: i64,
+    name: String,
+}
+
+impl DbPlugin {
+    pub fn new(id: i64, name: String) -> Self {
+        Self { id, name }
+    }
+}
+
 fn string_to_rarray(v: &[String]) -> Rc<Vec<Value>> {
     Rc::new(v.iter().cloned().map(Value::from).collect())
 }
@@ -206,6 +215,7 @@ impl MetadataPool {
         Ok(self.pool.get()?)
     }
 
+    // CONFIGURATION ///////////////////////////////////////
     pub fn load_configurations(&self, plugin_id: i64) -> Result<Vec<(String, String)>> {
         let conn = self.pool.get()?;
         Ok(conn
@@ -231,6 +241,7 @@ impl MetadataPool {
         Ok(())
     }
 
+    // PLUGINS ///////////////////////////////////////
     pub fn upsert_plugin(&self, plugin_name: &str) -> Result<i64> {
         let conn = self.pool.get()?;
         let row_cnt = conn.execute(
@@ -249,6 +260,16 @@ impl MetadataPool {
         Ok(plugin_id)
     }
 
+    pub fn list_plugins(&self) -> Result<Vec<DbPlugin>> {
+        let conn = self.pool.get()?;
+        Ok(conn
+            .prepare("SELECT id, name FROM plugins;")?
+            .query_map((), |row| Ok(DbPlugin::new(row.get(0)?, row.get(1)?)))?
+            .flatten()
+            .collect())
+    }
+
+    // WORKS ///////////////////////////////////////
     pub fn upsert_works(
         &mut self,
         works: &mut [Work],
@@ -306,7 +327,6 @@ impl MetadataPool {
 
             current_pos += chunk.len();
             progress.set_percent(current_pos, total_count);
-            progress.database_changed()?;
         }
 
         Ok(())
@@ -360,7 +380,8 @@ impl MetadataPool {
     }
 
     fn make_works_query(tag_set: &TagSet, order: &str, bounds: &str) -> String {
-        let enabled = tag_set
+        let enabled_size = tag_set.enabled().count();
+        let enabled_set = tag_set
             .enabled()
             .map(|s| format!("'{}'", s.replace('\'', "\\'")))
             .join(", ");
@@ -370,8 +391,9 @@ impl MetadataPool {
                   works.preview_path, works.screen_path, works.archive_path
             FROM works
             LEFT JOIN work_tags ON work_tags.work_id = works.id
-            LEFT JOIN tags ON tags.id = work_tags.tag_id AND tags.name IN ({enabled})
-            WHERE tags.name IN ({enabled})
+            LEFT JOIN tags ON tags.id = work_tags.tag_id AND tags.name IN ({enabled_set})
+            WHERE tags.name IN ({enabled_set})
+            GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
             {order}
             {bounds}"#
         )
@@ -457,82 +479,23 @@ impl MetadataPool {
         Ok(work.with_tags(tags))
     }
 
-    pub fn migrate_data_paths(&self, data_dir: &Path) -> Result<()> {
-        let conn = self.pool.get()?;
-
-        conn.execute("BEGIN TRANSACTION", [])?;
-        let mut stmt = conn.prepare(
-            r#"SELECT works.id, works.name, works.artist_id, works.date,
-                      works.preview_url, works.screen_url, works.archive_url,
-                      works.preview_path, works.screen_path, works.archive_path
-                 FROM works
-                 WHERE preview_path IS NULL OR screen_path IS NULL OR (archive_path IS NULL AND archive_url IS NOT NULL)"#)?;
-        let all_works = stmt
-            .query_map([], |row| {
-                Ok(Work::new(
-                    row.get::<usize, String>(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    None,
-                    vec![],
-                )
-                .with_id(row.get(0)?)
-                .with_preview_path(row.get::<usize, String>(7).ok())
-                .with_screen_path(row.get::<usize, String>(8).ok())
-                .with_archive_path(row.get::<usize, String>(9).ok()))
-            })?
-            .flatten();
-        let mut update_count = 0usize;
-        for work in all_works {
-            let (abs_path, rel_path) = get_data_path_for_url(data_dir, work.preview_url())?;
-            if abs_path.exists() {
-                let cnt = conn.execute(
-                    "UPDATE works SET preview_path = ? WHERE id = ?",
-                    params![rel_path, work.id()],
-                )?;
-                assert_eq!(
-                    cnt,
-                    1,
-                    "Failed to update preview_path at work {}",
-                    work.name()
-                );
-                update_count += 1;
-            }
-            let (abs_path, rel_path) = get_data_path_for_url(data_dir, work.screen_url())?;
-            if abs_path.exists() {
-                let cnt = conn.execute(
-                    "UPDATE works SET screen_path = ? WHERE id = ?",
-                    params![rel_path, work.id()],
-                )?;
-                assert_eq!(
-                    cnt,
-                    1,
-                    "Failed to update screen_path at work {}",
-                    work.name()
-                );
-                update_count += 1;
-            }
-            if let Some(archive_url) = work.archive_url() {
-                let (abs_path, rel_path) = get_data_path_for_url(data_dir, archive_url)?;
-                if abs_path.exists() {
-                    let cnt = conn.execute(
-                        "UPDATE works SET archive_path = ? WHERE id = ?",
-                        params![rel_path, work.id()],
-                    )?;
-                    assert_eq!(
-                        cnt,
-                        1,
-                        "Failed to update archive_path at work {}",
-                        work.name()
-                    );
-                    update_count += 1;
-                }
-            }
+    pub fn list_works_with_any_tags(&self, tags: &[String]) -> Result<Vec<DbWork>> {
+        if tags.is_empty() {
+            return Ok(Vec::new());
         }
-        conn.execute("COMMIT TRANSACTION", [])?;
-        println!("Migration Done: added {update_count} already-downloaded paths to the database");
-        Ok(())
+
+        let conn = self.get()?;
+        // If we decide we *have* to apply AND up front, it looks like this.
+        // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
+        let query = r#"SELECT works.* FROM works
+            INNER JOIN work_tags ON work_tags.work_id = works.id
+            INNER JOIN tags ON work_tags.tag_id = tags.id
+            WHERE tags.name IN rarray(?)"#;
+        // dbg!(query.replace("\n            ", " "));
+        let mut stmt = conn.prepare(query)?;
+        Ok(stmt
+            .query_map([string_to_rarray(tags)], DbWork::from_row)?
+            .flatten()
+            .collect())
     }
 }

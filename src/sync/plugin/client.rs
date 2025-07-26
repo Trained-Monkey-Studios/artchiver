@@ -1,14 +1,16 @@
+use crate::shared::update::DataUpdate;
+use crate::sync::db::tag::DbTag;
 use crate::{
     shared::{
         environment::Environment,
-        plugin::{PluginCancellation, PluginRequest, PluginResponse},
+        plugin::{PluginCancellation, PluginRequest},
         progress::ProgressSender,
         throttle::CallingThrottle,
     },
-    sync::db::{model::MetadataPool, tag::upsert_tags},
+    sync::db::{handle::DbHandle, model::MetadataPool, tag::upsert_tags},
 };
 use anyhow::Result;
-use artchiver_sdk::{PluginMetadata, Request, TagInfo, TextFetchError, TextResponse, Work};
+use artchiver_sdk::{PluginMetadata, Request, Tag, TextFetchError, TextResponse, Work};
 use crossbeam::channel::{Receiver, Sender};
 use extism::{
     Manifest, PTR, Plugin as ExtPlugin, PluginBuilder, UserData, Wasm, convert::Json, host_fn,
@@ -51,13 +53,13 @@ fn make_plugin(
 pub(crate) fn create_plugin_task(
     source: &Path,
     env: &Environment,
-    pool: MetadataPool,
+    db: DbHandle,
     rx_from_runner: Receiver<PluginRequest>,
-    tx_to_runner: Sender<PluginResponse>,
+    tx_to_runner: Sender<DataUpdate>,
 ) -> Result<(JoinHandle<()>, PluginCancellation)> {
     info!("Loading plugin: {}", source.display());
     let progress = ProgressSender::wrap(tx_to_runner.clone());
-    let state = UserData::new(PluginState::new(env, pool, progress.clone()));
+    let state = UserData::new(PluginState::new(env, db, progress.clone()));
     let cancellation = state.get()?.lock().expect("poison").cancellation.clone();
     // Note: on configuration; we support moving the plugin file around, so we need to key on the
     //       name rather than the source path. As such, we have to wait until the plugin returns
@@ -86,7 +88,7 @@ struct PluginState {
     cancellation: PluginCancellation,
 
     // Database
-    pool: MetadataPool,
+    db: DbHandle,
 
     // Web
     agent: Agent,
@@ -108,14 +110,14 @@ fn make_agent() -> Agent {
 }
 
 impl PluginState {
-    fn new(env: &Environment, pool: MetadataPool, progress: ProgressSender) -> Self {
+    fn new(env: &Environment, db: DbHandle, progress: ProgressSender) -> Self {
         Self {
             cache_dir: env.cache_dir().clone(),
             data_dir: env.data_dir().clone(),
             tmp_dir: env.tmp_dir().clone(),
             progress,
             cancellation: PluginCancellation::default(),
-            pool,
+            db,
             agent: make_agent(),
             throttle: CallingThrottle::default(),
         }
@@ -129,10 +131,9 @@ impl PluginState {
 // * startup - return an information pack about the plugin and set it on the state for
 //             display in the UX. This may contain required configuration fields to be
 //             shown in the UX.
-// * TODO: configure - receive configuration from the UX and store it in the plugin state.
 // * Refresh* - query our plugin (to read from the gallery source) and write back the data
 //              to the metadata db for display in the UX.
-// * shutdown - return from the plugin thread so that we can cleanly shut down the pool and exit.
+// * shutdown - return from the plugin thread so that we can cleanly shut down and exit.
 fn plugin_main(
     plugin_source: &Path,
     mut plugin: ExtPlugin,
@@ -146,8 +147,8 @@ fn plugin_main(
         let state_ref = state.get()?;
         let mut state = state_ref.lock().expect("poison");
         state.throttle = CallingThrottle::new(metadata.rate_limit(), metadata.rate_window());
-        let plugin_id = state.pool.upsert_plugin(metadata.name())?;
-        let configs = state.pool.load_configurations(plugin_id)?;
+        let plugin_id = state.db.sync_upsert_plugin(metadata.name())?;
+        let configs = state.db.sync_load_configurations(plugin_id)?;
         for (k, v) in &configs {
             metadata.set_config_value(k, v);
         }
@@ -159,7 +160,7 @@ fn plugin_main(
         "Started plugin id:{plugin_id}, \"{}\"",
         metadata.name()
     ));
-    progress.send(PluginResponse::PluginInfo(metadata))?;
+    progress.send(DataUpdate::PluginInfo { source: plugin_source.to_owned(), metadata })?;
 
     'outer: while let Ok(msg) = rx_from_runner.recv() {
         let rv = match msg {
@@ -172,14 +173,15 @@ fn plugin_main(
                     .get()?
                     .lock()
                     .expect("poison")
-                    .pool
-                    .save_configurations(plugin_id, &config)?;
+                    .db
+                    .sync_save_configurations(plugin_id, &config)?;
                 // reload the plugin with configuration applied
                 plugin = make_plugin(plugin_source, config, state)?;
                 Ok(())
             }
             PluginRequest::RefreshTags => {
                 refresh_tags(plugin_id, &mut plugin, state, &mut progress)
+                    .and_then(|_| progress.note_tags_refreshed())
             }
             PluginRequest::RefreshWorksForTag { tag } => {
                 refresh_works_for_tag(&tag, &mut plugin, state, &mut progress)
@@ -208,13 +210,14 @@ fn refresh_tags(
     progress: &mut ProgressSender,
 ) -> Result<()> {
     // Progress will get sent for the download or file read.
-    progress.trace("Calling plugin->list_tags");
-    let tags = plugin.call::<(), Json<Vec<TagInfo>>>("list_tags", ())?.0;
+    progress.trace(format!("Calling plugin ({}) -> list_tags", plugin_id));
+    let tags = plugin.call::<(), Json<Vec<Tag>>>("list_tags", ())?.0;
 
     // Progress will get sent a second time for writing to the DB.
     let state_ref = state.get()?;
     let state = state_ref.lock().expect("poison");
-    upsert_tags(&state.pool.get()?, plugin_id, &tags, progress)?;
+    state.db.upsert_tags(plugin_id, tags)?;
+    // upsert_tags(&mut state.pool.get()?, plugin_id, &tags, progress)
 
     Ok(())
 }
@@ -236,7 +239,10 @@ fn refresh_works_for_tag(
     {
         let state_ref = state.get()?;
         let mut state = state_ref.lock().expect("poison");
-        state.pool.upsert_works(&mut works, progress)?;
+        state.db.upsert_works(works.clone())?;
+        // state.pool.upsert_works(&mut works, progress)?;
+        // TODO: note presence of new works for a tag
+        // progress.finished_tag_refresh(tag)
     }
 
     // Fetch images eagerly.
@@ -251,14 +257,12 @@ fn refresh_works_for_tag(
                     // Note: ignore download failures and let the user re-try, if needed.
                     progress.error(format!("Error downloading work {}: {e}", work.name()));
                 }
-                if i % 10 == 0 {
-                    progress.database_changed().ok();
-                }
+                // TODO: send back changes as they occur
+                // progress.finished_download_for(id)
             });
         }
     });
     progress.info(format!("Finished downloads for tag {tag}..."));
-    progress.database_changed()?;
     progress.clear();
     Ok(())
 }
@@ -339,19 +343,14 @@ fn ensure_work_data_is_cached(state: &UserData<PluginState>, work: &Work) -> Res
     {
         let state_ref = state.get()?;
         let state = state_ref.lock().expect("poison");
-        state
-            .pool
-            .update_work_preview_path(work.id(), &preview_path)?;
+        state.db.set_work_preview_path(work.id(), preview_path)?;
     }
 
     let screen_path = ensure_data_url(state, work.screen_url())?;
     {
         let state_ref = state.get()?;
-        let mut state = state_ref.lock().expect("poison");
-        state
-            .pool
-            .update_work_screen_path(work.id(), &screen_path)?;
-        state.progress.database_changed()?;
+        let state = state_ref.lock().expect("poison");
+        state.db.set_work_screen_path(work.id(), screen_path)?;
     }
 
     if let Some(archive_url) = work.archive_url() {
@@ -359,9 +358,7 @@ fn ensure_work_data_is_cached(state: &UserData<PluginState>, work: &Work) -> Res
         {
             let state_ref = state.get()?;
             let state = state_ref.lock().expect("poison");
-            state
-                .pool
-                .update_work_archive_path(work.id(), &archive_path)?;
+            state.db.set_work_archive_path(work.id(), archive_path)?;
         }
     }
     Ok(())

@@ -1,20 +1,18 @@
 use crate::{
-    shared::{environment::Environment, performance::PerfTrack, progress::Progress, tag::TagSet},
-    sync::{
-        db::tag::TagOrder,
-        plugin::host::{PluginHandle, PluginHost},
+    shared::{
+        environment::Environment, performance::PerfTrack, progress::Progress, tag::TagSet,
+        update::DataUpdate,
     },
+    sync::plugin::host::{PluginHandle, PluginHost},
+    ux::tag::UxTag,
 };
 use anyhow::Result;
-use artchiver_sdk::Work;
-use egui::{
-    self, Key, Margin, Modifiers, Rect, Sense, SizeHint, TextWrapMode, Vec2, include_image,
-};
+use egui::{self, Key, Margin, Modifiers, TextWrapMode};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 // use egui_video::{AudioDevice, Player};
-use itertools::Itertools as _;
+use crate::sync::db::handle::DbHandle;
+use crate::ux::work::UxWork;
 use log::Level;
-use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -40,14 +38,6 @@ impl TabMetadata {
             title: title.to_owned(),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum WorkSize {
-    // Thumbnail,
-    Preview,
-    Screen,
-    // Archive
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -101,25 +91,21 @@ impl WorkSelection {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UxState {
+    // Window and display state
     mode: UxMode,
     show_preferences: bool,
     show_performance: bool,
     show_about: bool,
-    tag_filter: String,
+
+    // The main piece of shared state?
     tag_selection: TagSet,
-    tag_source: Option<String>,
-    tag_order: TagOrder,
-    selected_work: WorkSelection,
-    thumb_size: f32,
+
+    // Sub-UX
+    tag_ux: UxTag,
+    work_ux: UxWork,
 
     #[serde(skip)]
     perf: PerfTrack,
-
-    #[serde(skip, default = "LruCache::unbounded")]
-    works_lru: LruCache<String, u32>,
-
-    #[serde(skip)]
-    per_frame_work_upload_count: usize,
 }
 
 impl Default for UxState {
@@ -129,37 +115,22 @@ impl Default for UxState {
             show_preferences: false,
             show_performance: false,
             show_about: false,
-            tag_filter: String::new(),
+            tag_ux: UxTag::default(),
+            work_ux: UxWork::default(),
             tag_selection: TagSet::default(),
-            tag_source: None,
-            tag_order: TagOrder::default(),
-            thumb_size: 256.,
             perf: PerfTrack::default(),
-            works_lru: LruCache::unbounded(),
-            per_frame_work_upload_count: 0,
-            selected_work: WorkSelection::None,
         }
     }
-}
-
-impl UxState {
-    const LRU_CACHE_SIZE: usize = 1_000;
-    const MAX_PER_FRAME_UPLOADS: usize = 3;
 }
 
 struct SyncViewer<'a> {
     sync: &'a mut PluginHost,
     state: &'a mut UxState,
-    data_dir: &'a Path,
 }
 
 impl<'a> SyncViewer<'a> {
-    fn wrap(sync: &'a mut PluginHost, state: &'a mut UxState, data_dir: &'a Path) -> Self {
-        Self {
-            sync,
-            state,
-            data_dir,
-        }
+    fn wrap(sync: &'a mut PluginHost, state: &'a mut UxState) -> Self {
+        Self { sync, state }
     }
 
     fn show_plugin_details(ui: &mut egui::Ui, plugin: &mut PluginHandle) {
@@ -248,29 +219,10 @@ impl<'a> SyncViewer<'a> {
             });
     }
 
-    fn show_galleries(&mut self, ui: &mut egui::Ui) -> Result<()> {
+    fn show_plugins(&mut self, ui: &mut egui::Ui)  {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| -> Result<()> {
-                let mut remove = None;
-                for (i, error) in self.sync.errors().enumerate() {
-                    ui.horizontal(|ui| {
-                        if ui.small_button("x").clicked() {
-                            remove = Some(i);
-                        }
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(error)
-                                    .strong()
-                                    .color(egui::Color32::RED),
-                            )
-                            .wrap_mode(TextWrapMode::Truncate),
-                        );
-                    });
-                }
-                if let Some(index) = remove {
-                    self.sync.remove_error(index);
-                }
+            .show(ui, |ui|  {
                 for plugin in self.sync.plugins_mut() {
                     ui.horizontal(|ui| {
                         ui.heading(plugin.name());
@@ -293,486 +245,43 @@ impl<'a> SyncViewer<'a> {
                     });
                     egui::Frame::new()
                         .inner_margin(indented(16))
-                        .show(ui, |ui| -> Result<()> {
+                        .show(ui, |ui| {
                             Self::show_plugin_details(ui, plugin);
                             Self::show_plugin_tasks(ui, plugin);
                             Self::show_plugin_logs(ui, plugin);
-                            Ok(())
-                        })
-                        .inner?;
-                }
-                Ok(())
-            })
-            .inner?;
-        Ok(())
-    }
-
-    fn show_tags(&mut self, ui: &mut egui::Ui) -> Result<()> {
-        let tag_cnt = self
-            .sync
-            .pool_mut()
-            .count_tags(&self.state.tag_filter, self.state.tag_source.as_deref())?;
-        // Filter and view bar
-        ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut self.state.tag_filter);
-            if ui.button("x").clicked() {
-                self.state.tag_filter.clear();
-            }
-            ui.label(format!("({tag_cnt})",));
-
-            let mut selected = 0usize;
-            let mut options = self.sync.plugins().map(|p| p.name()).collect::<Vec<_>>();
-            options.insert(0, "All".to_owned());
-            if let Some(source) = self.state.tag_source.as_deref() {
-                if let Some((offset, _)) = options.iter().find_position(|v| v == &source) {
-                    selected = offset;
-                }
-            }
-            egui::ComboBox::new("tag_filter_sources", "Source:")
-                .wrap_mode(TextWrapMode::Truncate)
-                .show_index(ui, &mut selected, options.len(), |i| &options[i]);
-            if options[selected] == "All" {
-                self.state.tag_source = None;
-            } else {
-                self.state.tag_source = Some(options[selected].clone());
-            }
-        });
-        // Sorting
-        ui.horizontal(|ui| {
-            self.state.tag_order.ui(ui);
-        });
-
-        let text_style = egui::TextStyle::Body;
-        let row_height = ui.text_style_height(&text_style);
-        egui::ScrollArea::vertical()
-            .auto_shrink([false; 2])
-            .show_rows(
-                ui,
-                row_height,
-                tag_cnt.try_into()?,
-                |ui, row_range| -> Result<()> {
-                    let tags = self.sync.pool_mut().list_tags(
-                        row_range,
-                        &self.state.tag_filter,
-                        self.state.tag_source.as_deref(),
-                        self.state.tag_order,
-                    )?;
-
-                    egui::Grid::new("tag_grid")
-                        .num_columns(1)
-                        .spacing([0., 0.])
-                        .min_col_width(0.)
-                        .show(ui, |ui| {
-                            for tag in tags {
-                                let status = self.state.tag_selection.status(tag.name());
-                                if ui
-                                    .add(egui::Button::new("✔").small().selected(status.enabled()))
-                                    .on_hover_text("replace filter")
-                                    .clicked()
-                                {
-                                    self.state.tag_selection.clear();
-                                    self.state.tag_selection.enable(tag.name());
-                                }
-                                if ui
-                                    .add(egui::Button::new("+").small().selected(status.enabled()))
-                                    .on_hover_text("add filter")
-                                    .clicked()
-                                {
-                                    self.state.tag_selection.enable(tag.name());
-                                }
-                                if ui
-                                    .add(egui::Button::new(" ").small())
-                                    .on_hover_text("remove filter")
-                                    .clicked()
-                                {
-                                    self.state.tag_selection.unselect(tag.name());
-                                }
-                                // if ui
-                                //     .add(egui::Button::new("x").small().selected(status.disabled()))
-                                //     .on_hover_text("filter on negation")
-                                //     .clicked()
-                                // {
-                                //     self.state.tag_selection.disable(tag.name());
-                                // }
-                                ui.label("   ");
-                                if ui.button("⟳").on_hover_text("refresh works").clicked() {
-                                    self.sync.refresh_works_for_tag(tag.name()).ok();
-                                }
-                                ui.label("   ");
-                                let content = if let Some(work_count) = tag.presumed_work_count() {
-                                    format!(
-                                        "{} ({} of {})",
-                                        tag.name(),
-                                        tag.actual_work_count(),
-                                        work_count
-                                    )
-                                } else {
-                                    format!("{} ({})", tag.name(), tag.actual_work_count())
-                                };
-                                if status.disabled() {
-                                    ui.label(egui::RichText::new(content).strikethrough());
-                                } else if status.enabled() {
-                                    ui.label(egui::RichText::new(content).strong());
-                                } else {
-                                    ui.label(content);
-                                }
-                                ui.end_row();
-                            }
                         });
-                    Ok(())
-                },
-            )
-            .inner?;
-        Ok(())
+                }
+            });
     }
 
-    fn show_works(&mut self, ui: &mut egui::Ui) -> Result<()> {
-        let works_count: usize = self
-            .sync
-            .pool_mut()
-            .count_works(&self.state.tag_selection)?
-            .try_into()?;
-        if works_count == 0 {
-            self.state.selected_work = WorkSelection::None;
-        }
-        ui.horizontal(|ui| {
-            let mut remove = None;
-            for enabled in self.state.tag_selection.enabled() {
-                if ui
-                    .button(format!("+{enabled}"))
-                    .on_hover_text("Remove Filter")
-                    .clicked()
-                {
-                    remove = Some(enabled.to_owned());
-                }
-            }
-            if let Some(tag) = remove {
-                self.state.tag_selection.disable(&tag);
-            }
-            if ui.button("x").clicked() {
-                self.state.tag_selection.clear();
-            }
-            ui.label(format!("({works_count})"));
-            ui.add(
-                egui::Slider::new(&mut self.state.thumb_size, 64f32..=1024f32)
-                    .text("Thumbnail Size")
-                    .step_by(128.)
-                    .fixed_decimals(0)
-                    .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.3 })
-                    .show_value(true)
-                    .suffix("px"),
-            );
-        });
-        if self.state.tag_selection.is_empty() {
-            return Ok(());
-        }
+    fn show_tags(&mut self, ui: &mut egui::Ui) {
+        self.state
+            .tag_ux
+            .ui(&mut self.state.tag_selection, self.sync, ui);
+    }
 
-        let size = self.state.thumb_size;
-        let width = ui.available_width();
-        let n_wide = (width / size).floor().max(1.) as usize;
-        let n_rows = works_count.div_ceil(n_wide);
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show_rows(ui, size, n_rows, |ui, rows| -> Result<()> {
-                // Overfetch by 1x our current visible area in both directions so we can
-                // usually scroll in either direction without pause or loading spinners.
-                //
-                //  All works (ideal case shown; the actual slice may go before or after)
-                //  |--------<  [  ]  >--|
-                //              [  ] <- visible slice
-                //           |        | <- query slice
-                //           |--[  ]--| <- works slice
-                //
-                //  What if we clip off the start or end
-                //  |----------------< [ | ]
-                //                     [   ] <- visible slice
-                //                  |         | <- query slice
-                //                     [ ] <- visible slice prime
-                //                  |    | <- query slice prime
-                //                  |--[ | - works slice
-                let start_index = rows.start * n_wide;
-                let end_index = rows.end * n_wide;
-                let visible_slice = start_index..end_index;
-                let query_slice = visible_slice.start.saturating_sub(visible_slice.len())
-                    ..visible_slice.end + visible_slice.len();
-                let visible_slice = visible_slice.start.clamp(0, works_count)
-                    ..visible_slice.end.clamp(0, works_count);
-                let query_slice =
-                    query_slice.start.clamp(0, works_count)..query_slice.end.clamp(0, works_count);
-                let works_slice =
-                    visible_slice.start - query_slice.start..visible_slice.end - query_slice.start;
-
-                // Attempt to query with the query slice, but things might have been added or
-                // removed since we queried for the works_count.
-                let query_start = Instant::now();
-                let query_works = self
-                    .sync
-                    .pool_mut()
-                    .works_list(query_slice.clone(), &self.state.tag_selection)?;
-                self.state.perf.sample("Query Works", query_start.elapsed());
-
-                // Pre-scan the works slice to ask to pre-load all the images that
-                // are in our query window (Note: this extends outside the visible area
-                // to make scrolling faster).
-                let cache_start = Instant::now();
-                for work in &query_works {
-                    self.ensure_work_cached(ui.ctx(), work);
-                }
-                self.state
-                    .perf
-                    .sample("Cache Images", cache_start.elapsed());
-
-                // Re-clamp the works slice after we fetch.
-                let works_slice = works_slice.start.clamp(0, query_works.len())
-                    ..works_slice.end.clamp(0, query_works.len());
-                let mut work_offset = query_slice.start + works_slice.start;
-                let visible_works = &query_works[works_slice];
-
-                let sel_color = ui.style().visuals.selection.bg_fill;
-                ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-
-                let draw_start = Instant::now();
-                for row in visible_works.chunks(n_wide) {
-                    ui.horizontal(|ui| {
-                        for work in row {
-                            // Selection uses the selection color for the background
-                            // let is_selected = self.state.selected_work.is_selected(work.id());
-                            let is_selected = self.state.selected_work.is_selected(work_offset);
-
-                            let img = self
-                                .get_best_image(work, WorkSize::Preview)
-                                .alt_text(work.name())
-                                .show_loading_spinner(true)
-                                .maintain_aspect_ratio(true);
-
-                            let mut pad = 0.;
-                            let mut inner_margin = Margin::ZERO;
-                            if let Some(loaded_size) =
-                                img.load_and_calc_size(ui, Vec2::new(size, size))
-                            {
-                                // Wide things are already centered for some reason,
-                                // so we only need to care about tall images
-                                if loaded_size.y > loaded_size.x {
-                                    pad = (size - loaded_size.x) / 2.;
-                                    inner_margin.left = pad as i8;
-                                }
-                            }
-
-                            let btn = egui::ImageButton::new(img)
-                                .frame(false)
-                                .selected(is_selected)
-                                .sense(Sense::click());
-
-                            let mut frm = egui::Frame::default()
-                                .outer_margin(Margin::ZERO)
-                                .inner_margin(inner_margin);
-                            if is_selected {
-                                frm = frm.fill(sel_color);
-                            }
-
-                            let rsz = egui::Resize::default()
-                                .min_size(Vec2::new(size - pad, size))
-                                .max_size(Vec2::new(size - pad, size))
-                                .default_size(Vec2::new(size - pad, size))
-                                .resizable([false, false]);
-
-                            frm.show(ui, |ui| {
-                                rsz.show(ui, |ui| {
-                                    if ui.add(btn).clicked() {
-                                        self.state.selected_work = WorkSelection::new(work_offset);
-                                    }
-                                });
-                            });
-                            work_offset += 1;
-                        }
-                    });
-                }
-                self.state.perf.sample("Draw Works", draw_start.elapsed());
-                self.flush_works_lru(ui.ctx());
-                Ok(())
-            });
-
-        Ok(())
+    fn show_works(&mut self, ui: &mut egui::Ui) {
+        self.state.work_ux.gallery_ui(
+            &mut self.state.tag_selection,
+            self.sync,
+            &mut self.state.perf,
+            ui,
+        );
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
-        let start = Instant::now();
-        if let Some(offset) = self.state.selected_work.get_selected_offset()
-            && let Ok(work) = self
-                .sync
-                .pool_mut()
-                .lookup_work_at_offset(offset, &self.state.tag_selection)
-        {
-            egui::Grid::new("work_info_grid").show(ui, |ui| {
-                ui.label("Offset");
-                ui.label(format!("{offset}"));
-                ui.end_row();
-
-                ui.label("Name");
-                ui.label(work.name());
-                ui.end_row();
-
-                ui.label("Date");
-                ui.label(format!("{}", work.date()));
-                ui.end_row();
-
-                ui.label("Preview");
-                ui.label(work.preview_url());
-                ui.end_row();
-
-                ui.label("Screen");
-                ui.label(work.screen_url());
-                ui.end_row();
-
-                ui.label("Archive");
-                ui.label(work.archive_url().unwrap_or(""));
-                ui.end_row();
-
-                if let Some(path) = work.screen_path() {
-                    let path = self.data_dir.join(path);
-                    if ui.button("Path 📋").clicked() {
-                        ui.ctx().copy_text(path.display().to_string());
-                    }
-                    ui.label(path.display().to_string());
-                    ui.end_row();
-                }
-            });
-            ui.label(" ");
-            ui.heading("Tags");
-            ui.separator();
-            for tag in work.tags() {
-                if ui.button(tag).clicked() {
-                    self.state.tag_selection.enable(tag);
-                }
-            }
-        }
-        self.state.perf.sample("Work Info", start.elapsed());
+        self.state
+            .work_ux
+            .info_ui(&mut self.state.tag_selection, ui);
     }
 
-    fn render_slideshow(&mut self, ctx: &egui::Context) -> Result<()> {
+    fn render_slideshow(&mut self, ctx: &egui::Context) {
         // Bail back to the browser if we lose our selection.
-        if !self.state.selected_work.has_selection() {
+        if !self.state.work_ux.has_selection() {
             self.state.mode = UxMode::Browser;
-            return Ok(());
-        }
-        let work_offset = self
-            .state
-            .selected_work
-            .get_selected_offset()
-            .expect("no work selected in slideshow");
-        let Ok(work) = self
-            .sync
-            .pool_mut()
-            .lookup_work_at_offset(work_offset, &self.state.tag_selection)
-        else {
-            self.state.mode = UxMode::Browser;
-            return Ok(());
-        };
-        let works_count = self
-            .sync
-            .pool_mut()
-            .count_works(&self.state.tag_selection)?;
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // See https://github.com/emilk/egui/blob/0f6310c598b5be92f339c9275a00d5decd838c1b/examples/custom_plot_manipulation/src/main.rs
-            // for an example of how to do zoom and pan on a paint-like thing.
-
-            let avail = ui.available_size();
-            self.ensure_work_cached(ui.ctx(), &work);
-            let img = self
-                .get_best_image(&work, WorkSize::Screen)
-                .show_loading_spinner(false)
-                .maintain_aspect_ratio(true);
-
-            if let Some(size) = img.load_and_calc_size(ui, avail) {
-                let (mut left, mut right, mut top, mut bottom) = (0., avail.x, 0., avail.y);
-                if avail.y > size.y {
-                    top = (avail.y - size.y) / 2.;
-                    bottom = avail.y - top;
-                }
-                if avail.x > size.x {
-                    left = (avail.x - size.x) / 2.;
-                    right = avail.x - left;
-                }
-                img.paint_at(ui, Rect::from_x_y_ranges(left..=right, top..=bottom));
-            }
-            ui.label(format!("{work_offset} of {works_count}"));
-        });
-
-        Ok(())
-    }
-
-    fn get_best_image<'b>(&'a self, work: &'b Work, req_sz: WorkSize) -> egui::Image<'b> {
-        if matches!(req_sz, WorkSize::Screen)
-            && let Some(screen_path) = work.screen_path()
-        {
-            let screen_uri = format!("file://{}", self.data_dir.join(screen_path).display());
-            if self.state.works_lru.contains(&screen_uri) {
-                return egui::Image::new(screen_uri);
-            }
-            // Note: Fall through to try to load the preview image
-        }
-
-        if let Some(preview_path) = work.preview_path() {
-            let preview_uri = format!("file://{}", self.data_dir.join(preview_path).display());
-            // println!("Would show: {preview_uri}: {}", self.state.works_lru.contains(&preview_uri));
-            if self.state.works_lru.contains(&preview_uri) {
-                return egui::Image::new(preview_uri);
-            }
-            // Note: fall through to load a fallback image
-        }
-
-        egui::Image::new(include_image!("../../assets/loading-preview.png"))
-    }
-
-    fn ensure_work_cached(&mut self, ctx: &egui::Context, work: &Work) {
-        // Limit number of times we call try_load_image per frame to prevent pauses
-        if self.state.per_frame_work_upload_count > UxState::MAX_PER_FRAME_UPLOADS {
             return;
         }
-
-        // Okay, so this is too slow to run every frame, because we have to hit the file system.
-        // Even building the paths is very slow because of the SHA256.
-        //
-        // We can solve both problems at once by doing the path computation in the writer thread
-        // (we do this anyway) and communicating completion to the foreground. We can do this by
-        // storing the path in the metadata db (it is intrinsically tied to the data/ dir anyway)
-        // and touching the db_gen to get the frontend to refresh.
-        //
-        // Re-fetching from the DB is not cheap, but is cached across frames. We can also rate-
-        // limit the frequency of db-change notifications that cause us to re-load.
-        const SIZE_HINT: SizeHint = SizeHint::Size {
-            width: 256,
-            height: 256,
-            maintain_aspect_ratio: true,
-        };
-        if let Some(screen_path) = work.screen_path() {
-            let screen_uri = format!("file://{}", self.data_dir.join(screen_path).display());
-            if !self.state.works_lru.contains(&screen_uri) {
-                ctx.try_load_image(&screen_uri, SIZE_HINT).ok();
-                self.state.per_frame_work_upload_count += 1;
-                self.state.works_lru.get_or_insert(screen_uri, || 0);
-            }
-        }
-        if let Some(preview_path) = work.preview_path() {
-            let preview_uri = format!("file://{}", self.data_dir.join(preview_path).display());
-            if !self.state.works_lru.contains(&preview_uri) {
-                ctx.try_load_image(&preview_uri, SIZE_HINT).ok();
-                self.state.per_frame_work_upload_count += 1;
-                self.state
-                    .works_lru
-                    .get_or_insert(preview_uri.clone(), || 0);
-            }
-        }
-    }
-
-    fn flush_works_lru(&mut self, ctx: &egui::Context) {
-        self.state.per_frame_work_upload_count = 0;
-        while self.state.works_lru.len() > UxState::LRU_CACHE_SIZE {
-            if let Some((uri, _)) = self.state.works_lru.pop_lru() {
-                ctx.forget_image(&uri);
-            }
-        }
+        self.state.work_ux.slideshow_ui(ctx);
     }
 }
 
@@ -785,11 +294,11 @@ impl TabViewer for SyncViewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab.title.as_str() {
-            "Galleries" => self.show_galleries(ui).expect("failed to show gallery"),
-            "Tags" => self.show_tags(ui).expect("failed to show tags"),
-            "Works" => self.show_works(ui).expect("failed to show works"),
+            "Plugins" => self.show_plugins(ui),
+            "Tags" => self.show_tags(ui),
+            "Works" => self.show_works(ui),
             "Work Info" => self.show_info(ui),
-            _ => {}
+            name => panic!("Unknown tab: {name}"),
         }
     }
 }
@@ -820,7 +329,7 @@ impl Default for UxToplevel {
         let mut dock_state = DockState::new(vec![TabMetadata::new("Works")]);
         let surface = dock_state.main_surface_mut();
         let [right_node, galleries_node] =
-            surface.split_left(NodeIndex::root(), 0.2, vec![TabMetadata::new("Galleries")]);
+            surface.split_left(NodeIndex::root(), 0.2, vec![TabMetadata::new("Plugins")]);
         let [_works_node, _info_node] =
             surface.split_right(right_node, 0.8, vec![TabMetadata::new("Work Info")]);
         surface.split_below(
@@ -838,9 +347,22 @@ impl Default for UxToplevel {
 }
 
 impl UxToplevel {
+    pub fn startup(&mut self, data_dir: &Path) {
+        self.state.work_ux.startup(data_dir);
+    }
+
+    pub fn handle_updates(&mut self, updates: &[DataUpdate], db: &DbHandle) {
+        // self.state.plugin_ux.handle_updates(updates);
+        // self.state.db_ux.handle_updates(updates);
+        self.state.tag_ux.handle_updates(db, updates);
+        // self.state.work_ux.handle_updates(db, updates);
+        // self.state.errors_ux.handle_updates(updates);
+    }
+
     pub fn main(
         &mut self,
-        env: &Environment,
+        _env: &Environment,
+        db: &DbHandle,
         host: &mut PluginHost,
         ctx: &egui::Context,
     ) -> Result<()> {
@@ -854,10 +376,7 @@ impl UxToplevel {
                     .show(ctx, |ui| {
                         DockArea::new(&mut self.dock_state)
                             .style(Style::from_egui(ui.style().as_ref()))
-                            .show(
-                                ctx,
-                                &mut SyncViewer::wrap(host, &mut self.state, &env.data_dir()),
-                            );
+                            .show(ctx, &mut SyncViewer::wrap(host, &mut self.state));
                     });
 
                 self.render_preferences(ctx);
@@ -865,13 +384,13 @@ impl UxToplevel {
                 self.render_about(ctx);
             }
             UxMode::Slideshow => {
-                SyncViewer::wrap(host, &mut self.state, &env.data_dir()).render_slideshow(ctx)?;
+                SyncViewer::wrap(host, &mut self.state).render_slideshow(ctx);
             }
         }
 
         self.handle_shortcuts(ctx);
 
-        ctx.request_repaint_after(Duration::from_micros(1_000_000 / 60));
+        // ctx.request_repaint_after(Duration::from_micros(1_000_000 / 60));
 
         self.state.perf.sample("Total", frame_start.elapsed());
         Ok(())
@@ -881,7 +400,7 @@ impl UxToplevel {
         let mut focus = None;
         ctx.memory(|mem| focus = mem.focused());
 
-        const KEYS: [Key; 10] = [
+        const KEYS: [Key; 9] = [
             Key::Escape,
             Key::F1,
             Key::F3,
@@ -889,7 +408,6 @@ impl UxToplevel {
             Key::Space,
             Key::ArrowLeft,
             Key::ArrowRight,
-            Key::F,
             Key::N,
             Key::P,
         ];
@@ -916,14 +434,10 @@ impl UxToplevel {
         // Each of the modes interprets keys a bit differently, out of necessity.
         match self.state.mode {
             UxMode::Browser => {
-                if pressed.contains(&Key::F)
-                    || pressed.contains(&Key::F11)
-                    || pressed.contains(&Key::Space)
-                {
-                    if self.state.selected_work.has_selection() {
+                if pressed.contains(&Key::F11) || pressed.contains(&Key::Space) {
+                    if self.state.work_ux.has_selection() {
                         self.state.mode = UxMode::Slideshow;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
-                        return;
                     }
                 } else if pressed.contains(&Key::Escape) {
                     if self.state.show_about {
@@ -945,15 +459,6 @@ impl UxToplevel {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
                 }
             }
-        }
-
-        // Some keys work the same in any mode
-        let pressed_left = pressed.contains(&Key::ArrowLeft) || pressed.contains(&Key::P);
-        let pressed_right = pressed.contains(&Key::ArrowRight) || pressed.contains(&Key::N);
-        if pressed_left {
-            self.state.selected_work.move_to_prev();
-        } else if pressed_right {
-            self.state.selected_work.move_to_next();
         }
     }
 

@@ -1,18 +1,19 @@
 use crate::{
     shared::{
         environment::Environment,
-        plugin::{PluginCancellation, PluginRequest, PluginResponse},
-        progress::Progress,
+        plugin::{PluginCancellation, PluginRequest},
+        progress::{Progress, ProgressMonitor},
+        update::DataUpdate,
     },
     sync::{
-        db::{caching_pool::CachingPool, model::MetadataPool},
+        db::{handle::DbHandle, tag::DbTag},
         plugin::client::create_plugin_task,
     },
 };
 use anyhow::Result;
 use artchiver_sdk::PluginMetadata;
 use crossbeam::channel;
-use log::{Level, error};
+use log::{Level, error, Log};
 use std::{
     collections::VecDeque,
     fs,
@@ -43,48 +44,41 @@ fn search_for_plugins_to_load(env: &Environment) -> Result<Vec<PathBuf>> {
 #[derive(Debug)]
 pub struct PluginHost {
     plugins: Vec<PluginHandle>,
-    pool: CachingPool,
-    errors: Vec<String>,
+    db: DbHandle,
 }
 
 impl PluginHost {
-    pub fn new(pool: MetadataPool, env: &Environment) -> Result<Self> {
-        let mut errors = Vec::new();
+    pub fn new(env: &Environment, progress_mon: &ProgressMonitor, db: DbHandle) -> Result<Self> {
         let mut plugins = Vec::new();
         for source in search_for_plugins_to_load(env)?.drain(..) {
             let (tx_to_plugin, rx_from_runner) = channel::unbounded();
-            let (tx_to_runner, rx_from_plugin) = channel::unbounded();
 
-            match create_plugin_task(&source, env, pool.clone(), rx_from_runner, tx_to_runner) {
+            match create_plugin_task(
+                &source,
+                env,
+                db.clone(),
+                rx_from_runner,
+                progress_mon.monitor_channel(),
+            ) {
                 Ok((plugin_task, cancellation)) => {
                     plugins.push(PluginHandle::new(
                         source,
                         plugin_task,
                         cancellation,
                         tx_to_plugin,
-                        rx_from_plugin,
                     ));
                 }
                 Err(e) => {
                     let msg = format!("Failed to load plugin {}: {}", source.display(), e);
                     error!("{msg}");
-                    errors.push(msg);
+                    progress_mon.monitor_channel().send(DataUpdate::Log(Level::Error, msg))?;
                 }
             }
         }
         Ok(Self {
             plugins,
-            pool: CachingPool::new(pool),
-            errors,
+            db,
         })
-    }
-
-    pub fn pool(&self) -> &CachingPool {
-        &self.pool
-    }
-
-    pub fn pool_mut(&mut self) -> &mut CachingPool {
-        &mut self.pool
     }
 
     pub fn plugins(&self) -> impl Iterator<Item = &PluginHandle> {
@@ -95,66 +89,42 @@ impl PluginHost {
         self.plugins.iter_mut()
     }
 
-    pub fn errors(&self) -> impl Iterator<Item = &str> {
-        self.errors.iter().map(|v| v.as_str())
-    }
+    // pub fn errors(&self) -> impl Iterator<Item = &str> {
+    //     self.errors.iter().map(|v| v.as_str())
+    // }
+    // 
+    // pub fn remove_error(&mut self, index: usize) {
+    //     self.errors.remove(index);
+    // }
 
-    pub fn remove_error(&mut self, index: usize) {
-        self.errors.remove(index);
-    }
-
-    pub fn refresh_works_for_tag(&mut self, tag: &str) -> Result<()> {
-        let plugin_names = self.pool.list_plugins_for_tag(tag)?;
+    pub fn refresh_works_for_tag(&mut self, tag: &DbTag) -> Result<()> {
+        let plugin_names = self.db.sync_list_plugins_for_tag(tag.id())?;
         for plugin in &mut self.plugins {
             // Only ask for matching works if the tag came from a plugin.
             if plugin_names.contains(&plugin.name()) {
                 plugin
                     .task_queue
                     .push_back(PluginRequest::RefreshWorksForTag {
-                        tag: tag.to_owned(),
+                        tag: tag.name().to_owned(),
                     });
             }
         }
         Ok(())
     }
 
-    pub(crate) fn maintain_plugins(&mut self) {
-        // Receive messages from plugin
-        let mut database_changed = false;
+    pub fn handle_updates(&mut self, updates: &[DataUpdate]) {
         for plugin in &mut self.plugins {
-            while let Ok(msg) = plugin.rx_from_plugin.try_recv() {
-                match msg {
-                    PluginResponse::Progress(progress) => {
-                        plugin.progress = progress;
-                    }
-                    PluginResponse::Log(level, message) => {
-                        plugin.log_messages.push_front((level, message));
-                        while plugin.log_messages.len() > PluginHandle::MAX_MESSAGES {
-                            plugin.log_messages.pop_back();
-                        }
-                    }
-                    PluginResponse::PluginInfo(info) => {
-                        plugin.metadata = Some(info);
-                    }
-                    PluginResponse::DatabaseChanged => {
-                        database_changed = true;
-                    }
-                    PluginResponse::CompletedTask => {
-                        plugin.active_task = None;
-                    }
-                }
-            }
-            if plugin.active_task.is_none() {
-                if let Some(task) = plugin.task_queue.pop_front() {
-                    plugin.active_task = Some(task.clone());
-                    plugin.tx_to_plugin.send(task).ok();
-                }
-            }
-        }
-        if database_changed {
-            self.pool.bump_generation();
+            plugin.handle_updates(updates);
         }
     }
+
+    // pub fn maintain_plugins(&mut self) -> Vec<DataUpdate> {
+    //     let mut updates = Vec::new();
+    //     for plugin in &mut self.plugins {
+    //         plugin.maintain_plugin(&mut updates);
+    //     }
+    //     updates
+    // }
 
     pub fn cleanup_for_exit(&mut self) -> Result<()> {
         for plugin in self.plugins.drain(..) {
@@ -183,7 +153,6 @@ pub struct PluginHandle {
     task: JoinHandle<()>,
     cancellation: PluginCancellation,
     tx_to_plugin: channel::Sender<PluginRequest>,
-    rx_from_plugin: channel::Receiver<PluginResponse>,
 }
 
 impl PluginHandle {
@@ -194,7 +163,6 @@ impl PluginHandle {
         task: JoinHandle<()>,
         cancellation: PluginCancellation,
         tx_to_plugin: channel::Sender<PluginRequest>,
-        rx_from_plugin: channel::Receiver<PluginResponse>,
     ) -> Self {
         Self {
             source,
@@ -206,7 +174,6 @@ impl PluginHandle {
             task,
             cancellation,
             tx_to_plugin,
-            rx_from_plugin,
         }
     }
 
@@ -289,4 +256,49 @@ impl PluginHandle {
         })?;
         Ok(())
     }
+
+    pub fn handle_updates(&mut self, updates: &[DataUpdate]) {
+        for update in updates {
+            match update {
+                DataUpdate::PluginInfo { source, metadata} if source == &self.source => {
+                    self.metadata = Some(metadata.to_owned());
+                }
+                // TODO:
+                // DataUpdate::CompletedPluginTask
+                _ => {}
+            }
+        }
+    }
+
+    // fn maintain_plugin(&mut self, updates: &mut Vec<DataUpdate>) {
+    //     while let Ok(msg) = self.rx_from_plugin.try_recv() {
+    //         match msg {
+    //             PluginResponse::Progress(progress) => {
+    //                 self.progress = progress;
+    //             }
+    //             PluginResponse::Log(level, message) => {
+    //                 self.log_messages.push_front((level, message));
+    //                 while self.log_messages.len() > Self::MAX_MESSAGES {
+    //                     self.log_messages.pop_back();
+    //                 }
+    //             }
+    //             PluginResponse::PluginInfo(info) => {
+    //                 self.metadata = Some(info);
+    //             }
+    //             PluginResponse::TagsRefreshed => {
+    //                 // Tag updates are rare, so we can fall back to a full refresh here.
+    //                 updates.push(DataUpdate::TagsWereUpdated);
+    //             }
+    //             PluginResponse::CompletedTask => {
+    //                 self.active_task = None;
+    //             }
+    //         }
+    //     }
+    //     if self.active_task.is_none() {
+    //         if let Some(task) = self.task_queue.pop_front() {
+    //             self.active_task = Some(task.clone());
+    //             self.tx_to_plugin.send(task).ok();
+    //         }
+    //     }
+    // }
 }

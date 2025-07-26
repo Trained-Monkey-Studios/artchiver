@@ -1,3 +1,4 @@
+use crate::sync::db::work::DbWork;
 use itertools::Itertools as _;
 use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,11 @@ pub struct TagSet {
 }
 
 impl TagSet {
+    pub fn matches(&self, work: &DbWork) -> bool {
+        work.tags().all(|t| self.enabled.contains(t))
+            && !work.tags().any(|t| self.disabled.contains(t))
+    }
+
     pub fn status(&self, tag: &str) -> TagStatus {
         if self.enabled.contains(tag) {
             assert!(!self.disabled.contains(tag), "tag in both sets");
@@ -73,6 +79,29 @@ impl TagSet {
 
     pub fn enabled_count(&self) -> usize {
         self.enabled.len()
+    }
+
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        let mut remove = None;
+        for enabled in self.enabled() {
+            if ui
+                .button(format!("+{enabled}"))
+                .on_hover_text("Remove Filter")
+                .clicked()
+            {
+                remove = Some(enabled.to_owned());
+            }
+        }
+        if let Some(tag) = remove {
+            self.unselect(&tag);
+            changed = true;
+        }
+        if ui.button("x").clicked() {
+            self.clear();
+            changed = true;
+        }
+        changed
     }
 }
 

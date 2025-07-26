@@ -4,3 +4,4 @@ pub mod plugin;
 pub mod progress;
 pub mod tag;
 pub mod throttle;
+pub mod update;

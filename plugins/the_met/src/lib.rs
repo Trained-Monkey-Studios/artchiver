@@ -92,7 +92,7 @@ fn get_record_tags(record: &csv::StringRecord) -> impl Iterator<Item = (&str, &s
 }
 
 #[plugin_fn]
-pub fn list_tags() -> FnResult<Json<Vec<TagInfo>>> {
+pub fn list_tags() -> FnResult<Json<Vec<Tag>>> {
     Progress::spinner()?;
     let mut all_names: HashMap<String, usize> = HashMap::new();
     let mut wiki_map: HashMap<String, String> = HashMap::new();
@@ -115,14 +115,14 @@ pub fn list_tags() -> FnResult<Json<Vec<TagInfo>>> {
     Ok(all_names
         .drain()
         .map(|(tag, count)| {
-            TagInfo::new(
+            Tag::new(
                 &tag,
                 TagKind::default(),
                 Some(count as u64),
                 wiki_map.get(&tag).cloned(),
             )
         })
-        .collect::<Vec<TagInfo>>()
+        .collect::<Vec<Tag>>()
         .into())
 }
 
@@ -162,7 +162,7 @@ struct Measurement {
 
 #[allow(non_snake_case, unused)]
 #[derive(Debug, Deserialize)]
-struct Tag {
+struct MetTag {
     term: String,
     AAT_URL: Option<String>,
     Wikidata_URL: Option<String>,
@@ -224,7 +224,7 @@ struct ObjectInfo {
     metadataDate: String,
     repository: String,
     objectURL: String,
-    tags: Vec<Tag>,
+    tags: Vec<MetTag>,
     objectWikidata_URL: String,
     isTimelineWork: bool,
     GalleryNumber: String,
