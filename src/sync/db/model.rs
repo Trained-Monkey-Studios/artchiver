@@ -1,21 +1,18 @@
-use crate::shared::{environment::Environment, progress::ProgressSender, tag::TagSet};
-use crate::sync::db::work::DbWork;
-use anyhow::{Result, bail, ensure};
-use artchiver_sdk::Work;
+use crate::shared::tag::TagSet;
+use anyhow::Result;
 use itertools::Itertools as _;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, types::Value};
+use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt,
-    ops::Range,
     rc::Rc,
     time::{Duration, Instant},
 };
 
-pub const MIGRATIONS: [&str; 17] = [
+pub const MIGRATIONS: [&str; 18] = [
     // Migrations
     r#"CREATE TABLE migrations (
         id INTEGER PRIMARY KEY,
@@ -58,6 +55,7 @@ pub const MIGRATIONS: [&str; 17] = [
         archive_path TEXT
     );"#,
     // TODO: FOREIGN KEY(artist_id) REFERENCES artists(id)
+    r#"CREATE UNIQUE INDEX work_screen_url_idx ON works(screen_url);"#,
     r#"CREATE INDEX work_name_idx ON works(name);"#,
     r#"CREATE INDEX work_date_idx ON works(date);"#,
     r#"CREATE INDEX work_id_date_idx ON works(id, date);"#,
@@ -134,19 +132,7 @@ impl OrderDir {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct DbPlugin {
-    id: i64,
-    name: String,
-}
-
-impl DbPlugin {
-    pub fn new(id: i64, name: String) -> Self {
-        Self { id, name }
-    }
-}
-
-fn string_to_rarray(v: &[String]) -> Rc<Vec<Value>> {
+pub fn string_to_rarray(v: &[String]) -> Rc<Vec<Value>> {
     Rc::new(v.iter().cloned().map(Value::from).collect())
 }
 
@@ -157,216 +143,108 @@ pub struct MetadataPool {
 }
 
 impl MetadataPool {
-    pub fn connect_or_create(env: &Environment) -> Result<Self> {
-        info!(
-            "Opening Metadata DB at {}",
-            env.metadata_file_path().display()
-        );
-        let manager = SqliteConnectionManager::file(env.metadata_file_path())
-            .with_init(|conn| rusqlite::vtab::array::load_module(conn));
-        let pool = r2d2::Pool::builder().build(manager)?;
-        let conn = pool.get()?;
-        let params = [("journal_mode", "WAL", "wal")];
-        for (name, value, expect) in params {
-            info!("Configuring DB: {name} = {value}");
-            let result: String =
-                conn.query_one(&format!("PRAGMA {name} = {value};"), [], |row| row.get(0))?;
-            assert_eq!(result, expect, "failed to configure database");
-        }
-        let params = [
-            ("journal_size_limit", (64 * 1024 * 1024).to_string()),
-            ("mmap_size", (1024 * 1024 * 1024).to_string()),
-            ("busy_timeout", "5000".into()),
-        ];
-        for (name, value) in params {
-            info!("Configuring DB: {name} = {value}");
-            let _: i64 =
-                conn.query_one(&format!("PRAGMA {name} = {value};"), [], |row| row.get(0))?;
-        }
-        let params = [("synchronous", "NORMAL"), ("cache_size", "2000")];
-        for (name, value) in params {
-            info!("Configuring DB: {name} = {value}");
-            conn.execute(&format!("PRAGMA {name} = {value};"), [])?;
-        }
-
-        // List all migrations that we've already run.
-        let finished_migrations = {
-            match conn.prepare("SELECT ordinal FROM migrations") {
-                Ok(mut stmt) => match stmt.query_map([], |row| row.get(0)) {
-                    Ok(q) => q.flatten().collect::<Vec<i64>>(),
-                    Err(_) => vec![],
-                },
-                Err(_) => vec![],
-            }
-        };
-
-        // Execute and record all migration statements
-        for (ordinal, migration) in MIGRATIONS.iter().enumerate() {
-            if !finished_migrations.contains(&(ordinal as i64)) {
-                conn.execute(migration, ())?;
-                conn.execute("INSERT INTO migrations (ordinal) VALUES (?)", [ordinal])?;
-            }
-        }
-
-        Ok(Self { pool })
-    }
-
     pub fn get(&self) -> Result<PooledConnection<SqliteConnectionManager>> {
         Ok(self.pool.get()?)
     }
 
-    // CONFIGURATION ///////////////////////////////////////
-    pub fn load_configurations(&self, plugin_id: i64) -> Result<Vec<(String, String)>> {
-        let conn = self.pool.get()?;
-        Ok(conn
-            .prepare("SELECT key, value FROM plugin_configurations WHERE plugin_id = ?")?
-            .query_map(params![plugin_id], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .flatten()
-            .collect())
-    }
-
-    pub fn save_configurations(&self, plugin_id: i64, configs: &[(String, String)]) -> Result<()> {
-        let conn = self.pool.get()?;
-        conn.execute("BEGIN TRANSACTION", ())?;
-        for (k, v) in configs {
-            conn.execute(
-                r#"INSERT INTO plugin_configurations (plugin_id, key, value)
-                        VALUES (?, ?, ?)
-                        ON CONFLICT (plugin_id, key)
-                        DO UPDATE SET value=?"#,
-                params![plugin_id, k, v, v],
-            )?;
-        }
-        conn.execute("COMMIT TRANSACTION", ())?;
-        Ok(())
-    }
-
-    // PLUGINS ///////////////////////////////////////
-    pub fn upsert_plugin(&self, plugin_name: &str) -> Result<i64> {
-        let conn = self.pool.get()?;
-        let row_cnt = conn.execute(
-            "INSERT OR IGNORE INTO plugins (name) VALUES (?)",
-            params![plugin_name],
-        )?;
-        let plugin_id = if row_cnt > 0 {
-            conn.last_insert_rowid()
-        } else {
-            conn.query_row(
-                "SELECT id FROM plugins WHERE name = ?",
-                params![plugin_name],
-                |row| row.get(0),
-            )?
-        };
-        Ok(plugin_id)
-    }
-
-    pub fn list_plugins(&self) -> Result<Vec<DbPlugin>> {
-        let conn = self.pool.get()?;
-        Ok(conn
-            .prepare("SELECT id, name FROM plugins;")?
-            .query_map((), |row| Ok(DbPlugin::new(row.get(0)?, row.get(1)?)))?
-            .flatten()
-            .collect())
-    }
-
     // WORKS ///////////////////////////////////////
-    pub fn upsert_works(
-        &mut self,
-        works: &mut [Work],
-        progress: &mut ProgressSender,
-    ) -> Result<()> {
-        let conn = self.pool.get()?;
-        let mut insert_work_stmt = conn.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")?;
-        let mut select_tag_ids_from_names =
-            conn.prepare("SELECT id FROM tags WHERE name IN rarray(?)")?;
-        let mut insert_work_tag_stmt =
-            conn.prepare("INSERT OR IGNORE INTO work_tags (tag_id, work_id) VALUES (?, ?)")?;
-        let mut select_work_id_stmt = conn.prepare("SELECT id FROM works WHERE name = ?")?;
+    // pub fn upsert_works(
+    //     &mut self,
+    //     works: &mut [Work],
+    //     progress: &mut ProgressSender,
+    // ) -> Result<()> {
+    //     let conn = self.pool.get()?;
+    //     let mut insert_work_stmt = conn.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")?;
+    //     let mut select_tag_ids_from_names =
+    //         conn.prepare("SELECT id FROM tags WHERE name IN rarray(?)")?;
+    //     let mut insert_work_tag_stmt =
+    //         conn.prepare("INSERT OR IGNORE INTO work_tags (tag_id, work_id) VALUES (?, ?)")?;
+    //     let mut select_work_id_stmt = conn.prepare("SELECT id FROM works WHERE name = ?")?;
+    //
+    //     let total_count = works.len();
+    //     let mut current_pos = 0;
+    //     progress.info(format!("Writing {total_count} works to the database..."));
+    //
+    //     for chunk in works.chunks_mut(1_000) {
+    //         progress.trace(format!("db->upsert_works chunk of {}", chunk.len()));
+    //         conn.execute("BEGIN TRANSACTION", ())?;
+    //         for work in chunk.iter_mut() {
+    //             let work_id = if let Ok(work_id) = insert_work_stmt.query_one(
+    //                 params![
+    //                     work.name(),
+    //                     work.artist_id(),
+    //                     work.date(),
+    //                     work.preview_url(),
+    //                     work.screen_url(),
+    //                     work.archive_url()
+    //                 ],
+    //                 |row| row.get::<usize, i64>(0),
+    //             ) {
+    //                 work_id
+    //             } else if let Ok(work_id) =
+    //                 select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))
+    //             {
+    //                 work_id
+    //             } else {
+    //                 progress.warn(format!(
+    //                     "Detected duplicate URL in work {}, skipping",
+    //                     work.name()
+    //                 ));
+    //                 continue;
+    //             };
+    //             work.set_id(work_id);
+    //             let tag_ids: Vec<i64> = select_tag_ids_from_names
+    //                 .query_map([string_to_rarray(work.tags())], |row| row.get(0))?
+    //                 .flatten()
+    //                 .collect();
+    //             for tag_id in &tag_ids {
+    //                 insert_work_tag_stmt.execute(params![*tag_id, work_id])?;
+    //             }
+    //         }
+    //         conn.execute("COMMIT TRANSACTION", ())?;
+    //
+    //         current_pos += chunk.len();
+    //         progress.set_percent(current_pos, total_count);
+    //     }
+    //
+    //     Ok(())
+    // }
 
-        let total_count = works.len();
-        let mut current_pos = 0;
-        progress.info(format!("Writing {total_count} works to the database..."));
-
-        for chunk in works.chunks_mut(1_000) {
-            progress.trace(format!("db->upsert_works chunk of {}", chunk.len()));
-            conn.execute("BEGIN TRANSACTION", ())?;
-            for work in chunk.iter_mut() {
-                let work_id = if let Ok(work_id) = insert_work_stmt.query_one(
-                    params![
-                        work.name(),
-                        work.artist_id(),
-                        work.date(),
-                        work.preview_url(),
-                        work.screen_url(),
-                        work.archive_url()
-                    ],
-                    |row| row.get::<usize, i64>(0),
-                ) {
-                    work_id
-                } else if let Ok(work_id) =
-                    select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))
-                {
-                    work_id
-                } else {
-                    progress.warn(format!(
-                        "Detected duplicate URL in work {}, skipping",
-                        work.name()
-                    ));
-                    continue;
-                };
-                work.set_id(work_id);
-                let tag_ids: Vec<i64> = select_tag_ids_from_names
-                    .query_map([string_to_rarray(work.tags())], |row| row.get(0))?
-                    .flatten()
-                    .collect();
-                for tag_id in &tag_ids {
-                    insert_work_tag_stmt.execute(params![*tag_id, work_id])?;
-                }
-            }
-            conn.execute("COMMIT TRANSACTION", ())?;
-
-            current_pos += chunk.len();
-            progress.set_percent(current_pos, total_count);
-        }
-
-        Ok(())
-    }
-
-    pub fn update_work_preview_path(&self, work_id: i64, path: &str) -> Result<()> {
-        assert_ne!(work_id, 0, "uninitialized preview work_id");
-        assert!(!path.is_empty(), "attemp to cache empty path");
-        let conn = self.pool.get()?;
-        let row_cnt = conn.execute(
-            "UPDATE works SET preview_path = ? WHERE id = ?",
-            params![path, work_id],
-        )?;
-        ensure!(row_cnt == 1);
-        Ok(())
-    }
-
-    pub fn update_work_screen_path(&self, work_id: i64, path: &str) -> Result<()> {
-        assert_ne!(work_id, 0, "uninitialized screen work_id");
-        assert!(!path.is_empty(), "attemp to cache empty path");
-        let conn = self.pool.get()?;
-        let row_cnt = conn.execute(
-            "UPDATE works SET screen_path = ? WHERE id = ?",
-            params![path, work_id],
-        )?;
-        ensure!(row_cnt == 1);
-        Ok(())
-    }
-
-    pub fn update_work_archive_path(&self, work_id: i64, path: &str) -> Result<()> {
-        assert_ne!(work_id, 0, "uninitialized archive work_id");
-        assert!(!path.is_empty(), "attemp to cache empty path");
-        let conn = self.pool.get()?;
-        let row_cnt = conn.execute(
-            "UPDATE works SET archive_path = ? WHERE id = ?",
-            params![path, work_id],
-        )?;
-        ensure!(row_cnt == 1);
-        Ok(())
-    }
+    // pub fn update_work_preview_path(&self, work_id: i64, path: &str) -> Result<()> {
+    //     assert_ne!(work_id, 0, "uninitialized preview work_id");
+    //     assert!(!path.is_empty(), "attemp to cache empty path");
+    //     let conn = self.pool.get()?;
+    //     let row_cnt = conn.execute(
+    //         "UPDATE works SET preview_path = ? WHERE id = ?",
+    //         params![path, work_id],
+    //     )?;
+    //     ensure!(row_cnt == 1);
+    //     Ok(())
+    // }
+    //
+    // pub fn update_work_screen_path(&self, work_id: i64, path: &str) -> Result<()> {
+    //     assert_ne!(work_id, 0, "uninitialized screen work_id");
+    //     assert!(!path.is_empty(), "attemp to cache empty path");
+    //     let conn = self.pool.get()?;
+    //     let row_cnt = conn.execute(
+    //         "UPDATE works SET screen_path = ? WHERE id = ?",
+    //         params![path, work_id],
+    //     )?;
+    //     ensure!(row_cnt == 1);
+    //     Ok(())
+    // }
+    //
+    // pub fn update_work_archive_path(&self, work_id: i64, path: &str) -> Result<()> {
+    //     assert_ne!(work_id, 0, "uninitialized archive work_id");
+    //     assert!(!path.is_empty(), "attemp to cache empty path");
+    //     let conn = self.pool.get()?;
+    //     let row_cnt = conn.execute(
+    //         "UPDATE works SET archive_path = ? WHERE id = ?",
+    //         params![path, work_id],
+    //     )?;
+    //     ensure!(row_cnt == 1);
+    //     Ok(())
+    // }
 
     fn report_slow_query(start: Instant, name: &str, query: &str) {
         let elapsed = start.elapsed();
@@ -399,103 +277,103 @@ impl MetadataPool {
         )
     }
 
-    pub fn count_works(&self, tag_set: &TagSet) -> Result<i64> {
-        let start = Instant::now();
+    // pub fn count_works(&self, tag_set: &TagSet) -> Result<i64> {
+    //     let start = Instant::now();
+    //
+    //     if tag_set.enabled_count() == 0 {
+    //         return Ok(0);
+    //     }
+    //     let conn = self.pool.get()?;
+    //     let sub_query = Self::make_works_query(tag_set, "", "");
+    //     let query = format!("SELECT COUNT(*) FROM ({sub_query});");
+    //     let count: i64 = conn.query_one(&query, [], |row| row.get(0))?;
+    //
+    //     Self::report_slow_query(start, "count_works", &query);
+    //     Ok(count)
+    // }
 
-        if tag_set.enabled_count() == 0 {
-            return Ok(0);
-        }
-        let conn = self.pool.get()?;
-        let sub_query = Self::make_works_query(tag_set, "", "");
-        let query = format!("SELECT COUNT(*) FROM ({sub_query});");
-        let count: i64 = conn.query_one(&query, [], |row| row.get(0))?;
+    // pub fn works_list(&self, range: Range<usize>, tag_set: &TagSet) -> Result<Vec<Work>> {
+    //     if tag_set.is_empty() {
+    //         return Ok(vec![]);
+    //     }
+    //     let start = Instant::now();
+    //
+    //     let conn = self.pool.get()?;
+    //     let query = Self::make_works_query(tag_set, "ORDER BY works.date ASC", "LIMIT ? OFFSET ?");
+    //     let mut stmt = conn.prepare(&query)?;
+    //     let works = stmt
+    //         .query_map(params![range.end - range.start, range.start], |row| {
+    //             let work = Work::new(
+    //                 row.get::<usize, String>(1)?,
+    //                 row.get(2)?,
+    //                 row.get(3)?,
+    //                 row.get(4)?,
+    //                 row.get(5)?,
+    //                 None,
+    //                 vec![],
+    //             )
+    //             .with_id(row.get(0)?)
+    //             .with_preview_path(row.get::<usize, String>(7).ok())
+    //             .with_screen_path(row.get::<usize, String>(8).ok())
+    //             .with_archive_path(row.get::<usize, String>(9).ok());
+    //             Ok(work)
+    //         })?
+    //         .flatten()
+    //         .collect();
+    //
+    //     Self::report_slow_query(start, "list_works", &query);
+    //     Ok(works)
+    // }
 
-        Self::report_slow_query(start, "count_works", &query);
-        Ok(count)
-    }
+    // pub fn lookup_work_at_offset(&self, offset: usize, tag_set: &TagSet) -> Result<Work> {
+    //     if tag_set.is_empty() {
+    //         bail!("No enabled tags");
+    //     }
+    //     let start = Instant::now();
+    //
+    //     let conn = self.pool.get()?;
+    //     let query = Self::make_works_query(tag_set, "ORDER BY works.date ASC", "LIMIT 1 OFFSET ?");
+    //     let mut stmt = conn.prepare(&query)?;
+    //     let work: Work = stmt.query_one(params![offset,], |row| {
+    //         Ok(Work::new(
+    //             row.get::<usize, String>(1)?,
+    //             row.get(2)?,
+    //             row.get(3)?,
+    //             row.get(4)?,
+    //             row.get(5)?,
+    //             None,
+    //             vec![],
+    //         )
+    //         .with_id(row.get(0)?)
+    //         .with_preview_path(row.get::<usize, String>(7).ok())
+    //         .with_screen_path(row.get::<usize, String>(8).ok())
+    //         .with_archive_path(row.get::<usize, String>(9).ok()))
+    //     })?;
+    //     let tags = conn.prepare(
+    //         r#"SELECT tags.name FROM tags LEFT JOIN work_tags ON work_tags.tag_id = tags.id WHERE work_tags.work_id = ?"#)?
+    //         .query_map([work.id()], |row| row.get(0))?.flatten().collect();
+    //
+    //     Self::report_slow_query(start, "lookup_work_at_offset", &query);
+    //     Ok(work.with_tags(tags))
+    // }
 
-    pub fn works_list(&self, range: Range<usize>, tag_set: &TagSet) -> Result<Vec<Work>> {
-        if tag_set.is_empty() {
-            return Ok(vec![]);
-        }
-        let start = Instant::now();
-
-        let conn = self.pool.get()?;
-        let query = Self::make_works_query(tag_set, "ORDER BY works.date ASC", "LIMIT ? OFFSET ?");
-        let mut stmt = conn.prepare(&query)?;
-        let works = stmt
-            .query_map(params![range.end - range.start, range.start], |row| {
-                let work = Work::new(
-                    row.get::<usize, String>(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    None,
-                    vec![],
-                )
-                .with_id(row.get(0)?)
-                .with_preview_path(row.get::<usize, String>(7).ok())
-                .with_screen_path(row.get::<usize, String>(8).ok())
-                .with_archive_path(row.get::<usize, String>(9).ok());
-                Ok(work)
-            })?
-            .flatten()
-            .collect();
-
-        Self::report_slow_query(start, "list_works", &query);
-        Ok(works)
-    }
-
-    pub fn lookup_work_at_offset(&self, offset: usize, tag_set: &TagSet) -> Result<Work> {
-        if tag_set.is_empty() {
-            bail!("No enabled tags");
-        }
-        let start = Instant::now();
-
-        let conn = self.pool.get()?;
-        let query = Self::make_works_query(tag_set, "ORDER BY works.date ASC", "LIMIT 1 OFFSET ?");
-        let mut stmt = conn.prepare(&query)?;
-        let work: Work = stmt.query_one(params![offset,], |row| {
-            Ok(Work::new(
-                row.get::<usize, String>(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                None,
-                vec![],
-            )
-            .with_id(row.get(0)?)
-            .with_preview_path(row.get::<usize, String>(7).ok())
-            .with_screen_path(row.get::<usize, String>(8).ok())
-            .with_archive_path(row.get::<usize, String>(9).ok()))
-        })?;
-        let tags = conn.prepare(
-            r#"SELECT tags.name FROM tags LEFT JOIN work_tags ON work_tags.tag_id = tags.id WHERE work_tags.work_id = ?"#)?
-            .query_map([work.id()], |row| row.get(0))?.flatten().collect();
-
-        Self::report_slow_query(start, "lookup_work_at_offset", &query);
-        Ok(work.with_tags(tags))
-    }
-
-    pub fn list_works_with_any_tags(&self, tags: &[String]) -> Result<Vec<DbWork>> {
-        if tags.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let conn = self.get()?;
-        // If we decide we *have* to apply AND up front, it looks like this.
-        // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
-        let query = r#"SELECT works.* FROM works
-            INNER JOIN work_tags ON work_tags.work_id = works.id
-            INNER JOIN tags ON work_tags.tag_id = tags.id
-            WHERE tags.name IN rarray(?)"#;
-        // dbg!(query.replace("\n            ", " "));
-        let mut stmt = conn.prepare(query)?;
-        Ok(stmt
-            .query_map([string_to_rarray(tags)], DbWork::from_row)?
-            .flatten()
-            .collect())
-    }
+    // pub fn list_works_with_any_tags(&self, tags: &[String]) -> Result<Vec<DbWork>> {
+    //     if tags.is_empty() {
+    //         return Ok(Vec::new());
+    //     }
+    //
+    //     let conn = self.get()?;
+    //     // If we decide we *have* to apply AND up front, it looks like this.
+    //     // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
+    //     let query = r#"SELECT works.* FROM works
+    //         INNER JOIN work_tags ON work_tags.work_id = works.id
+    //         INNER JOIN tags ON work_tags.tag_id = tags.id
+    //         WHERE tags.name IN rarray(?)"#;
+    //     // dbg!(query.replace("\n            ", " "));
+    //     let mut stmt = conn.prepare(query)?;
+    //     Ok(stmt
+    //         .query_map([string_to_rarray(tags)], DbWork::from_row)?
+    //         .flatten()
+    //         .collect())
+    // }
 }

@@ -77,6 +77,11 @@ pub struct UxTag {
 }
 
 impl UxTag {
+    pub fn startup(&mut self, db_handle: &DbHandle) {
+        // Reload tags from DB at startup so we don't have to put them in the app state.
+        db_handle.get_tags();
+    }
+
     pub fn handle_updates(&mut self, db: &DbHandle, updates: &[DataUpdate]) {
         for update in updates {
             match update {
@@ -104,7 +109,7 @@ impl UxTag {
                     }
                     self.reproject_tags();
                 }
-                DataUpdate::TagsWereUpdated => {
+                DataUpdate::TagsWereRefreshed => {
                     self.tag_all = None;
                     self.tag_filtered = vec![];
                     db.get_tags();
@@ -183,7 +188,7 @@ impl UxTag {
             self.order.ui(ui);
         });
 
-        let all_tags = self.tag_all.as_ref().unwrap();
+        let all_tags = self.tag_all.as_ref().expect("no tags after check");
         let text_style = egui::TextStyle::Body;
         let row_height = ui.text_style_height(&text_style);
         egui::ScrollArea::vertical()

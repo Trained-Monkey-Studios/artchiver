@@ -1,32 +1,41 @@
-use crate::shared::progress::ProgressMonitor;
-use crate::shared::update::DataUpdate;
 use crate::{
-    shared::environment::Environment,
+    shared::{environment::Environment, progress::ProgressMonitor, update::DataUpdate},
     sync::db::{
-        tag::{DbTag, list_all_tags},
+        plugin::{DbPlugin, PluginId},
+        tag::list_all_tags,
+        work::list_works_with_any_tags,
         writer::DbBgWriter,
     },
 };
 use anyhow::Result;
 use artchiver_sdk::{Tag, Work};
-use crossbeam::channel::{self, Receiver, Sender};
+use crossbeam::channel::{self, Sender};
 use log::info;
-use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
-use std::collections::HashSet;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     thread::{JoinHandle, spawn},
 };
+use crate::shared::progress::{HostUpdateSender, LogSender, UpdateSource};
 
 pub enum DbWriterRequest {
-    UpsertTags { plugin_id: i64, tags: Vec<Tag> },
-    UpsertWorks { works: Vec<Work> },
-    SetWorkPreviewPath { work_id: i64, path: String },
-    SetWorkScreenPath { work_id: i64, path: String },
-    SetWorkArchivePath { work_id: i64, path: String },
-    Exit,
+    UpsertTags {
+        plugin_id: PluginId,
+        tags: Vec<Tag>,
+    },
+    UpsertWorks {
+        plugin_id: PluginId,
+        for_tag: String,
+        works: Vec<Work>,
+    },
+    SetWorkDownloadPaths {
+        screen_url: String,
+        preview_path: String,
+        screen_path: String,
+        archive_path: Option<String>,
+    },
+    Shutdown,
 }
 
 #[derive(Clone, Debug)]
@@ -34,7 +43,6 @@ pub struct DbHandle {
     pool: r2d2::Pool<SqliteConnectionManager>,
     tx_to_app: Sender<DataUpdate>,
     tx_to_writer: Sender<DbWriterRequest>,
-    // rx_app_from_threads: Receiver<DbResponse>,
 }
 
 pub struct DbThreads {
@@ -59,6 +67,7 @@ pub fn connect_or_create(
         .with_init(|conn| rusqlite::vtab::array::load_module(conn));
     let pool = r2d2::Pool::builder().build(manager)?;
     let conn = pool.get()?;
+    // FIXME: use library intrinsics to set these rather than `execute`
     let params = [("journal_mode", "WAL", "wal")];
     for (name, value, expect) in params {
         info!("Configuring DB: {name} = {value}");
@@ -110,52 +119,49 @@ pub fn connect_or_create(
     let db_threads = DbThreads {
         writer_handle: spawn(move || if let Err(e) = writer.main() {}),
     };
-    
+
     Ok((db_handle, db_threads))
 }
 
 impl DbHandle {
-    // pub fn maintain_threads(&self) -> Vec<DataUpdate> {
-    //     let mut out = Vec::new();
-    //     while let Ok(msg) = self.rx_app_from_threads.try_recv() {
-    //         out.push(match msg {
-    //             DbResponse::InitialTags(tags) => DataUpdate::InitialTags(tags),
-    //             DbResponse::TagsLocalCounts(counts) => DataUpdate::TagsLocalCounts(counts),
-    //             DbResponse::TagsNetworkCounts(counts) => DataUpdate::TagsNetworkCounts(counts),
-    //         });
-    //     }
-    //     out
-    // }
     pub fn handle_updates(&mut self, _updates: &[DataUpdate]) {}
 
+    pub fn send_exit_request(&self) {
+        self.tx_to_writer
+            .send(DbWriterRequest::Shutdown)
+            .expect("writer send died at exit");
+    }
+
     // WRITE SIDE ////////////////////////////////////
-    pub fn upsert_tags(&self, plugin_id: i64, tags: Vec<Tag>) -> Result<()> {
+    pub fn upsert_tags(&self, plugin_id: PluginId, tags: Vec<Tag>) -> Result<()> {
         self.tx_to_writer
             .send(DbWriterRequest::UpsertTags { plugin_id, tags })?;
         Ok(())
     }
 
-    pub fn upsert_works(&self, works: Vec<Work>) -> Result<()> {
-        self.tx_to_writer
-            .send(DbWriterRequest::UpsertWorks { works })?;
+    pub fn upsert_works(&self, plugin_id: PluginId, tag: &str, works: Vec<Work>) -> Result<()> {
+        self.tx_to_writer.send(DbWriterRequest::UpsertWorks {
+            plugin_id,
+            for_tag: tag.to_owned(),
+            works,
+        })?;
         Ok(())
     }
 
-    pub fn set_work_preview_path(&self, work_id: i64, path: String) -> Result<()> {
+    pub fn set_work_download_paths(
+        &self,
+        screen_url: &str,
+        preview_path: String,
+        screen_path: String,
+        archive_path: Option<String>,
+    ) -> Result<()> {
         self.tx_to_writer
-            .send(DbWriterRequest::SetWorkPreviewPath { work_id, path })?;
-        Ok(())
-    }
-
-    pub fn set_work_screen_path(&self, work_id: i64, path: String) -> Result<()> {
-        self.tx_to_writer
-            .send(DbWriterRequest::SetWorkScreenPath { work_id, path })?;
-        Ok(())
-    }
-
-    pub fn set_work_archive_path(&self, work_id: i64, path: String) -> Result<()> {
-        self.tx_to_writer
-            .send(DbWriterRequest::SetWorkArchivePath { work_id, path })?;
+            .send(DbWriterRequest::SetWorkDownloadPaths {
+                screen_url: screen_url.to_owned(),
+                preview_path,
+                screen_path,
+                archive_path,
+            })?;
         Ok(())
     }
 
@@ -165,20 +171,34 @@ impl DbHandle {
         let tx_to_app = self.tx_to_app.clone();
         rayon::spawn(move || {
             let tags = list_all_tags(&conn).expect("failed to list tags");
-            let tags = tags.iter().map(|t| (t.id(), t.to_owned())).collect::<HashMap<_, _>>();
+            let tags = tags
+                .iter()
+                .map(|t| (t.id(), t.to_owned()))
+                .collect::<HashMap<_, _>>();
             tx_to_app.send(DataUpdate::InitialTags(tags)).unwrap();
         });
     }
 
-    // SYSTEM ////////////////////////////////////////
-    pub fn send_exit_request(&self) {
-        self.tx_to_writer
-            .send(DbWriterRequest::Exit)
-            .expect("writer send died at exit");
+    pub fn get_works(&self, tags: &[String]) {
+        let mut host = HostUpdateSender::wrap(UpdateSource::DbReader, self.tx_to_app.clone());
+        let mut log = LogSender::wrap(UpdateSource::DbReader, self.tx_to_app.clone());
+        log.trace(format!("Fetching works for tags: {tags:?}"));
+        let tags = tags.to_owned();
+        let conn = self.pool.get().expect("failed to get connection");
+        rayon::spawn(move || {
+            log.trace(format!("BG Task spawned to fetch works for tags: {tags:?}"));
+            let works = list_works_with_any_tags(conn, &tags).expect("failed to list tags");
+            log.trace(format!("BG Task finished collecting {} works", works.len()));
+            let works = works
+                .into_iter()
+                .map(|w| (w.id(), w))
+                .collect::<HashMap<_, _>>();
+            host.fetch_works_completed(works).expect("connection closed");
+        });
     }
 
     // PLUGINS ///////////////////////////////////////
-    pub fn sync_upsert_plugin(&self, plugin_name: &str) -> Result<i64> {
+    pub fn sync_upsert_plugin(&self, plugin_name: &str) -> Result<DbPlugin> {
         let conn = self.pool.get()?;
         let row_cnt = conn.execute(
             "INSERT OR IGNORE INTO plugins (name) VALUES (?)",
@@ -193,41 +213,39 @@ impl DbHandle {
                 |row| row.get(0),
             )?
         };
-        Ok(plugin_id)
+        let configs: Vec<(String, String)> = conn
+            .prepare("SELECT key, value FROM plugin_configurations WHERE plugin_id = ?")?
+            .query_map(params![plugin_id], |row| {
+                Ok((row.get("key")?, row.get("value")?))
+            })?
+            .flatten()
+            .collect();
+        Ok(DbPlugin::new(plugin_id, plugin_name.to_owned(), configs))
     }
 
-    pub fn sync_list_plugins_for_tag(&self, tag_id: i64) -> Result<HashSet<String>> {
+    pub fn sync_list_plugins_for_tag(&self, tag_id: i64) -> Result<HashSet<PluginId>> {
         let conn = self.pool.get()?;
-        let query = r#"SELECT DISTINCT p.name
+        let query = r#"SELECT DISTINCT p.id
             FROM plugins AS p
             INNER JOIN plugin_tags AS pt ON p.id = pt.plugin_id
             WHERE pt.tag_id = ?"#;
         Ok(conn
             .prepare(query)?
-            .query_map([tag_id], |row| row.get(0))?
+            .query_map([tag_id], |row| PluginId::from_row(row))?
             .flatten()
             .collect())
     }
 
     // CONFIGURATION ///////////////////////////////////////
-    pub fn sync_load_configurations(&self, plugin_id: i64) -> Result<Vec<(String, String)>> {
-        let conn = self.pool.get()?;
-        Ok(conn
-            .prepare("SELECT key, value FROM plugin_configurations WHERE plugin_id = ?")?
-            .query_map(params![plugin_id], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .flatten()
-            .collect())
-    }
-
     pub fn sync_save_configurations(
         &self,
-        plugin_id: i64,
+        plugin_id: PluginId,
         configs: &[(String, String)],
     ) -> Result<()> {
-        let conn = self.pool.get()?;
-        conn.execute("BEGIN TRANSACTION", ())?;
+        let mut conn = self.pool.get()?;
+        let xaction = conn.transaction()?;
         for (k, v) in configs {
-            conn.execute(
+            xaction.execute(
                 r#"INSERT INTO plugin_configurations (plugin_id, key, value)
                         VALUES (?, ?, ?)
                         ON CONFLICT (plugin_id, key)
@@ -235,7 +253,7 @@ impl DbHandle {
                 params![plugin_id, k, v, v],
             )?;
         }
-        conn.execute("COMMIT TRANSACTION", ())?;
+        xaction.commit()?;
         Ok(())
     }
 }

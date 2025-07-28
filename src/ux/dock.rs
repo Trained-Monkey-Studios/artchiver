@@ -1,24 +1,21 @@
 use crate::{
     shared::{
-        environment::Environment, performance::PerfTrack, progress::Progress, tag::TagSet,
+        environment::Environment, performance::PerfTrack, progress::UpdateSource,
         update::DataUpdate,
     },
-    sync::plugin::host::{PluginHandle, PluginHost},
-    ux::tag::UxTag,
+    sync::{
+        db::handle::DbHandle,
+        plugin::host::{PluginHandle, PluginHost},
+    },
+    ux::{db::UxDb, tag::UxTag, work::UxWork},
 };
 use anyhow::Result;
 use egui::{self, Key, Margin, Modifiers, TextWrapMode};
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
-// use egui_video::{AudioDevice, Player};
-use crate::sync::db::handle::DbHandle;
-use crate::ux::work::UxWork;
-use log::Level;
+use log::{Level, log};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashSet,
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::{collections::HashSet, path::Path, time::Instant};
+// use egui_video::{AudioDevice, Player};
 
 // Utility function to get an egui margin inset from the left.
 fn indented(px: i8) -> Margin {
@@ -89,7 +86,7 @@ impl WorkSelection {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct UxState {
     // Window and display state
     mode: UxMode,
@@ -97,10 +94,8 @@ pub struct UxState {
     show_performance: bool,
     show_about: bool,
 
-    // The main piece of shared state?
-    tag_selection: TagSet,
-
     // Sub-UX
+    db_ux: UxDb,
     tag_ux: UxTag,
     work_ux: UxWork,
 
@@ -108,29 +103,19 @@ pub struct UxState {
     perf: PerfTrack,
 }
 
-impl Default for UxState {
-    fn default() -> Self {
-        Self {
-            mode: UxMode::Browser,
-            show_preferences: false,
-            show_performance: false,
-            show_about: false,
-            tag_ux: UxTag::default(),
-            work_ux: UxWork::default(),
-            tag_selection: TagSet::default(),
-            perf: PerfTrack::default(),
-        }
-    }
-}
-
 struct SyncViewer<'a> {
     sync: &'a mut PluginHost,
     state: &'a mut UxState,
+    db_handle: &'a DbHandle,
 }
 
 impl<'a> SyncViewer<'a> {
-    fn wrap(sync: &'a mut PluginHost, state: &'a mut UxState) -> Self {
-        Self { sync, state }
+    fn wrap(sync: &'a mut PluginHost, state: &'a mut UxState, db_handle: &'a DbHandle) -> Self {
+        Self {
+            sync,
+            state,
+            db_handle,
+        }
     }
 
     fn show_plugin_details(ui: &mut egui::Ui, plugin: &mut PluginHandle) {
@@ -219,29 +204,17 @@ impl<'a> SyncViewer<'a> {
             });
     }
 
-    fn show_plugins(&mut self, ui: &mut egui::Ui)  {
+    fn show_plugins(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui|  {
+            .show(ui, |ui| {
                 for plugin in self.sync.plugins_mut() {
                     ui.horizontal(|ui| {
                         ui.heading(plugin.name());
                         if ui.button("⟳ Tags").clicked() {
                             plugin.refresh_tags();
                         }
-                        match plugin.progress() {
-                            Progress::None => {}
-                            Progress::Spinner => {
-                                ui.spinner();
-                            }
-                            Progress::Percent { current, total } => {
-                                ui.add(
-                                    egui::ProgressBar::new(*current as f32 / *total as f32)
-                                        .animate(true)
-                                        .show_percentage(),
-                                );
-                            }
-                        }
+                        plugin.progress().ui(ui);
                     });
                     egui::Frame::new()
                         .inner_margin(indented(16))
@@ -254,25 +227,30 @@ impl<'a> SyncViewer<'a> {
             });
     }
 
+    fn show_database(&self, ui: &mut egui::Ui) {
+        self.state.db_ux.ui(ui);
+    }
+
     fn show_tags(&mut self, ui: &mut egui::Ui) {
+        let start = Instant::now();
+        let mut tag_set = self.state.work_ux.tag_selection().to_owned();
+        self.state.tag_ux.ui(&mut tag_set, self.sync, ui);
         self.state
-            .tag_ux
-            .ui(&mut self.state.tag_selection, self.sync, ui);
+            .work_ux
+            .set_tag_selection(tag_set, self.db_handle);
+        self.state.perf.sample("Show Tags", start.elapsed());
     }
 
     fn show_works(&mut self, ui: &mut egui::Ui) {
-        self.state.work_ux.gallery_ui(
-            &mut self.state.tag_selection,
-            self.sync,
-            &mut self.state.perf,
-            ui,
-        );
+        let start = Instant::now();
+        self.state
+            .work_ux
+            .gallery_ui(self.sync, self.db_handle, &mut self.state.perf, ui);
+        self.state.perf.sample("Show Works", start.elapsed());
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
-        self.state
-            .work_ux
-            .info_ui(&mut self.state.tag_selection, ui);
+        self.state.work_ux.info_ui(self.db_handle, ui);
     }
 
     fn render_slideshow(&mut self, ctx: &egui::Context) {
@@ -295,6 +273,7 @@ impl TabViewer for SyncViewer<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab.title.as_str() {
             "Plugins" => self.show_plugins(ui),
+            "Data" => self.show_database(ui),
             "Tags" => self.show_tags(ui),
             "Works" => self.show_works(ui),
             "Work Info" => self.show_info(ui),
@@ -318,6 +297,7 @@ pub enum UxMode {
 pub struct UxToplevel {
     dock_state: DockState<TabMetadata>,
     state: UxState,
+    errors: Vec<String>,
     // #[serde(skip, default = "init_audio_device")]
     // audio_device: AudioDevice,
     // #[serde(skip, default)]
@@ -328,8 +308,11 @@ impl Default for UxToplevel {
     fn default() -> Self {
         let mut dock_state = DockState::new(vec![TabMetadata::new("Works")]);
         let surface = dock_state.main_surface_mut();
-        let [right_node, galleries_node] =
-            surface.split_left(NodeIndex::root(), 0.2, vec![TabMetadata::new("Plugins")]);
+        let [right_node, galleries_node] = surface.split_left(
+            NodeIndex::root(),
+            0.2,
+            vec![TabMetadata::new("Plugins"), TabMetadata::new("Data")],
+        );
         let [_works_node, _info_node] =
             surface.split_right(right_node, 0.8, vec![TabMetadata::new("Work Info")]);
         surface.split_below(
@@ -340,6 +323,7 @@ impl Default for UxToplevel {
         Self {
             dock_state,
             state: UxState::default(),
+            errors: Vec::new(),
             // audio_device: init_audio_device(),
             // video_player: None,
         }
@@ -347,16 +331,29 @@ impl Default for UxToplevel {
 }
 
 impl UxToplevel {
-    pub fn startup(&mut self, data_dir: &Path) {
-        self.state.work_ux.startup(data_dir);
+    pub fn startup(&mut self, data_dir: &Path, db_handle: &DbHandle) {
+        self.state.tag_ux.startup(db_handle);
+        self.state.work_ux.startup(data_dir, db_handle);
     }
 
     pub fn handle_updates(&mut self, updates: &[DataUpdate], db: &DbHandle) {
         // self.state.plugin_ux.handle_updates(updates);
-        // self.state.db_ux.handle_updates(updates);
+        self.state.db_ux.handle_updates(db, updates);
         self.state.tag_ux.handle_updates(db, updates);
-        // self.state.work_ux.handle_updates(db, updates);
-        // self.state.errors_ux.handle_updates(updates);
+        self.state.work_ux.handle_updates(db, updates);
+
+        // Note: we need this to live above the dock impl for clarity, so do it here.
+        for update in updates {
+            if let DataUpdate::Log {
+                source: UpdateSource::Unknown,
+                level,
+                message,
+            } = update
+            {
+                log!(*level, "{message}");
+                self.errors.push(message.to_owned());
+            }
+        }
     }
 
     pub fn main(
@@ -374,17 +371,33 @@ impl UxToplevel {
                 egui::CentralPanel::default()
                     .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(0.))
                     .show(ctx, |ui| {
+                        // Show errors above everything else
+                        let mut remove = None;
+                        for (offset, message) in self.errors.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                if ui.small_button("x").clicked() {
+                                    remove = Some(offset);
+                                }
+                                ui.label(message);
+                            });
+                        }
+                        if let Some(offset) = remove {
+                            self.errors.remove(offset);
+                        }
+
+                        // Show the main dock area
                         DockArea::new(&mut self.dock_state)
                             .style(Style::from_egui(ui.style().as_ref()))
-                            .show(ctx, &mut SyncViewer::wrap(host, &mut self.state));
+                            .show(ctx, &mut SyncViewer::wrap(host, &mut self.state, db));
                     });
 
+                // Show any windows that are open
                 self.render_preferences(ctx);
                 self.render_performance(ctx);
                 self.render_about(ctx);
             }
             UxMode::Slideshow => {
-                SyncViewer::wrap(host, &mut self.state).render_slideshow(ctx);
+                SyncViewer::wrap(host, &mut self.state, db).render_slideshow(ctx);
             }
         }
 

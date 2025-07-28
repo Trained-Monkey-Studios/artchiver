@@ -1,12 +1,7 @@
-use crate::shared::progress::ProgressMonitor;
-use crate::sync::db::handle::connect_or_create;
 use crate::{
-    shared::environment::Environment,
+    shared::{environment::Environment, progress::ProgressMonitor},
     sync::{
-        db::{
-            handle::{DbHandle, DbThreads},
-            model::MetadataPool,
-        },
+        db::handle::{DbHandle, DbThreads, connect_or_create},
         plugin::host::PluginHost,
     },
     ux::dock::UxToplevel,
@@ -42,15 +37,12 @@ impl Default for ArtchiverApp {
     fn default() -> Self {
         let pwd = std::env::current_dir().expect("failed to get working directory");
         let env = Environment::new(&pwd).expect("failed to create environment");
-        let progress_mon = ProgressMonitor::new();
+        let progress_mon = ProgressMonitor::default();
         let (db_handle, db_threads) =
             connect_or_create(&env, &progress_mon).expect("failed to connect to database");
         let host = PluginHost::new(&env, &progress_mon, db_handle.clone())
             .expect("failed to set up plugins");
         let toplevel = UxToplevel::default();
-
-        // Reload tags from DB so we don't have to put them in the app state.
-        db_handle.get_tags();
 
         Self {
             env,
@@ -75,7 +67,8 @@ impl ArtchiverApp {
         } else {
             Default::default()
         };
-        app.toplevel.startup(&app.environment().data_dir());
+        app.toplevel
+            .startup(&app.environment().data_dir(), &app.db_handle);
         app
     }
 

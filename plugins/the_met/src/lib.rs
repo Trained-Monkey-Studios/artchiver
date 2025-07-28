@@ -268,11 +268,9 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
         if !object.primaryImage.is_empty() {
             matching_works.push(Work::new(
                 object.title,
-                0,
                 Date::strptime("%Y-%m-%d", format!("{}-01-01", object.objectBeginDate))?,
                 object.primaryImageSmall.to_owned(),
                 object.primaryImage.to_owned(),
-                None,
                 object.tags.iter().map(|t| &t.term).cloned().collect(),
             ));
         }

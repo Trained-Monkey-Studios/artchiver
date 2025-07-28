@@ -1,8 +1,11 @@
-use crate::sync::db::handle::DbHandle;
 use crate::{
     shared::{performance::PerfTrack, tag::TagSet, update::DataUpdate},
     sync::{
-        db::{model::OrderDir, work::DbWork},
+        db::{
+            handle::DbHandle,
+            model::OrderDir,
+            work::{DbWork, WorkId},
+        },
         plugin::host::PluginHost,
     },
 };
@@ -71,19 +74,23 @@ impl WorkOrder {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UxWork {
-    // The cached set of works is everything selected by the tag_set.
-    selected: Option<usize>, // offset into work_filtered
+    // Offset into work_filtered.
+    selected: Option<usize>,
     thumb_size: f32,
+
+    // Filter state for the works gallery
+    tag_selection: TagSet,
 
     // Don't cache things that are too long or only last one frame
     #[serde(skip)]
     per_frame_work_upload_count: usize,
 
+    // The cached set of works is everything selected by the tag_set.
     #[serde(skip)]
-    work_matching_tag: Option<HashMap<i64, DbWork>>,
+    work_matching_tag: Option<HashMap<WorkId, DbWork>>,
 
     #[serde(skip)]
-    work_filtered: Vec<i64>,
+    work_filtered: Vec<WorkId>,
 
     #[serde(skip)]
     data_dir: PathBuf,
@@ -95,11 +102,12 @@ pub struct UxWork {
 impl Default for UxWork {
     fn default() -> Self {
         Self {
-            work_matching_tag: None,
-            work_filtered: Vec::new(),
             selected: None,
             thumb_size: 128.,
+            tag_selection: TagSet::default(),
             per_frame_work_upload_count: 0,
+            work_matching_tag: None,
+            work_filtered: Vec::new(),
             data_dir: PathBuf::new(),
             works_lru: LruCache::unbounded(),
         }
@@ -110,18 +118,50 @@ impl UxWork {
     const LRU_CACHE_SIZE: usize = 1_000;
     const MAX_PER_FRAME_UPLOADS: usize = 3;
 
-    pub fn startup(&mut self, data_dir: &Path) {
+    pub fn startup(&mut self, data_dir: &Path, db: &DbHandle) {
         self.data_dir = data_dir.to_owned();
-        // self.tags_changed(tag_set, pool)
+        db.get_works(&self.tag_selection.enabled_vec());
     }
 
-    pub fn process_updates(&mut self, db: DbHandle, updates: &[DataUpdate]) {
+    pub fn handle_updates(&mut self, db: &DbHandle, updates: &[DataUpdate]) {
         for update in updates {
             match update {
-                DataUpdate::WorksWereUpdatedForTag { tag } => {}
-                DataUpdate::WorkDownloadCompleted { id } => {}
+                DataUpdate::FetchWorksComplete { works } => {
+                    self.work_matching_tag = Some(works.to_owned());
+                    self.reproject_work();
+                }
+                DataUpdate::WorksWereUpdatedForTag { .. } => {
+                    self.tags_changed(db);
+                }
+                DataUpdate::WorkDownloadCompleted {
+                    id,
+                    preview_path,
+                    screen_path,
+                    archive_path,
+                } => {
+                    if let Some(works) = self.work_matching_tag.as_mut() {
+                        if let Some(work) = works.get_mut(id) {
+                            let preview_path = self.data_dir.join(preview_path);
+                            let screen_path = self.data_dir.join(screen_path);
+                            let archive_path = archive_path.as_ref().map(|a| self.data_dir.join(a));
+                            work.set_paths(preview_path, screen_path, archive_path);
+                            self.reproject_work();
+                        }
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    pub fn tag_selection(&self) -> &TagSet {
+        &self.tag_selection
+    }
+
+    pub fn set_tag_selection(&mut self, tag_set: TagSet, db: &DbHandle) {
+        if &tag_set != self.tag_selection() {
+            self.tag_selection = tag_set;
+            self.tags_changed(db);
         }
     }
 
@@ -129,23 +169,23 @@ impl UxWork {
         self.selected.is_some()
     }
 
-    // fn tags_changed(&mut self, tag_set: &TagSet, pool: &MetadataPool) -> Result<()> {
-    //     // FIXME: once we get the DB on a separate thread, move this out of line
-    //     self.work_matching_tag =
-    //         pool.list_works_with_any_tags(&tag_set.enabled().cloned().collect_vec())?;
-    //     self.work_matching_tag.retain(|w| tag_set.matches(w));
-    //     self.reproject_work();
-    //     Ok(())
-    // }
+    fn tags_changed(&mut self, db: &DbHandle) {
+        self.work_matching_tag = None;
+        self.work_filtered = Vec::new();
+        self.selected = None;
+        db.get_works(&self.tag_selection.enabled_vec());
+    }
 
     fn reproject_work(&mut self) {
-        // self.work_filtered = self
-        //     .work_matching_tag
-        //     .iter()
-        //     .enumerate()
-        //     .filter(|(_, work)| work.screen_path().is_some())
-        //     .map(|(idx, _)| idx)
-        //     .collect();
+        if let Some(works) = self.work_matching_tag.as_ref() {
+            self.work_filtered = works
+                .values()
+                // .filter(|work| work.screen_path().is_some())
+                .map(|work| work.id())
+                .collect();
+        } else {
+            self.work_filtered = Vec::new();
+        }
     }
 
     fn check_key_binds(&mut self, n_wide: usize, ui: &egui::Ui) {
@@ -207,72 +247,73 @@ impl UxWork {
         })
     }
 
-    pub fn info_ui(&mut self, tag_set: &mut TagSet, ui: &mut egui::Ui) {
-        /*
-        if let Some(offset) = self.selected {
-            let work = &self.work_matching_tag[self.work_filtered[offset]];
-            egui::Grid::new("work_info_grid").show(ui, |ui| {
-                ui.label("Offset");
-                ui.label(format!("{offset} of {}", self.work_filtered.len()));
-                ui.end_row();
-
-                ui.label("Name");
-                ui.label(work.name());
-                ui.end_row();
-
-                ui.label("Date");
-                ui.label(format!("{}", work.date()));
-                ui.end_row();
-
-                ui.label("Preview");
-                ui.label(work.preview_url());
-                ui.end_row();
-
-                ui.label("Screen");
-                ui.label(work.screen_url());
-                ui.end_row();
-
-                ui.label("Archive");
-                ui.label(work.archive_url().unwrap_or(""));
-                ui.end_row();
-
-                if let Some(path) = work.screen_path() {
-                    let path = self.data_dir.join(path);
-                    if ui.button("Path 📋").clicked() {
-                        ui.ctx().copy_text(path.display().to_string());
-                    }
-                    ui.label(path.display().to_string());
+    pub fn info_ui(&mut self, db: &DbHandle, ui: &mut egui::Ui) {
+        let mut changed = false;
+        if let Some(works) = self.work_matching_tag.as_ref() {
+            if let Some(offset) = self.selected {
+                let work = &works[&self.work_filtered[offset]];
+                egui::Grid::new("work_info_grid").show(ui, |ui| {
+                    ui.label("Offset");
+                    ui.label(format!("{offset} of {}", self.work_filtered.len()));
                     ui.end_row();
-                }
-            });
-            ui.label(" ");
-            ui.heading("Tags");
-            ui.separator();
-            for tag in work.tags() {
-                if ui.button(tag).clicked() {
-                    // TODO: expand controls for add, remove, etc
-                    tag_set.enable(tag);
+
+                    ui.label("Name");
+                    ui.label(work.name());
+                    ui.end_row();
+
+                    ui.label("Date");
+                    ui.label(format!("{}", work.date()));
+                    ui.end_row();
+
+                    ui.label("Preview");
+                    ui.label(work.preview_url());
+                    ui.end_row();
+
+                    ui.label("Screen");
+                    ui.label(work.screen_url());
+                    ui.end_row();
+
+                    ui.label("Archive");
+                    ui.label(work.archive_url().unwrap_or(""));
+                    ui.end_row();
+
+                    if let Some(path) = work.screen_path() {
+                        let path = self.data_dir.join(path);
+                        if ui.button("Path 📋").clicked() {
+                            ui.ctx().copy_text(path.display().to_string());
+                        }
+                        ui.label(path.display().to_string());
+                        ui.end_row();
+                    }
+                });
+                ui.label(" ");
+                ui.heading("Tags");
+                ui.separator();
+                for tag in work.tags() {
+                    if self.tag_selection.ui_for_tag(tag, ui) {
+                        changed = true;
+                    }
                 }
             }
         }
-         */
+        if changed {
+            self.tags_changed(db);
+        }
     }
 
     pub fn gallery_ui(
         &mut self,
-        tag_set: &mut TagSet,
         host: &mut PluginHost,
+        db: &DbHandle,
         perf: &mut PerfTrack,
         ui: &mut egui::Ui,
     ) {
-        /*
-        if tag_set.is_empty() {
+        if self.tag_selection.is_empty() {
             self.selected = None;
         }
         ui.horizontal(|ui| {
-            if tag_set.ui(ui) {
-                self.tags_changed(tag_set, host.pool().pool())
-                    .expect("failed to update works for tag");
+            if self.tag_selection.ui(ui) {
+                self.tags_changed(db);
             }
             ui.label(format!("({})", self.work_filtered.len()));
             ui.add(
@@ -285,7 +326,12 @@ impl UxWork {
                     .suffix("px"),
             );
         });
-        if tag_set.is_empty() {
+        if self.tag_selection.is_empty() {
+            // FIXME: special case this to show favorites or something
+            return;
+        }
+        if self.work_matching_tag.is_none() {
+            ui.spinner();
             return;
         }
 
@@ -324,7 +370,7 @@ impl UxWork {
                 // to make scrolling faster).
                 let cache_start = Instant::now();
                 for work_offset in query_slice {
-                    self.ensure_work_cached(ui.ctx(), self.work_filtered[work_offset]);
+                    self.ensure_work_cached(ui.ctx(), work_offset);
                 }
                 self.flush_works_lru(ui.ctx());
                 perf.sample("Cache Images", cache_start.elapsed());
@@ -336,7 +382,10 @@ impl UxWork {
                 for row_work_offsets in &visible_slice.chunks(n_wide) {
                     ui.horizontal(|ui| {
                         for work_offset in row_work_offsets {
-                            let work = &self.work_matching_tag[self.work_filtered[work_offset]];
+                            let work = &self
+                                .work_matching_tag
+                                .as_ref()
+                                .expect("no work after check")[&self.work_filtered[work_offset]];
 
                             // Selection uses the selection color for the background
                             // let is_selected = self.state.selected_work.is_selected(work.id());
@@ -391,11 +440,9 @@ impl UxWork {
                 }
                 perf.sample("Draw Works", draw_start.elapsed());
             });
-         */
     }
 
     pub fn slideshow_ui(&mut self, ctx: &egui::Context) {
-        /*
         let work_offset = self
             .selected
             .expect("entered slideshow without a selection");
@@ -419,31 +466,33 @@ impl UxWork {
             }
             self.flush_works_lru(ui.ctx());
 
-            let work = &self.work_matching_tag[self.work_filtered[work_offset]];
-            let img = self
-                .get_best_image(work, WorkSize::Screen)
-                .show_loading_spinner(false)
-                .maintain_aspect_ratio(true);
+            // let work = &self.work_matching_tag[self.work_filtered[work_offset]];
+            if let Some(works) = self.work_matching_tag.as_ref() {
+                if let Some(work) = works.get(&self.work_filtered[work_offset]) {
+                    let img = self
+                        .get_best_image(work, WorkSize::Screen)
+                        .show_loading_spinner(false)
+                        .maintain_aspect_ratio(true);
 
-            let avail = ui.available_size();
-            if let Some(size) = img.load_and_calc_size(ui, avail) {
-                let (mut left, mut right, mut top, mut bottom) = (0., avail.x, 0., avail.y);
-                if avail.y > size.y {
-                    top = (avail.y - size.y) / 2.;
-                    bottom = avail.y - top;
+                    let avail = ui.available_size();
+                    if let Some(size) = img.load_and_calc_size(ui, avail) {
+                        let (mut left, mut right, mut top, mut bottom) = (0., avail.x, 0., avail.y);
+                        if avail.y > size.y {
+                            top = (avail.y - size.y) / 2.;
+                            bottom = avail.y - top;
+                        }
+                        if avail.x > size.x {
+                            left = (avail.x - size.x) / 2.;
+                            right = avail.x - left;
+                        }
+                        img.paint_at(ui, Rect::from_x_y_ranges(left..=right, top..=bottom));
+                    }
                 }
-                if avail.x > size.x {
-                    left = (avail.x - size.x) / 2.;
-                    right = avail.x - left;
-                }
-                img.paint_at(ui, Rect::from_x_y_ranges(left..=right, top..=bottom));
             }
             ui.label(format!("{work_offset} of {}", self.work_filtered.len()));
         });
-         */
     }
 
-    /*
     fn get_best_image<'b>(&self, work: &'b DbWork, req_sz: WorkSize) -> egui::Image<'b> {
         if matches!(req_sz, WorkSize::Screen)
             && let Some(screen_path) = work.screen_path()
@@ -472,6 +521,11 @@ impl UxWork {
         ctx: &egui::Context,
         work_offset: usize, /* work: &DbWork*/
     ) {
+        assert!(
+            self.work_matching_tag.is_some(),
+            "ensure_cached with no work"
+        );
+
         // Limit number of times we call try_load_image per frame to prevent pauses
         if self.per_frame_work_upload_count > Self::MAX_PER_FRAME_UPLOADS {
             return;
@@ -486,8 +540,11 @@ impl UxWork {
             height: size,
             maintain_aspect_ratio: true,
         };
-        if let Some(screen_path) =
-            self.work_matching_tag[self.work_filtered[work_offset]].screen_path()
+        if let Some(screen_path) = self
+            .work_matching_tag
+            .as_ref()
+            .expect("no work after check")[&self.work_filtered[work_offset]]
+            .screen_path()
         {
             let screen_uri = format!("file://{}", self.data_dir.join(screen_path).display());
             if !self.works_lru.contains(&screen_uri) {
@@ -496,8 +553,11 @@ impl UxWork {
                 self.works_lru.get_or_insert(screen_uri, || 0);
             }
         }
-        if let Some(preview_path) =
-            self.work_matching_tag[self.work_filtered[work_offset]].preview_path()
+        if let Some(preview_path) = self
+            .work_matching_tag
+            .as_ref()
+            .expect("no work after check")[&self.work_filtered[work_offset]]
+            .preview_path()
         {
             let preview_uri = format!("file://{}", self.data_dir.join(preview_path).display());
             if !self.works_lru.contains(&preview_uri) {
@@ -516,7 +576,6 @@ impl UxWork {
             }
         }
     }
-    */
 }
 
 #[cfg(test)]

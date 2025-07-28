@@ -224,86 +224,60 @@ impl Tag {
 // API-centered [art]work item.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Work {
-    id: i64,
     name: String,
-    artist_id: i64,
     date: Date,
     preview_url: String,
     screen_url: String,
+    tags: Vec<String>,
+
+    remote_id: Option<String>,
+    artist_name: Option<String>,
     archive_url: Option<String>,
 
     preview_path: Option<PathBuf>,
     screen_path: Option<PathBuf>,
     archive_path: Option<PathBuf>,
-
-    tags: Vec<String>,
 }
 
 impl Work {
-    pub fn new<S: ToString>(
-        name: S,
-        artist_id: i64,
+    pub fn new<N: ToString, P: ToString, S: ToString>(
+        name: N,
         date: Date,
-        preview_url: S,
+        preview_url: P,
         screen_url: S,
-        archive_url: Option<S>,
         tags: Vec<String>,
     ) -> Self {
         Self {
-            id: 0,
             name: name.to_string(),
-            artist_id,
             date,
             preview_url: preview_url.to_string(),
             screen_url: screen_url.to_string(),
-            archive_url: archive_url.map(|s| s.to_string()),
+            tags,
+
+            remote_id: None,
+            artist_name: None,
+            archive_url: None,
             preview_path: None,
             screen_path: None,
             archive_path: None,
-            tags,
         }
     }
 
-    pub fn with_id(mut self, id: i64) -> Self {
-        self.id = id;
+    pub fn with_remote_id(mut self, id: impl ToString) -> Self {
+        self.remote_id = Some(id.to_string());
         self
     }
 
-    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
-        self.tags = tags;
-        self
-    }
-
-    pub fn with_preview_path(mut self, path: Option<String>) -> Self {
-        self.preview_path = path.map(|p| p.into());
-        self
-    }
-
-    pub fn with_screen_path(mut self, path: Option<String>) -> Self {
-        self.screen_path = path.map(|p| p.into());
-        self
-    }
-
-    pub fn with_archive_path(mut self, path: Option<String>) -> Self {
-        self.archive_path = path.map(|p| p.into());
-        self
-    }
-
-    pub fn set_id(&mut self, id: i64) {
-        assert_eq!(self.id, 0, "id must be uninitialized before assignment");
-        self.id = id;
-    }
-
-    pub fn id(&self) -> i64 {
-        self.id
+    pub fn remote_id(&self) -> Option<&str> {
+        self.remote_id.as_deref()
     }
 
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub fn artist_id(&self) -> i64 {
-        self.artist_id
+    pub fn artist_name(&self) -> Option<&str> {
+        self.artist_name.as_deref()
     }
 
     pub fn date(&self) -> &Date {

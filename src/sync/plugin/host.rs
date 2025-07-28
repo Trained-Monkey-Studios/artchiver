@@ -2,18 +2,22 @@ use crate::{
     shared::{
         environment::Environment,
         plugin::{PluginCancellation, PluginRequest},
-        progress::{Progress, ProgressMonitor},
+        progress::{Progress, ProgressMonitor, UpdateSource},
         update::DataUpdate,
     },
     sync::{
-        db::{handle::DbHandle, tag::DbTag},
+        db::{
+            handle::DbHandle,
+            plugin::{DbPlugin, PluginId},
+            tag::DbTag,
+        },
         plugin::client::create_plugin_task,
     },
 };
 use anyhow::Result;
 use artchiver_sdk::PluginMetadata;
 use crossbeam::channel;
-use log::{Level, error, Log};
+use log::{Level, error};
 use std::{
     collections::VecDeque,
     fs,
@@ -71,14 +75,15 @@ impl PluginHost {
                 Err(e) => {
                     let msg = format!("Failed to load plugin {}: {}", source.display(), e);
                     error!("{msg}");
-                    progress_mon.monitor_channel().send(DataUpdate::Log(Level::Error, msg))?;
+                    progress_mon.monitor_channel().send(DataUpdate::Log {
+                        source: UpdateSource::Unknown,
+                        level: Level::Error,
+                        message: msg,
+                    })?;
                 }
             }
         }
-        Ok(Self {
-            plugins,
-            db,
-        })
+        Ok(Self { plugins, db })
     }
 
     pub fn plugins(&self) -> impl Iterator<Item = &PluginHandle> {
@@ -89,24 +94,18 @@ impl PluginHost {
         self.plugins.iter_mut()
     }
 
-    // pub fn errors(&self) -> impl Iterator<Item = &str> {
-    //     self.errors.iter().map(|v| v.as_str())
-    // }
-    // 
-    // pub fn remove_error(&mut self, index: usize) {
-    //     self.errors.remove(index);
-    // }
-
     pub fn refresh_works_for_tag(&mut self, tag: &DbTag) -> Result<()> {
-        let plugin_names = self.db.sync_list_plugins_for_tag(tag.id())?;
+        let plugin_ids = self.db.sync_list_plugins_for_tag(tag.id())?;
         for plugin in &mut self.plugins {
-            // Only ask for matching works if the tag came from a plugin.
-            if plugin_names.contains(&plugin.name()) {
-                plugin
-                    .task_queue
-                    .push_back(PluginRequest::RefreshWorksForTag {
-                        tag: tag.name().to_owned(),
-                    });
+            if let Some(plugin_id) = plugin.id() {
+                // Only ask for matching works if the tag came from a plugin.
+                if plugin_ids.contains(&plugin_id) {
+                    plugin
+                        .task_queue
+                        .push_back(PluginRequest::RefreshWorksForTag {
+                            tag: tag.name().to_owned(),
+                        });
+                }
             }
         }
         Ok(())
@@ -117,14 +116,6 @@ impl PluginHost {
             plugin.handle_updates(updates);
         }
     }
-
-    // pub fn maintain_plugins(&mut self) -> Vec<DataUpdate> {
-    //     let mut updates = Vec::new();
-    //     for plugin in &mut self.plugins {
-    //         plugin.maintain_plugin(&mut updates);
-    //     }
-    //     updates
-    // }
 
     pub fn cleanup_for_exit(&mut self) -> Result<()> {
         for plugin in self.plugins.drain(..) {
@@ -142,6 +133,7 @@ pub struct PluginHandle {
     // Metadata
     source: PathBuf,
     metadata: Option<PluginMetadata>,
+    record: Option<DbPlugin>,
 
     // Active state
     progress: Progress,
@@ -167,6 +159,7 @@ impl PluginHandle {
         Self {
             source,
             metadata: None,
+            record: None,
             progress: Progress::None,
             log_messages: VecDeque::new(),
             active_task: None,
@@ -195,6 +188,10 @@ impl PluginHandle {
         } else {
             self.source().display().to_string()
         }
+    }
+
+    pub fn id(&self) -> Option<PluginId> {
+        self.record.as_ref().map(|v| v.id())
     }
 
     pub fn description(&self) -> String {
@@ -260,45 +257,43 @@ impl PluginHandle {
     pub fn handle_updates(&mut self, updates: &[DataUpdate]) {
         for update in updates {
             match update {
-                DataUpdate::PluginInfo { source, metadata} if source == &self.source => {
+                DataUpdate::PluginInfo {
+                    source,
+                    record,
+                    metadata,
+                } if source == &self.source => {
                     self.metadata = Some(metadata.to_owned());
+                    self.record = Some(record.to_owned());
                 }
-                // TODO:
-                // DataUpdate::CompletedPluginTask
+                DataUpdate::Log {
+                    source: UpdateSource::Plugin(id),
+                    level,
+                    message,
+                } if Some(*id) == self.id() => {
+                    self.log_messages.push_front((*level, message.to_owned()));
+                    while self.log_messages.len() > Self::MAX_MESSAGES {
+                        self.log_messages.pop_back();
+                    }
+                }
+                DataUpdate::Progress {
+                    source: UpdateSource::Plugin(id),
+                    progress,
+                } if Some(*id) == self.id() => {
+                    self.progress = *progress;
+                }
+                DataUpdate::CompletedTask {
+                    source: UpdateSource::Plugin(id),
+                } if Some(*id) == self.id() => {
+                    self.active_task = None;
+                }
                 _ => {}
             }
         }
+        if self.active_task.is_none() {
+            if let Some(task) = self.task_queue.pop_front() {
+                self.active_task = Some(task.clone());
+                self.tx_to_plugin.send(task).ok();
+            }
+        }
     }
-
-    // fn maintain_plugin(&mut self, updates: &mut Vec<DataUpdate>) {
-    //     while let Ok(msg) = self.rx_from_plugin.try_recv() {
-    //         match msg {
-    //             PluginResponse::Progress(progress) => {
-    //                 self.progress = progress;
-    //             }
-    //             PluginResponse::Log(level, message) => {
-    //                 self.log_messages.push_front((level, message));
-    //                 while self.log_messages.len() > Self::MAX_MESSAGES {
-    //                     self.log_messages.pop_back();
-    //                 }
-    //             }
-    //             PluginResponse::PluginInfo(info) => {
-    //                 self.metadata = Some(info);
-    //             }
-    //             PluginResponse::TagsRefreshed => {
-    //                 // Tag updates are rare, so we can fall back to a full refresh here.
-    //                 updates.push(DataUpdate::TagsWereUpdated);
-    //             }
-    //             PluginResponse::CompletedTask => {
-    //                 self.active_task = None;
-    //             }
-    //         }
-    //     }
-    //     if self.active_task.is_none() {
-    //         if let Some(task) = self.task_queue.pop_front() {
-    //             self.active_task = Some(task.clone());
-    //             self.tx_to_plugin.send(task).ok();
-    //         }
-    //     }
-    // }
 }

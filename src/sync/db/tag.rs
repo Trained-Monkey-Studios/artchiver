@@ -1,12 +1,14 @@
-use crate::shared::progress::ProgressSender;
+use crate::shared::progress::HostUpdateSender;
+use crate::{
+    shared::progress::{LogSender, ProgressSender},
+    sync::db::plugin::PluginId,
+};
 use anyhow::Result;
 use artchiver_sdk::{Tag, TagKind};
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Row, params};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use std::time::Instant;
 
 // A DB sourced tag
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -96,17 +98,18 @@ impl DbTag {
 
 pub fn upsert_tags(
     conn: &mut PooledConnection<SqliteConnectionManager>,
-    plugin_id: i64,
+    plugin_id: PluginId,
     tags: &[Tag],
+    log: &mut LogSender,
     progress: &mut ProgressSender,
-) -> Result<Vec<DbTag>> {
+) -> Result<()> {
     progress.set_spinner();
 
     let total_count = tags.len();
     let mut current_pos = 0;
-    progress.info(format!("Writing {total_count} tags to the database..."));
+    log.info(format!("Writing {total_count} tags to the database..."));
     for chunk in tags.chunks(10_000) {
-        progress.trace(format!("db->upsert_tags chunk of {}", chunk.len()));
+        log.trace(format!("db->upsert_tags chunk of {}", chunk.len()));
         let xaction = conn.transaction()?;
         {
             let mut insert_tag_stmt = xaction
@@ -142,29 +145,29 @@ pub fn upsert_tags(
     }
 
     progress.clear();
-    list_all_tags(conn)
+    Ok(())
 }
 
-pub fn count_tags(
-    conn: &PooledConnection<SqliteConnectionManager>,
-    filter: &str,
-    source: Option<&str>,
-) -> Result<i64> {
-    let cnt = conn.query_row(
-        r#"SELECT COUNT(*) FROM
-        (SELECT tags.id
-            FROM tags
-            LEFT JOIN work_tags ON tags.id == work_tags.tag_id
-            LEFT JOIN plugin_tags ON tags.id == plugin_tags.tag_id
-            LEFT JOIN plugins ON plugin_tags.plugin_id == plugins.id
-            WHERE tags.name LIKE ? AND plugins.name LIKE ? AND plugin_tags.presumed_work_count > 0
-            GROUP BY tags.name
-            ORDER BY tags.name ASC)"#,
-        params![format!("%{filter}%"), source.unwrap_or("%"),],
-        |row| row.get(0),
-    )?;
-    Ok(cnt)
-}
+// pub fn count_tags(
+//     conn: &PooledConnection<SqliteConnectionManager>,
+//     filter: &str,
+//     source: Option<&str>,
+// ) -> Result<i64> {
+//     let cnt = conn.query_row(
+//         r#"SELECT COUNT(*) FROM
+//         (SELECT tags.id
+//             FROM tags
+//             LEFT JOIN work_tags ON tags.id == work_tags.tag_id
+//             LEFT JOIN plugin_tags ON tags.id == plugin_tags.tag_id
+//             LEFT JOIN plugins ON plugin_tags.plugin_id == plugins.id
+//             WHERE tags.name LIKE ? AND plugins.name LIKE ? AND plugin_tags.presumed_work_count > 0
+//             GROUP BY tags.name
+//             ORDER BY tags.name ASC)"#,
+//         params![format!("%{filter}%"), source.unwrap_or("%"),],
+//         |row| row.get(0),
+//     )?;
+//     Ok(cnt)
+// }
 
 pub fn list_all_tags(conn: &PooledConnection<SqliteConnectionManager>) -> Result<Vec<DbTag>> {
     let query = r#"SELECT id, name, kind, favorite, actual_work_count, SUM(presumed_work_count) FROM

@@ -1,26 +1,66 @@
-use crate::shared::progress::Progress;
-use crate::sync::db::tag::DbTag;
+use crate::{
+    shared::progress::{Progress, UpdateSource},
+    sync::db::{
+        plugin::DbPlugin,
+        tag::DbTag,
+        work::{DbWork, WorkId},
+    },
+};
 use artchiver_sdk::PluginMetadata;
 use log::Level;
-use std::{
-    path::PathBuf,
-    collections::HashMap
-};
+use std::{collections::HashMap, path::PathBuf};
 
 pub enum DataUpdate {
-    // Plugin messages
-    TagsWereUpdated,
-    WorksWereUpdatedForTag { tag: String },
-    WorkDownloadCompleted { id: i64 },
-    // Revisit these:
-    PluginInfo { source: PathBuf, metadata: PluginMetadata },
-    Progress(Progress),
-    Log(Level, String),
-    TagsRefreshed,
-    CompletedTask,
+    // Provides information about the plugin back to PluginHost for display in the UX
+    PluginInfo {
+        source: PathBuf,
+        record: DbPlugin,
+        metadata: PluginMetadata,
+    },
 
-    // DB Messages
+    // Notifies the UX that a block of tags from a provider has been upserted. The UX should
+    // discard it's cached tags and re-query.
+    TagsWereRefreshed,
+
+    // Notifies the UX that a block of work metadata has been upserted into the DB. If the UX
+    // has cached any data for the given tag, it should drop it and re-query the DB. Note that
+    // this doesn't include progress on downloading any of the images associated with those works.
+    WorksWereUpdatedForTag {
+        for_tag: String,
+    },
+
+    // Notify the UX that a specific work's image downloads have completed and it can now present
+    // those works to the user.
+    WorkDownloadCompleted {
+        id: WorkId,
+        preview_path: String,
+        screen_path: String,
+        archive_path: Option<String>,
+    },
+
+    // Notify the PluginHost that the source has completed a task and needs to be fed new work.
+    CompletedTask {
+        source: UpdateSource,
+    },
+
+    // Revisit these:
+    Progress {
+        source: UpdateSource,
+        progress: Progress,
+    },
+    Log {
+        source: UpdateSource,
+        level: Level,
+        message: String,
+    },
+
+    // Fulfills a request by the UX to get the current list of tags.
     InitialTags(HashMap<i64, DbTag>),
     TagsLocalCounts(Vec<(i64, u64)>),
     TagsNetworkCounts(Vec<(i64, u64)>),
+
+    // Fulfills a request by the UX to get the current list of works for a tag.
+    FetchWorksComplete {
+        works: HashMap<WorkId, DbWork>,
+    },
 }

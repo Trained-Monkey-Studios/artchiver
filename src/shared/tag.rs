@@ -71,6 +71,10 @@ impl TagSet {
         self.enabled.iter()
     }
 
+    pub fn enabled_vec(&self) -> Vec<String> {
+        self.enabled.iter().cloned().collect()
+    }
+
     // Build the enabled set into a vector suitable for passing to Rusqlites rarray function
     // e.g. for use with an SQL "IN" clause.
     pub fn enabled_rarray(&self) -> Rc<Vec<Value>> {
@@ -99,6 +103,45 @@ impl TagSet {
         }
         if ui.button("x").clicked() {
             self.clear();
+            changed = true;
+        }
+        changed
+    }
+
+    pub fn ui_for_tag(&mut self, tag: &str, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        let status = self.status(tag);
+        if ui
+            .add(egui::Button::new("✔").small().selected(status.enabled()))
+            .on_hover_text("replace filter")
+            .clicked()
+        {
+            self.clear();
+            self.enable(tag);
+            changed = true;
+        }
+        if ui
+            .add(egui::Button::new("+").small().selected(status.enabled()))
+            .on_hover_text("add filter")
+            .clicked()
+        {
+            self.enable(tag);
+            changed = true;
+        }
+        if ui
+            .add(egui::Button::new(" ").small())
+            .on_hover_text("remove filter")
+            .clicked()
+        {
+            self.unselect(tag);
+            changed = true;
+        }
+        if ui
+            .add(egui::Button::new("x").small().selected(status.disabled()))
+            .on_hover_text("filter on negation")
+            .clicked()
+        {
+            self.disable(tag);
             changed = true;
         }
         changed
