@@ -1,7 +1,11 @@
 use crate::{
     shared::{environment::Environment, progress::ProgressMonitor},
     sync::{
-        db::handle::{DbHandle, DbThreads, connect_or_create},
+        db::{
+            reader::DbReadHandle,
+            sync::{DbSyncHandle, connect_or_create},
+            writer::DbWriteHandle,
+        },
         plugin::host::PluginHost,
     },
     ux::dock::UxToplevel,
@@ -21,9 +25,11 @@ pub struct ArtchiverApp {
 
     // Reconnect to the database each run
     #[serde(skip)]
-    db_handle: DbHandle,
+    db_sync: DbSyncHandle,
     #[serde(skip)]
-    db_threads: DbThreads,
+    db_write: DbWriteHandle,
+    #[serde(skip)]
+    db_read: DbReadHandle,
 
     // Rebuild plugins on each run as we don't know where we'll be running from.
     #[serde(skip)]
@@ -38,17 +44,18 @@ impl Default for ArtchiverApp {
         let pwd = std::env::current_dir().expect("failed to get working directory");
         let env = Environment::new(&pwd).expect("failed to create environment");
         let progress_mon = ProgressMonitor::default();
-        let (db_handle, db_threads) =
+        let (db_sync, db_write, db_read) =
             connect_or_create(&env, &progress_mon).expect("failed to connect to database");
-        let host = PluginHost::new(&env, &progress_mon, db_handle.clone())
+        let host = PluginHost::new(&env, &progress_mon, &db_sync, &db_write)
             .expect("failed to set up plugins");
         let toplevel = UxToplevel::default();
 
         Self {
             env,
             progress_mon,
-            db_handle,
-            db_threads,
+            db_sync,
+            db_write,
+            db_read,
             host,
             toplevel,
         }
@@ -68,7 +75,7 @@ impl ArtchiverApp {
             Default::default()
         };
         app.toplevel
-            .startup(&app.environment().data_dir(), &app.db_threads);
+            .startup(&app.environment().data_dir(), &app.db_read);
         app
     }
 
@@ -81,12 +88,11 @@ impl eframe::App for ArtchiverApp {
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let updates = self.progress_mon.read();
-        self.db_handle.handle_updates(&updates);
         self.host.handle_updates(&updates);
-        self.toplevel.handle_updates(&updates, &self.db_threads);
+        self.toplevel.handle_updates(&updates, &self.db_read);
 
         self.toplevel
-            .main(&self.db_threads, &mut self.host, ctx)
+            .main(&self.db_read, &mut self.host, ctx)
             .expect("ux update error");
     }
 
@@ -99,7 +105,8 @@ impl eframe::App for ArtchiverApp {
         self.host
             .cleanup_for_exit()
             .expect("failed to cleanup plugins on exit");
-        self.db_handle.send_exit_request();
-        self.db_threads.wait_for_exit();
+
+        // Try to shut down the database cleanly.
+        self.db_read.wait_for_exit();
     }
 }

@@ -1,9 +1,9 @@
-use crate::sync::db::handle::DbThreads;
 use crate::{
     shared::{tag::TagSet, update::DataUpdate},
     sync::{
         db::{
             model::OrderDir,
+            reader::DbReadHandle,
             tag::{DbTag, TagId},
         },
         plugin::host::PluginHost,
@@ -82,14 +82,14 @@ pub struct UxTag {
 }
 
 impl UxTag {
-    pub fn startup(&mut self, db: &DbThreads) {
+    pub fn startup(&mut self, db: &DbReadHandle) {
         trace!("Starting up tag UX");
 
         // Reload tags from DB at startup so we don't have to put them in the app state.
         db.get_tags();
     }
 
-    pub fn handle_updates(&mut self, db: &DbThreads, updates: &[DataUpdate]) {
+    pub fn handle_updates(&mut self, db: &DbReadHandle, updates: &[DataUpdate]) {
         for update in updates {
             match update {
                 DataUpdate::InitialTags(tags) => {
@@ -125,7 +125,8 @@ impl UxTag {
                 // include only selected plugin sources in the tags list response
                 .filter(|(_, t)| {
                     self.source_filter.is_none()
-                        || t.sources().contains(self.source_filter.as_ref().unwrap())
+                        || t.sources()
+                            .contains(self.source_filter.as_ref().expect("checked"))
                 })
                 // FIXME: add UX and filter to hide, browse hidden tags, and unhide
                 // .filter(|(_, t)| t.hidden)

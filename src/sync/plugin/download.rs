@@ -4,7 +4,7 @@ use crate::{
         progress::{LogSender, ProgressSender},
         throttle::CallingThrottle,
     },
-    sync::{db::handle::DbHandle, plugin::client::make_temp_path},
+    sync::{db::writer::DbWriteHandle, plugin::client::make_temp_path},
 };
 use anyhow::Result;
 use artchiver_sdk::Work;
@@ -15,14 +15,10 @@ use ureq::Agent;
 
 pub fn download_works(
     mut works: Vec<Work>,
-    db: &DbHandle,
-    data_dir: &Path,
-    tmp_dir: &Path,
-    agent: &Agent,
-    progress: &mut ProgressSender,
-    log: &mut LogSender,
-    throttle: &CallingThrottle,
-    cancellation: &PluginCancellation,
+    db: &DbWriteHandle,
+    (agent, throttle): (&Agent, &CallingThrottle),
+    (data_dir, tmp_dir): (&Path, &Path),
+    (progress, log, cancellation): (&mut ProgressSender, &mut LogSender, &PluginCancellation),
 ) -> Result<()> {
     log.info(format!("Downloading {} works to disk...", works.len()));
     let works_len = works.len();
@@ -35,12 +31,9 @@ pub fn download_works(
                 if let Err(e) = ensure_work_data_is_cached(
                     &work,
                     db,
-                    data_dir,
-                    tmp_dir,
-                    agent,
-                    &mut log.clone(),
-                    throttle,
-                    cancellation,
+                    (agent, throttle),
+                    (data_dir, tmp_dir),
+                    (&mut log.clone(), cancellation),
                 ) {
                     // Note: ignore download failures and let the user re-try, if needed.
                     log.error(format!("Error downloading work {}: {e}", work.name()));
@@ -72,13 +65,10 @@ pub fn get_data_path_for_url(data_dir: &Path, url: &str) -> Result<(PathBuf, Str
 
 fn ensure_work_data_is_cached(
     work: &Work,
-    db: &DbHandle,
-    data_dir: &Path,
-    tmp_dir: &Path,
-    agent: &Agent,
-    log: &mut LogSender,
-    throttle: &CallingThrottle,
-    cancellation: &PluginCancellation,
+    db: &DbWriteHandle,
+    (agent, throttle): (&Agent, &CallingThrottle),
+    (data_dir, tmp_dir): (&Path, &Path),
+    (log, cancellation): (&mut LogSender, &PluginCancellation),
 ) -> Result<()> {
     let preview_path = ensure_data_url(
         work.preview_url(),

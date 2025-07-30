@@ -7,7 +7,7 @@ use crate::{
         update::DataUpdate,
     },
     sync::{
-        db::{handle::DbHandle, plugin::PluginId},
+        db::{plugin::PluginId, sync::DbSyncHandle, writer::DbWriteHandle},
         plugin::download::download_works,
     },
 };
@@ -55,12 +55,13 @@ fn make_plugin(
 pub(crate) fn create_plugin_task(
     source: &Path,
     env: &Environment,
-    db: DbHandle,
+    db_sync: DbSyncHandle,
+    db_write: DbWriteHandle,
     rx_from_runner: Receiver<PluginRequest>,
     tx_to_runner: Sender<DataUpdate>,
 ) -> Result<(JoinHandle<()>, PluginCancellation)> {
     info!("Loading plugin: {}", source.display());
-    let state = UserData::new(PluginState::new(env, db, tx_to_runner));
+    let state = UserData::new(PluginState::new(env, db_sync, db_write, tx_to_runner));
     let cancellation = state.get()?.lock().expect("poison").cancellation.clone();
     // Note: on configuration; we support moving the plugin file around, so we need to key on the
     //       name rather than the source path. As such, we have to wait until the plugin returns
@@ -92,7 +93,8 @@ pub struct PluginState {
     cancellation: PluginCancellation,
 
     // Database
-    db: DbHandle,
+    db_sync: DbSyncHandle,
+    db_write: DbWriteHandle,
 
     // Web
     agent: Agent,
@@ -114,7 +116,12 @@ fn make_agent() -> Agent {
 }
 
 impl PluginState {
-    fn new(env: &Environment, db: DbHandle, tx_to_runner: Sender<DataUpdate>) -> Self {
+    fn new(
+        env: &Environment,
+        db_sync: DbSyncHandle,
+        db_write: DbWriteHandle,
+        tx_to_runner: Sender<DataUpdate>,
+    ) -> Self {
         Self {
             cache_dir: env.cache_dir().clone(),
             data_dir: env.data_dir().clone(),
@@ -123,7 +130,8 @@ impl PluginState {
             log: LogSender::wrap(UpdateSource::Unknown, tx_to_runner.clone()),
             host: HostUpdateSender::wrap(UpdateSource::Unknown, tx_to_runner),
             cancellation: PluginCancellation::default(),
-            db,
+            db_sync,
+            db_write,
             agent: make_agent(),
             throttle: CallingThrottle::default(),
         }
@@ -151,7 +159,7 @@ fn plugin_main(
     let db_plugin = {
         let state_ref = state.get()?;
         let mut state = state_ref.lock().expect("poison");
-        let db_plugin = state.db.sync_upsert_plugin(metadata.name())?;
+        let db_plugin = state.db_sync.sync_upsert_plugin(metadata.name())?;
         state.throttle = CallingThrottle::new(metadata.rate_limit(), metadata.rate_window());
         state.progress = ProgressSender::wrap(
             UpdateSource::Plugin(db_plugin.id()),
@@ -189,14 +197,14 @@ fn plugin_main(
                     .get()?
                     .lock()
                     .expect("poison")
-                    .db
+                    .db_sync
                     .sync_save_configurations(db_plugin.id(), &config)?;
                 // reload the plugin with configuration applied
                 plugin = make_plugin(plugin_source, config, state)?;
                 Ok(())
             }
             PluginRequest::RefreshTags => {
-                refresh_tags(db_plugin.id(), &mut plugin, state, &mut progress, &mut log)
+                refresh_tags(db_plugin.id(), &mut plugin, state, &mut log)
             }
             PluginRequest::RefreshWorksForTag { tag } => {
                 refresh_works_for_tag(db_plugin.id(), &tag, &mut plugin, state)
@@ -222,7 +230,6 @@ fn refresh_tags(
     plugin_id: PluginId,
     plugin: &mut ExtPlugin,
     state: &UserData<PluginState>,
-    progress: &mut ProgressSender,
     log: &mut LogSender,
 ) -> Result<()> {
     // Progress will get sent for the download or file read.
@@ -232,7 +239,7 @@ fn refresh_tags(
     // Progress will get sent a second time for writing to the DB.
     let state_ref = state.get()?;
     let state = state_ref.lock().expect("poison");
-    state.db.upsert_tags(plugin_id, tags)?;
+    state.db_write.upsert_tags(plugin_id, tags)?;
 
     Ok(())
 }
@@ -249,7 +256,7 @@ fn refresh_works_for_tag(
         (
             state.data_dir.clone(),
             state.tmp_dir.clone(),
-            state.db.clone(),
+            state.db_write.clone(),
             state.agent.clone(),
             state.progress.clone(),
             state.log.clone(),
@@ -276,13 +283,9 @@ fn refresh_works_for_tag(
     download_works(
         works,
         &db,
-        &data_dir,
-        &tmp_dir,
-        &agent,
-        &mut progress,
-        &mut log,
-        &throttle,
-        &cancellation,
+        (&agent, &throttle),
+        (&data_dir, &tmp_dir),
+        (&mut progress, &mut log, &cancellation),
     )?;
     log.info(format!("Finished download tag {tag}..."));
 

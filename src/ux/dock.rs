@@ -1,7 +1,9 @@
-use crate::sync::db::handle::DbThreads;
 use crate::{
     shared::{performance::PerfTrack, progress::UpdateSource, update::DataUpdate},
-    sync::plugin::host::{PluginHandle, PluginHost},
+    sync::{
+        db::reader::DbReadHandle,
+        plugin::host::{PluginHandle, PluginHost},
+    },
     ux::{db::UxDb, tag::UxTag, work::UxWork},
 };
 use anyhow::Result;
@@ -101,11 +103,15 @@ pub struct UxState {
 struct SyncViewer<'a> {
     sync: &'a mut PluginHost,
     state: &'a mut UxState,
-    db_threads: &'a DbThreads,
+    db_threads: &'a DbReadHandle,
 }
 
 impl<'a> SyncViewer<'a> {
-    fn wrap(sync: &'a mut PluginHost, state: &'a mut UxState, db_threads: &'a DbThreads) -> Self {
+    fn wrap(
+        sync: &'a mut PluginHost,
+        state: &'a mut UxState,
+        db_threads: &'a DbReadHandle,
+    ) -> Self {
         Self {
             sync,
             state,
@@ -326,12 +332,12 @@ impl Default for UxToplevel {
 }
 
 impl UxToplevel {
-    pub fn startup(&mut self, data_dir: &Path, db: &DbThreads) {
+    pub fn startup(&mut self, data_dir: &Path, db: &DbReadHandle) {
         self.state.tag_ux.startup(db);
         self.state.work_ux.startup(data_dir, db);
     }
 
-    pub fn handle_updates(&mut self, updates: &[DataUpdate], db: &DbThreads) {
+    pub fn handle_updates(&mut self, updates: &[DataUpdate], db: &DbReadHandle) {
         // self.state.plugin_ux.handle_updates(updates);
         self.state.db_ux.handle_updates(updates);
         self.state.tag_ux.handle_updates(db, updates);
@@ -353,7 +359,7 @@ impl UxToplevel {
 
     pub fn main(
         &mut self,
-        db: &DbThreads,
+        db: &DbReadHandle,
         host: &mut PluginHost,
         ctx: &egui::Context,
     ) -> Result<()> {

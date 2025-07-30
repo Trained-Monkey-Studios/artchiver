@@ -1,3 +1,4 @@
+use crate::sync::db::writer::DbWriteHandle;
 use crate::{
     shared::{
         environment::Environment,
@@ -7,8 +8,8 @@ use crate::{
     },
     sync::{
         db::{
-            handle::DbHandle,
             plugin::{DbPlugin, PluginId},
+            sync::DbSyncHandle,
             tag::DbTag,
         },
         plugin::client::create_plugin_task,
@@ -48,11 +49,16 @@ fn search_for_plugins_to_load(env: &Environment) -> Result<Vec<PathBuf>> {
 #[derive(Debug)]
 pub struct PluginHost {
     plugins: Vec<PluginHandle>,
-    db: DbHandle,
+    db: DbSyncHandle,
 }
 
 impl PluginHost {
-    pub fn new(env: &Environment, progress_mon: &ProgressMonitor, db: DbHandle) -> Result<Self> {
+    pub fn new(
+        env: &Environment,
+        progress_mon: &ProgressMonitor,
+        db_sync: &DbSyncHandle,
+        db_write: &DbWriteHandle,
+    ) -> Result<Self> {
         let mut plugins = Vec::new();
         for source in search_for_plugins_to_load(env)?.drain(..) {
             let (tx_to_plugin, rx_from_runner) = channel::unbounded();
@@ -60,7 +66,8 @@ impl PluginHost {
             match create_plugin_task(
                 &source,
                 env,
-                db.clone(),
+                db_sync.clone(),
+                db_write.clone(),
                 rx_from_runner,
                 progress_mon.monitor_channel(),
             ) {
@@ -83,7 +90,10 @@ impl PluginHost {
                 }
             }
         }
-        Ok(Self { plugins, db })
+        Ok(Self {
+            plugins,
+            db: db_sync.clone(),
+        })
     }
 
     pub fn plugins(&self) -> impl Iterator<Item = &PluginHandle> {

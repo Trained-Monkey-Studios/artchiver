@@ -27,11 +27,11 @@ pub enum Progress {
 impl Progress {
     pub fn ui(&self, ui: &mut egui::Ui) {
         match self {
-            Progress::None => {}
-            Progress::Spinner => {
+            Self::None => {}
+            Self::Spinner => {
                 ui.spinner();
             }
-            Progress::Percent { current, total } => {
+            Self::Percent { current, total } => {
                 ui.add(
                     egui::ProgressBar::new(*current as f32 / *total as f32)
                         .animate(true)

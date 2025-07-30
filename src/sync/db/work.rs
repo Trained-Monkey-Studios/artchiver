@@ -1,20 +1,15 @@
-use crate::{
-    shared::progress::{HostUpdateSender, LogSender, ProgressSender},
-    sync::db::{handle::report_slow_query, model::string_to_rarray},
-};
-use anyhow::{Result, ensure};
-use artchiver_sdk::Work;
 use jiff::civil::Date;
-use log::{debug, warn};
-use r2d2::PooledConnection;
-use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{Row, params};
+use rusqlite::Row;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct WorkId(i64);
+impl WorkId {
+    pub fn wrap(id: i64) -> Self {
+        Self(id)
+    }
+}
 
 // DB-centered [art]work item.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -54,7 +49,7 @@ impl DbWork {
             archive_path: row
                 .get::<&str, Option<String>>("archive_path")?
                 .map(|s| s.into()),
-            tags: tag_str.split(',').map(|s| s.to_string()).collect(),
+            tags: tag_str.split(',').map(|s| s.to_owned()).collect(),
         })
     }
 
@@ -109,126 +104,4 @@ impl DbWork {
         self.screen_path = Some(screen_path);
         self.archive_path = archive_path;
     }
-}
-
-pub fn upsert_works(
-    mut conn: PooledConnection<SqliteConnectionManager>,
-    works: &[Work],
-    log: &mut LogSender,
-    progress: &mut ProgressSender,
-) -> Result<()> {
-    let total_count = works.len();
-    let mut current_pos = 0;
-    log.info(format!("Writing {total_count} works to the database..."));
-
-    for chunk in works.chunks(1_000) {
-        log.trace(format!("db->upsert_works chunk of {}", chunk.len()));
-        let xaction = conn.transaction()?;
-        {
-            let mut insert_work_stmt = xaction.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")?;
-            let mut select_tag_ids_from_names =
-                xaction.prepare("SELECT id FROM tags WHERE name IN rarray(?)")?;
-            let mut insert_work_tag_stmt = xaction
-                .prepare("INSERT OR IGNORE INTO work_tags (tag_id, work_id) VALUES (?, ?)")?;
-            let mut select_work_id_stmt = xaction.prepare("SELECT id FROM works WHERE name = ?")?;
-
-            for work in chunk.iter() {
-                let work_id = if let Ok(work_id) = insert_work_stmt.query_one(
-                    params![
-                        work.name(),
-                        0, // TODO: artist_id
-                        work.date(),
-                        work.preview_url(),
-                        work.screen_url(),
-                        work.archive_url()
-                    ],
-                    |row| row.get::<usize, i64>(0),
-                ) {
-                    work_id
-                } else if let Ok(work_id) =
-                    select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))
-                {
-                    work_id
-                } else {
-                    log.warn(format!(
-                        "Detected duplicate URL in work {}, skipping",
-                        work.name()
-                    ));
-                    continue;
-                };
-                log::trace!("db->upsert_works with tags: {:?}", work.tags());
-                log.trace(format!("db->upsert_works with tags: {:?}", work.tags()));
-                let tag_ids: Vec<i64> = select_tag_ids_from_names
-                    .query_map([string_to_rarray(work.tags())], |row| row.get(0))?
-                    .flatten()
-                    .collect();
-                for tag_id in &tag_ids {
-                    insert_work_tag_stmt.execute(params![*tag_id, work_id])?;
-                }
-            }
-        }
-        xaction.commit()?;
-
-        current_pos += chunk.len();
-        progress.set_percent(current_pos, total_count);
-    }
-
-    Ok(())
-}
-
-pub fn update_work_paths(
-    conn: PooledConnection<SqliteConnectionManager>,
-    screen_url: &str,
-    preview_path: &str,
-    screen_path: &str,
-    archive_path: Option<&str>,
-    host: &mut HostUpdateSender,
-) -> Result<()> {
-    assert!(!screen_url.is_empty(), "have a path for empty screen url");
-    assert!(!preview_path.is_empty(), "empty preview path");
-    assert!(!screen_path.is_empty(), "empty screen path");
-    let work_id: i64 = conn.query_one(
-        "SELECT id FROM works WHERE screen_url = ?",
-        [screen_url],
-        |row| row.get(0),
-    )?;
-    let row_cnt = conn.execute(
-        "UPDATE works SET preview_path = ?, screen_path = ?, archive_path = ? WHERE id = ?",
-        params![preview_path, screen_path, archive_path, work_id],
-    )?;
-    ensure!(row_cnt == 1);
-    host.note_completed_download(WorkId(work_id), preview_path, screen_path, archive_path)?;
-    Ok(())
-}
-
-pub fn list_works_with_any_tags(
-    conn: &PooledConnection<SqliteConnectionManager>,
-    tags: &[String],
-) -> Result<Vec<DbWork>> {
-    if tags.is_empty() {
-        return Ok(Vec::new());
-    }
-    let start = Instant::now();
-
-    // If we decide we *have* to apply AND up front, it looks like this.
-    // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
-    let query = r#"
-        SELECT works.*, GROUP_CONCAT(tags.name) as tags FROM works
-        LEFT JOIN work_tags ON work_tags.work_id = works.id
-        LEFT JOIN tags ON work_tags.tag_id = tags.id
-        WHERE works.id IN (
-            SELECT works.id FROM works
-            LEFT JOIN work_tags ON work_tags.work_id = works.id
-            LEFT JOIN tags ON work_tags.tag_id = tags.id
-            WHERE tags.name IN rarray(?)
-        )
-        GROUP BY works.id
-    "#;
-    let mut stmt = conn.prepare(query)?;
-    let out = stmt
-        .query_map([string_to_rarray(tags)], DbWork::from_row)?
-        .flatten()
-        .collect();
-    report_slow_query(start, "list_works_with_any_tags", query);
-    Ok(out)
 }

@@ -1,12 +1,12 @@
-use crate::sync::db::handle::DbThreads;
 use crate::{
     shared::{performance::PerfTrack, tag::TagSet, update::DataUpdate},
     sync::db::{
         model::OrderDir,
+        reader::DbReadHandle,
         work::{DbWork, WorkId},
     },
 };
-use egui::{Key, Margin, Modifiers, Order, Rect, Sense, SizeHint, Vec2, include_image};
+use egui::{Key, Margin, Modifiers, Rect, Sense, SizeHint, Vec2, include_image};
 use itertools::Itertools as _;
 use log::{info, trace};
 use lru::LruCache;
@@ -115,14 +115,14 @@ impl UxWork {
     const LRU_CACHE_SIZE: usize = 500;
     const MAX_PER_FRAME_UPLOADS: usize = 3;
 
-    pub fn startup(&mut self, data_dir: &Path, db_reader: &DbThreads) {
+    pub fn startup(&mut self, data_dir: &Path, db: &DbReadHandle) {
         trace!("Starting up work UX");
 
         self.data_dir = data_dir.to_owned();
-        db_reader.get_works(&self.tag_selection.enabled_vec());
+        db.get_works(&self.tag_selection.enabled_vec());
     }
 
-    pub fn handle_updates(&mut self, db: &DbThreads, updates: &[DataUpdate]) {
+    pub fn handle_updates(&mut self, db: &DbReadHandle, updates: &[DataUpdate]) {
         for update in updates {
             match update {
                 DataUpdate::FetchWorksComplete { works } => {
@@ -158,7 +158,7 @@ impl UxWork {
         &self.tag_selection
     }
 
-    pub fn set_tag_selection(&mut self, tag_set: TagSet, db: &DbThreads) {
+    pub fn set_tag_selection(&mut self, tag_set: TagSet, db: &DbReadHandle) {
         if &tag_set != self.tag_selection() {
             self.tag_selection = tag_set;
             self.tags_changed(db);
@@ -169,7 +169,7 @@ impl UxWork {
         self.selected.is_some()
     }
 
-    fn tags_changed(&mut self, db: &DbThreads) {
+    fn tags_changed(&mut self, db: &DbReadHandle) {
         self.work_matching_tag = None;
         self.work_filtered = Vec::new();
         self.selected = None;
@@ -262,7 +262,7 @@ impl UxWork {
         })
     }
 
-    pub fn info_ui(&mut self, db: &DbThreads, ui: &mut egui::Ui) {
+    pub fn info_ui(&mut self, db: &DbReadHandle, ui: &mut egui::Ui) {
         let Some(works) = self.work_matching_tag.as_ref() else {
             ui.spinner();
             return;
@@ -323,7 +323,7 @@ impl UxWork {
         }
     }
 
-    pub fn gallery_ui(&mut self, db: &DbThreads, perf: &mut PerfTrack, ui: &mut egui::Ui) {
+    pub fn gallery_ui(&mut self, db: &DbReadHandle, perf: &mut PerfTrack, ui: &mut egui::Ui) {
         if self.tag_selection.is_empty() {
             self.selected = None;
         }
