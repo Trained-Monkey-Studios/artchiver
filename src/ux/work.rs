@@ -1,16 +1,14 @@
+use crate::sync::db::handle::DbThreads;
 use crate::{
     shared::{performance::PerfTrack, tag::TagSet, update::DataUpdate},
-    sync::{
-        db::{
-            handle::DbHandle,
-            model::OrderDir,
-            work::{DbWork, WorkId},
-        },
-        plugin::host::PluginHost,
+    sync::db::{
+        model::OrderDir,
+        work::{DbWork, WorkId},
     },
 };
-use egui::{Key, Margin, Modifiers, Rect, Sense, SizeHint, Vec2, include_image};
+use egui::{Key, Margin, Modifiers, Order, Rect, Sense, SizeHint, Vec2, include_image};
 use itertools::Itertools as _;
+use log::{info, trace};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -31,14 +29,12 @@ pub enum WorkSize {
 pub enum WorkSortCol {
     #[default]
     Date,
-    TotalCount,
 }
 
 impl WorkSortCol {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let mut selected = match self {
             Self::Date => 0,
-            Self::TotalCount => 1,
         };
         let labels = ["Name", "Total Count"];
         egui::ComboBox::new("tag_order_column", "Column")
@@ -46,7 +42,6 @@ impl WorkSortCol {
             .show_index(ui, &mut selected, labels.len(), |i| labels[i]);
         *self = match selected {
             0 => Self::Date,
-            1 => Self::TotalCount,
             _ => panic!("invalid column selected"),
         };
     }
@@ -80,6 +75,7 @@ pub struct UxWork {
 
     // Filter state for the works gallery
     tag_selection: TagSet,
+    order: WorkOrder,
 
     // Don't cache things that are too long or only last one frame
     #[serde(skip)]
@@ -105,6 +101,7 @@ impl Default for UxWork {
             selected: None,
             thumb_size: 128.,
             tag_selection: TagSet::default(),
+            order: WorkOrder::default(),
             per_frame_work_upload_count: 0,
             work_matching_tag: None,
             work_filtered: Vec::new(),
@@ -115,18 +112,21 @@ impl Default for UxWork {
 }
 
 impl UxWork {
-    const LRU_CACHE_SIZE: usize = 1_000;
+    const LRU_CACHE_SIZE: usize = 500;
     const MAX_PER_FRAME_UPLOADS: usize = 3;
 
-    pub fn startup(&mut self, data_dir: &Path, db: &DbHandle) {
+    pub fn startup(&mut self, data_dir: &Path, db_reader: &DbThreads) {
+        trace!("Starting up work UX");
+
         self.data_dir = data_dir.to_owned();
-        db.get_works(&self.tag_selection.enabled_vec());
+        db_reader.get_works(&self.tag_selection.enabled_vec());
     }
 
-    pub fn handle_updates(&mut self, db: &DbHandle, updates: &[DataUpdate]) {
+    pub fn handle_updates(&mut self, db: &DbThreads, updates: &[DataUpdate]) {
         for update in updates {
             match update {
                 DataUpdate::FetchWorksComplete { works } => {
+                    trace!("Received {} works", works.len());
                     self.work_matching_tag = Some(works.to_owned());
                     self.reproject_work();
                 }
@@ -158,7 +158,7 @@ impl UxWork {
         &self.tag_selection
     }
 
-    pub fn set_tag_selection(&mut self, tag_set: TagSet, db: &DbHandle) {
+    pub fn set_tag_selection(&mut self, tag_set: TagSet, db: &DbThreads) {
         if &tag_set != self.tag_selection() {
             self.tag_selection = tag_set;
             self.tags_changed(db);
@@ -169,7 +169,7 @@ impl UxWork {
         self.selected.is_some()
     }
 
-    fn tags_changed(&mut self, db: &DbHandle) {
+    fn tags_changed(&mut self, db: &DbThreads) {
         self.work_matching_tag = None;
         self.work_filtered = Vec::new();
         self.selected = None;
@@ -180,9 +180,24 @@ impl UxWork {
         if let Some(works) = self.work_matching_tag.as_ref() {
             self.work_filtered = works
                 .values()
-                // .filter(|work| work.screen_path().is_some())
+                .filter(|work| work.screen_path().is_some())
+                .filter(|work| self.tag_selection.matches(work))
+                .sorted_by(|a, b| {
+                    let ord = match self.order.column {
+                        WorkSortCol::Date => a.date().cmp(b.date()),
+                    };
+                    match self.order.order {
+                        OrderDir::Asc => ord,
+                        OrderDir::Desc => ord.reverse(),
+                    }
+                })
                 .map(|work| work.id())
                 .collect();
+            info!(
+                "Showing {} of {} matching works",
+                self.work_filtered.len(),
+                works.len()
+            );
         } else {
             self.work_filtered = Vec::new();
         }
@@ -247,53 +262,60 @@ impl UxWork {
         })
     }
 
-    pub fn info_ui(&mut self, db: &DbHandle, ui: &mut egui::Ui) {
+    pub fn info_ui(&mut self, db: &DbThreads, ui: &mut egui::Ui) {
+        let Some(works) = self.work_matching_tag.as_ref() else {
+            ui.spinner();
+            return;
+        };
+        let Some(offset) = self.selected else {
+            return;
+        };
+        let Some(work_id) = self.work_filtered.get(offset) else {
+            return;
+        };
+
         let mut changed = false;
-        if let Some(works) = self.work_matching_tag.as_ref() {
-            if let Some(offset) = self.selected {
-                let work = &works[&self.work_filtered[offset]];
-                egui::Grid::new("work_info_grid").show(ui, |ui| {
-                    ui.label("Offset");
-                    ui.label(format!("{offset} of {}", self.work_filtered.len()));
-                    ui.end_row();
+        let work = &works[work_id];
+        egui::Grid::new("work_info_grid").show(ui, |ui| {
+            ui.label("Offset");
+            ui.label(format!("{offset} of {}", self.work_filtered.len()));
+            ui.end_row();
 
-                    ui.label("Name");
-                    ui.label(work.name());
-                    ui.end_row();
+            ui.label("Name");
+            ui.label(work.name());
+            ui.end_row();
 
-                    ui.label("Date");
-                    ui.label(format!("{}", work.date()));
-                    ui.end_row();
+            ui.label("Date");
+            ui.label(format!("{}", work.date()));
+            ui.end_row();
 
-                    ui.label("Preview");
-                    ui.label(work.preview_url());
-                    ui.end_row();
+            ui.label("Preview");
+            ui.label(work.preview_url());
+            ui.end_row();
 
-                    ui.label("Screen");
-                    ui.label(work.screen_url());
-                    ui.end_row();
+            ui.label("Screen");
+            ui.label(work.screen_url());
+            ui.end_row();
 
-                    ui.label("Archive");
-                    ui.label(work.archive_url().unwrap_or(""));
-                    ui.end_row();
+            ui.label("Archive");
+            ui.label(work.archive_url().unwrap_or(""));
+            ui.end_row();
 
-                    if let Some(path) = work.screen_path() {
-                        let path = self.data_dir.join(path);
-                        if ui.button("Path 📋").clicked() {
-                            ui.ctx().copy_text(path.display().to_string());
-                        }
-                        ui.label(path.display().to_string());
-                        ui.end_row();
-                    }
-                });
-                ui.label(" ");
-                ui.heading("Tags");
-                ui.separator();
-                for tag in work.tags() {
-                    if self.tag_selection.ui_for_tag(tag, ui) {
-                        changed = true;
-                    }
+            if let Some(path) = work.screen_path() {
+                let path = self.data_dir.join(path);
+                if ui.button("Path 📋").clicked() {
+                    ui.ctx().copy_text(path.display().to_string());
                 }
+                ui.label(path.display().to_string());
+                ui.end_row();
+            }
+        });
+        ui.label(" ");
+        ui.heading("Tags");
+        ui.separator();
+        for tag in work.tags() {
+            if self.tag_selection.ui_for_tag(tag, ui) {
+                changed = true;
             }
         }
         if changed {
@@ -301,13 +323,7 @@ impl UxWork {
         }
     }
 
-    pub fn gallery_ui(
-        &mut self,
-        host: &mut PluginHost,
-        db: &DbHandle,
-        perf: &mut PerfTrack,
-        ui: &mut egui::Ui,
-    ) {
+    pub fn gallery_ui(&mut self, db: &DbThreads, perf: &mut PerfTrack, ui: &mut egui::Ui) {
         if self.tag_selection.is_empty() {
             self.selected = None;
         }
@@ -430,7 +446,11 @@ impl UxWork {
 
                             frm.show(ui, |ui| {
                                 rsz.show(ui, |ui| {
-                                    if ui.add(btn).clicked() {
+                                    let resp = ui.add(btn);
+                                    if is_selected {
+                                        resp.scroll_to_me(None);
+                                    }
+                                    if resp.clicked() {
                                         self.selected = Some(work_offset);
                                     }
                                 });

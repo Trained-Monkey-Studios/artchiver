@@ -1,17 +1,17 @@
-use crate::shared::progress::HostUpdateSender;
-use crate::shared::update::DataUpdate;
 use crate::{
-    shared::progress::{LogSender, ProgressSender},
-    sync::db::model::string_to_rarray,
+    shared::progress::{HostUpdateSender, LogSender, ProgressSender},
+    sync::db::{handle::report_slow_query, model::string_to_rarray},
 };
 use anyhow::{Result, ensure};
 use artchiver_sdk::Work;
 use jiff::civil::Date;
+use log::{debug, warn};
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Row, params};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct WorkId(i64);
@@ -36,6 +36,7 @@ pub struct DbWork {
 
 impl DbWork {
     pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        let tag_str: String = row.get("tags")?;
         Ok(Self {
             id: WorkId(row.get("id")?),
             name: row.get("name")?,
@@ -53,7 +54,7 @@ impl DbWork {
             archive_path: row
                 .get::<&str, Option<String>>("archive_path")?
                 .map(|s| s.into()),
-            tags: Vec::new(),
+            tags: tag_str.split(',').map(|s| s.to_string()).collect(),
         })
     }
 
@@ -115,7 +116,6 @@ pub fn upsert_works(
     works: &[Work],
     log: &mut LogSender,
     progress: &mut ProgressSender,
-    host: &mut HostUpdateSender,
 ) -> Result<()> {
     let total_count = works.len();
     let mut current_pos = 0;
@@ -123,7 +123,7 @@ pub fn upsert_works(
 
     for chunk in works.chunks(1_000) {
         log.trace(format!("db->upsert_works chunk of {}", chunk.len()));
-        let mut xaction = conn.transaction()?;
+        let xaction = conn.transaction()?;
         {
             let mut insert_work_stmt = xaction.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")?;
             let mut select_tag_ids_from_names =
@@ -156,6 +156,8 @@ pub fn upsert_works(
                     ));
                     continue;
                 };
+                log::trace!("db->upsert_works with tags: {:?}", work.tags());
+                log.trace(format!("db->upsert_works with tags: {:?}", work.tags()));
                 let tag_ids: Vec<i64> = select_tag_ids_from_names
                     .query_map([string_to_rarray(work.tags())], |row| row.get(0))?
                     .flatten()
@@ -200,23 +202,33 @@ pub fn update_work_paths(
 }
 
 pub fn list_works_with_any_tags(
-    conn: PooledConnection<SqliteConnectionManager>,
+    conn: &PooledConnection<SqliteConnectionManager>,
     tags: &[String],
 ) -> Result<Vec<DbWork>> {
     if tags.is_empty() {
         return Ok(Vec::new());
     }
+    let start = Instant::now();
 
     // If we decide we *have* to apply AND up front, it looks like this.
     // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
-    let query = r#"SELECT works.* FROM works
-            INNER JOIN work_tags ON work_tags.work_id = works.id
-            INNER JOIN tags ON work_tags.tag_id = tags.id
-            WHERE tags.name IN rarray(?)"#;
-    // dbg!(query.replace("\n            ", " "));
+    let query = r#"
+        SELECT works.*, GROUP_CONCAT(tags.name) as tags FROM works
+        LEFT JOIN work_tags ON work_tags.work_id = works.id
+        LEFT JOIN tags ON work_tags.tag_id = tags.id
+        WHERE works.id IN (
+            SELECT works.id FROM works
+            LEFT JOIN work_tags ON work_tags.work_id = works.id
+            LEFT JOIN tags ON work_tags.tag_id = tags.id
+            WHERE tags.name IN rarray(?)
+        )
+        GROUP BY works.id
+    "#;
     let mut stmt = conn.prepare(query)?;
-    Ok(stmt
+    let out = stmt
         .query_map([string_to_rarray(tags)], DbWork::from_row)?
         .flatten()
-        .collect())
+        .collect();
+    report_slow_query(start, "list_works_with_any_tags", query);
+    Ok(out)
 }

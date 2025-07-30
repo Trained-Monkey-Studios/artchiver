@@ -261,7 +261,7 @@ fn refresh_works_for_tag(
     // Ask the plugin to figure out what works we have for this tag.
     progress.set_spinner();
     log.trace(format!("Calling plugin->list_works_for_tag(\"{tag}\")"));
-    let mut works = plugin
+    let works = plugin
         .call::<String, Json<Vec<Work>>>("list_works_for_tag", tag.to_owned())?
         .0;
 

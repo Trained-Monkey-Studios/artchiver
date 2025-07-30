@@ -1,11 +1,16 @@
+use crate::sync::db::handle::DbThreads;
 use crate::{
     shared::{tag::TagSet, update::DataUpdate},
     sync::{
-        db::{handle::DbHandle, model::OrderDir, tag::DbTag},
+        db::{
+            model::OrderDir,
+            tag::{DbTag, TagId},
+        },
         plugin::host::PluginHost,
     },
 };
 use itertools::Itertools as _;
+use log::trace;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -69,23 +74,26 @@ pub struct UxTag {
     order: TagOrder,
 
     #[serde(skip, default)]
-    tag_all: Option<HashMap<i64, DbTag>>,
+    tag_all: Option<HashMap<TagId, DbTag>>,
 
     // Ordered subset of DbTag id's to actually draw each frame.
     #[serde(skip, default)]
-    tag_filtered: Vec<i64>,
+    tag_filtered: Vec<TagId>,
 }
 
 impl UxTag {
-    pub fn startup(&mut self, db_handle: &DbHandle) {
+    pub fn startup(&mut self, db: &DbThreads) {
+        trace!("Starting up tag UX");
+
         // Reload tags from DB at startup so we don't have to put them in the app state.
-        db_handle.get_tags();
+        db.get_tags();
     }
 
-    pub fn handle_updates(&mut self, db: &DbHandle, updates: &[DataUpdate]) {
+    pub fn handle_updates(&mut self, db: &DbThreads, updates: &[DataUpdate]) {
         for update in updates {
             match update {
                 DataUpdate::InitialTags(tags) => {
+                    trace!("Received {} initial tags", tags.len());
                     self.tag_all = Some(tags.clone());
                     self.reproject_tags();
                 }
@@ -94,16 +102,6 @@ impl UxTag {
                         for (tag_id, count) in counts {
                             if let Some(tag) = tags.get_mut(tag_id) {
                                 tag.set_local_count(*count);
-                            }
-                        }
-                    }
-                    self.reproject_tags();
-                }
-                DataUpdate::TagsNetworkCounts(counts) => {
-                    if let Some(tags) = &mut self.tag_all {
-                        for (tag_id, count) in counts {
-                            if let Some(tag) = tags.get_mut(tag_id) {
-                                tag.set_network_count(*count);
                             }
                         }
                     }
@@ -124,24 +122,25 @@ impl UxTag {
             self.tag_filtered = tags
                 .iter()
                 .filter(|(_id, t)| t.name().contains(&self.name_filter))
-                // FIXME: include plugin sources in the tags list response
-                // .filter(|(_, t)| t.sources().contains(self.tag_source))
+                // include only selected plugin sources in the tags list response
+                .filter(|(_, t)| {
+                    self.source_filter.is_none()
+                        || t.sources().contains(self.source_filter.as_ref().unwrap())
+                })
                 // FIXME: add UX and filter to hide, browse hidden tags, and unhide
                 // .filter(|(_, t)| t.hidden)
                 .sorted_by(|(_, a), (_, b)| {
                     let ord = match self.order.column {
                         TagSortCol::Name => a.name().cmp(b.name()),
-                        TagSortCol::LocalCount => a.actual_work_count().cmp(&b.actual_work_count()),
-                        TagSortCol::NetworkCount => {
-                            a.presumed_work_count().cmp(&b.presumed_work_count())
-                        }
+                        TagSortCol::LocalCount => a.local_count().cmp(&b.local_count()),
+                        TagSortCol::NetworkCount => a.network_count().cmp(&b.network_count()),
                     };
                     match self.order.order {
                         OrderDir::Asc => ord,
                         OrderDir::Desc => ord.reverse(),
                     }
                 })
-                .map(|(&id, _)| id)
+                .map(|(id, _)| *id)
                 .collect();
         }
     }
@@ -236,12 +235,15 @@ impl UxTag {
                                 host.refresh_works_for_tag(tag).ok();
                             }
                             ui.label("   ");
-                            let content = if let Some(network_count) = tag.presumed_work_count()
-                                && let Some(local_count) = tag.actual_work_count()
-                            {
-                                format!("{} ({} of {})", tag.name(), local_count, network_count)
+                            let content = if let Some(local_count) = tag.local_count() {
+                                format!(
+                                    "{} ({} of {})",
+                                    tag.name(),
+                                    local_count,
+                                    tag.network_count()
+                                )
                             } else {
-                                format!("{} (loading...)", tag.name())
+                                format!("{} ([loading...] of {})", tag.name(), tag.network_count())
                             };
                             if status.disabled() {
                                 ui.label(egui::RichText::new(content).strikethrough());

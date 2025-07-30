@@ -28,8 +28,13 @@ pub struct TagSet {
 
 impl TagSet {
     pub fn matches(&self, work: &DbWork) -> bool {
-        work.tags().all(|t| self.enabled.contains(t))
-            && !work.tags().any(|t| self.disabled.contains(t))
+        self.enabled
+            .iter()
+            .all(|t| work.tags().contains(t.as_str()))
+            && !self
+                .disabled
+                .iter()
+                .any(|t| work.tags().contains(t.as_str()))
     }
 
     pub fn status(&self, tag: &str) -> TagStatus {
@@ -110,40 +115,47 @@ impl TagSet {
 
     pub fn ui_for_tag(&mut self, tag: &str, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
-        let status = self.status(tag);
-        if ui
-            .add(egui::Button::new("✔").small().selected(status.enabled()))
-            .on_hover_text("replace filter")
-            .clicked()
-        {
-            self.clear();
-            self.enable(tag);
-            changed = true;
-        }
-        if ui
-            .add(egui::Button::new("+").small().selected(status.enabled()))
-            .on_hover_text("add filter")
-            .clicked()
-        {
-            self.enable(tag);
-            changed = true;
-        }
-        if ui
-            .add(egui::Button::new(" ").small())
-            .on_hover_text("remove filter")
-            .clicked()
-        {
-            self.unselect(tag);
-            changed = true;
-        }
-        if ui
-            .add(egui::Button::new("x").small().selected(status.disabled()))
-            .on_hover_text("filter on negation")
-            .clicked()
-        {
-            self.disable(tag);
-            changed = true;
-        }
+        ui.horizontal(|ui| {
+            let prior_spacing = ui.style().spacing.item_spacing.x;
+            ui.style_mut().spacing.item_spacing.x = 0.0;
+            let status = self.status(tag);
+            if ui
+                .add(egui::Button::new("✔").small().selected(status.enabled()))
+                .on_hover_text("replace filter")
+                .clicked()
+            {
+                self.clear();
+                self.enable(tag);
+                changed = true;
+            }
+            if ui
+                .add(egui::Button::new("+").small().selected(status.enabled()))
+                .on_hover_text("add filter")
+                .clicked()
+            {
+                self.enable(tag);
+                changed = true;
+            }
+            if ui
+                .add(egui::Button::new(" ").small())
+                .on_hover_text("remove filter")
+                .clicked()
+            {
+                self.unselect(tag);
+                changed = true;
+            }
+            if ui
+                .add(egui::Button::new("x").small().selected(status.disabled()))
+                .on_hover_text("filter on negation")
+                .clicked()
+            {
+                self.disable(tag);
+                changed = true;
+            }
+            ui.label("  ");
+            ui.label(tag);
+            ui.style_mut().spacing.item_spacing.x = prior_spacing;
+        });
         changed
     }
 }

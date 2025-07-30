@@ -1,15 +1,17 @@
-use crate::sync::db::work::{DbWork, WorkId};
 use crate::{
     shared::update::DataUpdate,
-    sync::db::plugin::{DbPlugin, PluginId},
+    sync::db::{
+        plugin::{DbPlugin, PluginId},
+        work::{DbWork, WorkId},
+    },
 };
 use anyhow::Result;
-use artchiver_sdk::{PluginMetadata, Work};
+use artchiver_sdk::PluginMetadata;
 use crossbeam::channel::{self, Receiver, Sender};
 use log::{Level, debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
-use std::{fmt, path::Path};
 use std::collections::HashMap;
+use std::{fmt, path::Path};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum Progress {
@@ -170,17 +172,15 @@ impl HostUpdateSender {
         })?;
         Ok(())
     }
-    
-    pub fn fetch_works_completed(
-        &mut self,
-        works: HashMap<WorkId, DbWork>,
-    ) -> Result<()> {
+
+    pub fn fetch_works_completed(&mut self, works: HashMap<WorkId, DbWork>) -> Result<()> {
         assert_ne!(
             self.source,
             UpdateSource::Unknown,
             "task completed before init"
         );
-        self.tx_to_runner.send(DataUpdate::FetchWorksComplete { works })?;
+        self.tx_to_runner
+            .send(DataUpdate::FetchWorksComplete { works })?;
         Ok(())
     }
 }

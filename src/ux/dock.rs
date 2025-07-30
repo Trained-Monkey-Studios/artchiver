@@ -1,12 +1,7 @@
+use crate::sync::db::handle::DbThreads;
 use crate::{
-    shared::{
-        environment::Environment, performance::PerfTrack, progress::UpdateSource,
-        update::DataUpdate,
-    },
-    sync::{
-        db::handle::DbHandle,
-        plugin::host::{PluginHandle, PluginHost},
-    },
+    shared::{performance::PerfTrack, progress::UpdateSource, update::DataUpdate},
+    sync::plugin::host::{PluginHandle, PluginHost},
     ux::{db::UxDb, tag::UxTag, work::UxWork},
 };
 use anyhow::Result;
@@ -106,15 +101,15 @@ pub struct UxState {
 struct SyncViewer<'a> {
     sync: &'a mut PluginHost,
     state: &'a mut UxState,
-    db_handle: &'a DbHandle,
+    db_threads: &'a DbThreads,
 }
 
 impl<'a> SyncViewer<'a> {
-    fn wrap(sync: &'a mut PluginHost, state: &'a mut UxState, db_handle: &'a DbHandle) -> Self {
+    fn wrap(sync: &'a mut PluginHost, state: &'a mut UxState, db_threads: &'a DbThreads) -> Self {
         Self {
             sync,
             state,
-            db_handle,
+            db_threads,
         }
     }
 
@@ -237,7 +232,7 @@ impl<'a> SyncViewer<'a> {
         self.state.tag_ux.ui(&mut tag_set, self.sync, ui);
         self.state
             .work_ux
-            .set_tag_selection(tag_set, self.db_handle);
+            .set_tag_selection(tag_set, self.db_threads);
         self.state.perf.sample("Show Tags", start.elapsed());
     }
 
@@ -245,12 +240,12 @@ impl<'a> SyncViewer<'a> {
         let start = Instant::now();
         self.state
             .work_ux
-            .gallery_ui(self.sync, self.db_handle, &mut self.state.perf, ui);
+            .gallery_ui(self.db_threads, &mut self.state.perf, ui);
         self.state.perf.sample("Show Works", start.elapsed());
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
-        self.state.work_ux.info_ui(self.db_handle, ui);
+        self.state.work_ux.info_ui(self.db_threads, ui);
     }
 
     fn render_slideshow(&mut self, ctx: &egui::Context) {
@@ -331,14 +326,14 @@ impl Default for UxToplevel {
 }
 
 impl UxToplevel {
-    pub fn startup(&mut self, data_dir: &Path, db_handle: &DbHandle) {
-        self.state.tag_ux.startup(db_handle);
-        self.state.work_ux.startup(data_dir, db_handle);
+    pub fn startup(&mut self, data_dir: &Path, db: &DbThreads) {
+        self.state.tag_ux.startup(db);
+        self.state.work_ux.startup(data_dir, db);
     }
 
-    pub fn handle_updates(&mut self, updates: &[DataUpdate], db: &DbHandle) {
+    pub fn handle_updates(&mut self, updates: &[DataUpdate], db: &DbThreads) {
         // self.state.plugin_ux.handle_updates(updates);
-        self.state.db_ux.handle_updates(db, updates);
+        self.state.db_ux.handle_updates(updates);
         self.state.tag_ux.handle_updates(db, updates);
         self.state.work_ux.handle_updates(db, updates);
 
@@ -358,8 +353,7 @@ impl UxToplevel {
 
     pub fn main(
         &mut self,
-        _env: &Environment,
-        db: &DbHandle,
+        db: &DbThreads,
         host: &mut PluginHost,
         ctx: &egui::Context,
     ) -> Result<()> {

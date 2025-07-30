@@ -1,8 +1,13 @@
+use crate::sync::db::tag::TagId;
 use crate::{
-    shared::{environment::Environment, progress::ProgressMonitor, update::DataUpdate},
+    shared::{
+        environment::Environment,
+        progress::{HostUpdateSender, LogSender, ProgressMonitor, UpdateSource},
+        update::DataUpdate,
+    },
     sync::db::{
         plugin::{DbPlugin, PluginId},
-        tag::list_all_tags,
+        tag::{count_works_per_tag, list_all_tags},
         work::list_works_with_any_tags,
         writer::DbBgWriter,
     },
@@ -10,14 +15,15 @@ use crate::{
 use anyhow::Result;
 use artchiver_sdk::{Tag, Work};
 use crossbeam::channel::{self, Sender};
-use log::info;
+use log::{debug, info, trace, warn};
 use r2d2_sqlite::SqliteConnectionManager;
+use rayon::ThreadPool;
 use rusqlite::params;
+use std::time::{Duration, Instant};
 use std::{
     collections::{HashMap, HashSet},
     thread::{JoinHandle, spawn},
 };
-use crate::shared::progress::{HostUpdateSender, LogSender, UpdateSource};
 
 pub enum DbWriterRequest {
     UpsertTags {
@@ -46,7 +52,10 @@ pub struct DbHandle {
 }
 
 pub struct DbThreads {
+    db_pool: r2d2::Pool<SqliteConnectionManager>,
     writer_handle: JoinHandle<()>,
+    reader_pool: ThreadPool,
+    tx_to_app: Sender<DataUpdate>,
 }
 
 impl DbThreads {
@@ -65,7 +74,7 @@ pub fn connect_or_create(
     );
     let manager = SqliteConnectionManager::file(env.metadata_file_path())
         .with_init(|conn| rusqlite::vtab::array::load_module(conn));
-    let pool = r2d2::Pool::builder().build(manager)?;
+    let pool = r2d2::Pool::builder().max_size(32).build(manager)?;
     let conn = pool.get()?;
     // FIXME: use library intrinsics to set these rather than `execute`
     let params = [("journal_mode", "WAL", "wal")];
@@ -115,9 +124,17 @@ pub fn connect_or_create(
         tx_to_app: progress_mon.monitor_channel(),
         tx_to_writer,
     };
-    let mut writer = DbBgWriter::new(pool, rx_writer_from_app, progress_mon.monitor_channel());
+    let reader_pool = rayon::ThreadPoolBuilder::new().build()?;
+    let mut writer = DbBgWriter::new(
+        pool.clone(),
+        rx_writer_from_app,
+        progress_mon.monitor_channel(),
+    );
     let db_threads = DbThreads {
+        db_pool: pool.clone(),
         writer_handle: spawn(move || if let Err(e) = writer.main() {}),
+        reader_pool,
+        tx_to_app: progress_mon.monitor_channel(),
     };
 
     Ok((db_handle, db_threads))
@@ -165,38 +182,6 @@ impl DbHandle {
         Ok(())
     }
 
-    // READ SIDE /////////////////////////////////////
-    pub fn get_tags(&self) {
-        let conn = self.pool.get().expect("failed to get connection");
-        let tx_to_app = self.tx_to_app.clone();
-        rayon::spawn(move || {
-            let tags = list_all_tags(&conn).expect("failed to list tags");
-            let tags = tags
-                .iter()
-                .map(|t| (t.id(), t.to_owned()))
-                .collect::<HashMap<_, _>>();
-            tx_to_app.send(DataUpdate::InitialTags(tags)).unwrap();
-        });
-    }
-
-    pub fn get_works(&self, tags: &[String]) {
-        let mut host = HostUpdateSender::wrap(UpdateSource::DbReader, self.tx_to_app.clone());
-        let mut log = LogSender::wrap(UpdateSource::DbReader, self.tx_to_app.clone());
-        log.trace(format!("Fetching works for tags: {tags:?}"));
-        let tags = tags.to_owned();
-        let conn = self.pool.get().expect("failed to get connection");
-        rayon::spawn(move || {
-            log.trace(format!("BG Task spawned to fetch works for tags: {tags:?}"));
-            let works = list_works_with_any_tags(conn, &tags).expect("failed to list tags");
-            log.trace(format!("BG Task finished collecting {} works", works.len()));
-            let works = works
-                .into_iter()
-                .map(|w| (w.id(), w))
-                .collect::<HashMap<_, _>>();
-            host.fetch_works_completed(works).expect("connection closed");
-        });
-    }
-
     // PLUGINS ///////////////////////////////////////
     pub fn sync_upsert_plugin(&self, plugin_name: &str) -> Result<DbPlugin> {
         let conn = self.pool.get()?;
@@ -223,7 +208,7 @@ impl DbHandle {
         Ok(DbPlugin::new(plugin_id, plugin_name.to_owned(), configs))
     }
 
-    pub fn sync_list_plugins_for_tag(&self, tag_id: i64) -> Result<HashSet<PluginId>> {
+    pub fn sync_list_plugins_for_tag(&self, tag_id: TagId) -> Result<HashSet<PluginId>> {
         let conn = self.pool.get()?;
         let query = r#"SELECT DISTINCT p.id
             FROM plugins AS p
@@ -255,5 +240,58 @@ impl DbHandle {
         }
         xaction.commit()?;
         Ok(())
+    }
+}
+
+impl DbThreads {
+    pub fn get_tags(&self) {
+        let conn = self.db_pool.get().expect("failed to get connection");
+        let tx_to_app = self.tx_to_app.clone();
+        self.reader_pool.spawn(move || {
+            let tags = list_all_tags(&conn).expect("failed to list tags");
+            let tags = tags
+                .iter()
+                .map(|t| (t.id(), t.to_owned()))
+                .collect::<HashMap<_, _>>();
+            trace!("Found {} tags", tags.len());
+            tx_to_app.send(DataUpdate::InitialTags(tags)).unwrap();
+            trace!("Dispatched initial tags to UX; getting counts");
+
+            let work_counts = count_works_per_tag(&conn).expect("failed to count works per tag");
+            tx_to_app
+                .send(DataUpdate::TagsLocalCounts(work_counts))
+                .expect("db reader disconnect");
+            trace!("Dispatching tag local counts to UX");
+        });
+    }
+
+    pub fn get_works(&self, tags: &[String]) {
+        let mut host = HostUpdateSender::wrap(UpdateSource::DbReader, self.tx_to_app.clone());
+        let mut log = LogSender::wrap(UpdateSource::DbReader, self.tx_to_app.clone());
+
+        log.trace(format!("Fetching works for tags: {tags:?}"));
+        let tags = tags.to_owned();
+        let conn = self.db_pool.get().expect("failed to get connection");
+        self.reader_pool.spawn(move || {
+            let works = list_works_with_any_tags(&conn, &tags).expect("failed to list tags");
+            let works = works
+                .into_iter()
+                .map(|w| (w.id(), w))
+                .collect::<HashMap<_, _>>();
+            log.trace(format!("Finished collecting {} works", works.len()));
+            host.fetch_works_completed(works)
+                .expect("connection closed");
+        });
+    }
+}
+
+pub fn report_slow_query(start: Instant, name: &str, query: &str) {
+    let elapsed = start.elapsed();
+    if elapsed > Duration::from_millis(30) {
+        warn!("Slow query {name} took {elapsed:?}");
+        debug!(
+            "SQL:    {}",
+            query.replace('\n', " ").replace("            ", " ")
+        );
     }
 }

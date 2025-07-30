@@ -2,7 +2,7 @@ use crate::{
     shared::progress::{Progress, UpdateSource},
     sync::db::{
         plugin::DbPlugin,
-        tag::DbTag,
+        tag::{DbTag, TagId},
         work::{DbWork, WorkId},
     },
 };
@@ -55,9 +55,8 @@ pub enum DataUpdate {
     },
 
     // Fulfills a request by the UX to get the current list of tags.
-    InitialTags(HashMap<i64, DbTag>),
-    TagsLocalCounts(Vec<(i64, u64)>),
-    TagsNetworkCounts(Vec<(i64, u64)>),
+    InitialTags(HashMap<TagId, DbTag>),
+    TagsLocalCounts(Vec<(TagId, u64)>),
 
     // Fulfills a request by the UX to get the current list of works for a tag.
     FetchWorksComplete {

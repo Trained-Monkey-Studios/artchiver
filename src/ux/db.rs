@@ -1,9 +1,6 @@
-use crate::{
-    shared::{
-        progress::{Progress, UpdateSource},
-        update::DataUpdate,
-    },
-    sync::db::handle::DbHandle,
+use crate::shared::{
+    progress::{Progress, UpdateSource},
+    update::DataUpdate,
 };
 use log::log;
 use serde::{Deserialize, Serialize};
@@ -21,7 +18,7 @@ pub struct UxDb {
 impl UxDb {
     const MAX_MESSAGES: usize = 20;
 
-    pub fn handle_updates(&mut self, _db: &DbHandle, updates: &[DataUpdate]) {
+    pub fn handle_updates(&mut self, updates: &[DataUpdate]) {
         for update in updates {
             match update {
                 DataUpdate::Log {

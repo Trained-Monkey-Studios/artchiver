@@ -70,7 +70,7 @@ impl DbBgWriter {
                 for_tag,
                 works,
             } => {
-                upsert_works(self.pool.get()?, &works, &mut log, &mut progress, &mut host)?;
+                upsert_works(self.pool.get()?, &works, &mut log, &mut progress)?;
                 host.note_works_were_refreshed(for_tag)?;
             }
             DbWriterRequest::SetWorkDownloadPaths {

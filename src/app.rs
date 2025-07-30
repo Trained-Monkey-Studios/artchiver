@@ -68,7 +68,7 @@ impl ArtchiverApp {
             Default::default()
         };
         app.toplevel
-            .startup(&app.environment().data_dir(), &app.db_handle);
+            .startup(&app.environment().data_dir(), &app.db_threads);
         app
     }
 
@@ -83,10 +83,10 @@ impl eframe::App for ArtchiverApp {
         let updates = self.progress_mon.read();
         self.db_handle.handle_updates(&updates);
         self.host.handle_updates(&updates);
-        self.toplevel.handle_updates(&updates, &self.db_handle);
+        self.toplevel.handle_updates(&updates, &self.db_threads);
 
         self.toplevel
-            .main(&self.env, &self.db_handle, &mut self.host, ctx)
+            .main(&self.db_threads, &mut self.host, ctx)
             .expect("ux update error");
     }
 
