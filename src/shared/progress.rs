@@ -1,3 +1,4 @@
+use crate::sync::db::tag::{DbTag, TagId};
 use crate::{
     shared::update::DataUpdate,
     sync::db::{
@@ -132,21 +133,11 @@ impl HostUpdateSender {
     }
 
     pub fn note_tags_were_refreshed(&mut self) -> Result<()> {
-        assert_ne!(
-            self.source,
-            UpdateSource::Unknown,
-            "tags refreshed before init"
-        );
         self.tx_to_runner.send(DataUpdate::TagsWereRefreshed)?;
         Ok(())
     }
 
     pub fn note_works_were_refreshed(&mut self, for_tag: String) -> Result<()> {
-        assert_ne!(
-            self.source,
-            UpdateSource::Unknown,
-            "tags refreshed before init"
-        );
         self.tx_to_runner
             .send(DataUpdate::WorksWereUpdatedForTag { for_tag })?;
         Ok(())
@@ -159,11 +150,6 @@ impl HostUpdateSender {
         screen_path: &str,
         archive_path: Option<&str>,
     ) -> Result<()> {
-        assert_ne!(
-            self.source,
-            UpdateSource::Unknown,
-            "task completed before init"
-        );
         self.tx_to_runner.send(DataUpdate::WorkDownloadCompleted {
             id,
             preview_path: preview_path.to_owned(),
@@ -174,13 +160,19 @@ impl HostUpdateSender {
     }
 
     pub fn fetch_works_completed(&mut self, works: HashMap<WorkId, DbWork>) -> Result<()> {
-        assert_ne!(
-            self.source,
-            UpdateSource::Unknown,
-            "task completed before init"
-        );
         self.tx_to_runner
             .send(DataUpdate::FetchWorksComplete { works })?;
+        Ok(())
+    }
+
+    pub fn fetch_tags_initial_complete(&mut self, tags: HashMap<TagId, DbTag>) -> Result<()> {
+        self.tx_to_runner.send(DataUpdate::InitialTags(tags))?;
+        Ok(())
+    }
+
+    pub fn fetch_tags_local_counts_complete(&mut self, counts: Vec<(TagId, u64)>) -> Result<()> {
+        self.tx_to_runner
+            .send(DataUpdate::TagsLocalCounts(counts))?;
         Ok(())
     }
 }

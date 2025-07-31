@@ -112,9 +112,16 @@ impl UxTag {
                     self.tag_filtered = vec![];
                     db.get_tags();
                 }
+                DataUpdate::WorksWereUpdatedForTag { .. } => {
+                    db.get_tag_local_counts();
+                }
                 _ => {}
             }
         }
+    }
+
+    pub fn tags(&self) -> Option<&HashMap<TagId, DbTag>> {
+        self.tag_all.as_ref()
     }
 
     fn reproject_tags(&mut self) {
@@ -201,35 +208,35 @@ impl UxTag {
                     .show(ui, |ui| {
                         for tag_id in &self.tag_filtered[row_range] {
                             let tag = all_tags.get(tag_id).expect("missing tag");
-                            let status = tag_set.status(tag.name());
+                            let status = tag_set.status(tag);
                             if ui
                                 .add(egui::Button::new("✔").small().selected(status.enabled()))
                                 .on_hover_text("replace filter")
                                 .clicked()
                             {
                                 tag_set.clear();
-                                tag_set.enable(tag.name());
+                                tag_set.enable(tag);
                             }
                             if ui
                                 .add(egui::Button::new("+").small().selected(status.enabled()))
                                 .on_hover_text("add filter")
                                 .clicked()
                             {
-                                tag_set.enable(tag.name());
+                                tag_set.enable(tag);
                             }
                             if ui
                                 .add(egui::Button::new(" ").small())
                                 .on_hover_text("remove filter")
                                 .clicked()
                             {
-                                tag_set.unselect(tag.name());
+                                tag_set.unselect(tag);
                             }
                             if ui
                                 .add(egui::Button::new("x").small().selected(status.disabled()))
                                 .on_hover_text("filter on negation")
                                 .clicked()
                             {
-                                tag_set.disable(tag.name());
+                                tag_set.disable(tag);
                             }
                             ui.label("   ");
                             if ui.button("⟳").on_hover_text("refresh works").clicked() {

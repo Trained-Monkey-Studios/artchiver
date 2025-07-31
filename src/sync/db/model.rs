@@ -42,6 +42,8 @@ pub const MIGRATIONS: [&str; 18] = [
         name TEXT NOT NULL,
         artist_id INTEGER NOT NULL,
         date TIMESTAMP,
+        favorite BOOLEAN NOT NULL DEFAULT false,
+        hidden BOOLEAN NOT NULL DEFAULT false,
         preview_url TEXT NOT NULL,
         screen_url TEXT NOT NULL UNIQUE,
         archive_url TEXT,

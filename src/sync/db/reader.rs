@@ -4,11 +4,12 @@ use crate::{
         update::DataUpdate,
     },
     sync::db::{
-        model::{report_slow_query, string_to_rarray},
+        model::report_slow_query,
         tag::{DbTag, TagId},
         work::DbWork,
     },
 };
+use anyhow::Result;
 use crossbeam::channel::Sender;
 use log::trace;
 use r2d2::PooledConnection;
@@ -20,7 +21,9 @@ use std::{collections::HashMap, mem, thread, thread::JoinHandle, time::Instant};
 pub struct DbReadHandle {
     pool: r2d2::Pool<SqliteConnectionManager>,
     reader_threads: ThreadPool,
-    tx_to_app: Sender<DataUpdate>,
+
+    log: LogSender,
+    host: HostUpdateSender,
 
     // Note: the read handle is explicitly not clone because it also owns the threads. Yes, even
     //       the write thread. This is weird, but is purely for practical reasons as the reader
@@ -38,7 +41,10 @@ impl DbReadHandle {
         Self {
             pool,
             reader_threads,
-            tx_to_app,
+
+            log: LogSender::wrap(UpdateSource::DbReader, tx_to_app.clone()),
+            host: HostUpdateSender::wrap(UpdateSource::DbReader, tx_to_app),
+
             writer_handle,
         }
     }
@@ -58,7 +64,7 @@ impl DbReadHandle {
 
     pub fn get_tags(&self) {
         let conn = self.pool.get().expect("failed to get connection");
-        let tx_to_app = self.tx_to_app.clone();
+        let mut host = self.host.clone();
         self.reader_threads.spawn(move || {
             let tags = list_all_tags(&conn).expect("failed to list tags");
             let tags = tags
@@ -66,28 +72,35 @@ impl DbReadHandle {
                 .map(|t| (t.id(), t.to_owned()))
                 .collect::<HashMap<_, _>>();
             trace!("Found {} tags", tags.len());
-            tx_to_app
-                .send(DataUpdate::InitialTags(tags))
+            host.fetch_tags_initial_complete(tags)
                 .expect("db reader disconnect");
             trace!("Dispatched initial tags to UX; getting counts");
 
             let work_counts = count_works_per_tag(&conn).expect("failed to count works per tag");
-            tx_to_app
-                .send(DataUpdate::TagsLocalCounts(work_counts))
+            host.fetch_tags_local_counts_complete(work_counts)
                 .expect("db reader disconnect");
             trace!("Dispatching tag local counts to UX");
         });
     }
 
-    pub fn get_works(&self, tags: &[String]) {
-        let mut host = HostUpdateSender::wrap(UpdateSource::DbReader, self.tx_to_app.clone());
-        let mut log = LogSender::wrap(UpdateSource::DbReader, self.tx_to_app.clone());
+    pub fn get_tag_local_counts(&self) {
+        let conn = self.pool.get().expect("failed to get connection");
+        let mut host = self.host.clone();
+        self.reader_threads.spawn(move || {
+            let work_counts = count_works_per_tag(&conn).expect("failed to count works per tag");
+            host.fetch_tags_local_counts_complete(work_counts)
+                .expect("db reader disconnect");
+            trace!("Dispatching tag local counts to UX");
+        });
+    }
 
-        log.trace(format!("Fetching works for tags: {tags:?}"));
-        let tags = tags.to_owned();
+    pub fn get_works_for_tag(&self, tag_id: TagId) {
+        let mut log = self.log.clone();
+        let mut host = self.host.clone();
+        log.trace(format!("Fetching works for tag: {tag_id:?}"));
         let conn = self.pool.get().expect("failed to get connection");
         self.reader_threads.spawn(move || {
-            let works = list_works_with_any_tags(&conn, &tags).expect("failed to list tags");
+            let works = list_works_with_tag(&conn, tag_id).expect("failed to list works");
             let works = works
                 .into_iter()
                 .map(|w| (w.id(), w))
@@ -95,45 +108,88 @@ impl DbReadHandle {
             log.trace(format!("Finished collecting {} works", works.len()));
             host.fetch_works_completed(works)
                 .expect("connection closed");
+            trace!("Dispatching fetched works to UX");
+        });
+    }
+
+    pub fn get_favorite_works(&self) {
+        let mut log = self.log.clone();
+        let mut host = self.host.clone();
+        log.trace("Fetching favorite works");
+        let conn = self.pool.get().expect("failed to get connection");
+        self.reader_threads.spawn(move || {
+            let works = list_favorite_works(&conn).expect("failed to list favorites");
+            let works = works
+                .into_iter()
+                .map(|w| (w.id(), w))
+                .collect::<HashMap<_, _>>();
+            log.trace(format!("Finished collecting {} works", works.len()));
+            host.fetch_works_completed(works)
+                .expect("connection closed");
+            trace!("Dispatching fetched works to UX");
         });
     }
 }
 
-pub fn list_works_with_any_tags(
+pub fn list_works_with_tag(
     conn: &PooledConnection<SqliteConnectionManager>,
-    tags: &[String],
-) -> anyhow::Result<Vec<DbWork>> {
-    if tags.is_empty() {
-        return Ok(Vec::new());
-    }
+    tag_id: TagId,
+) -> Result<Vec<DbWork>> {
     let start = Instant::now();
 
+    // TODO: stream back incrementally?
     // If we decide we *have* to apply AND up front, it looks like this.
     // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
     let query = r#"
-        SELECT works.*, GROUP_CONCAT(tags.name) as tags FROM works
+        SELECT works.*, GROUP_CONCAT(tags.id) as tags FROM works
         LEFT JOIN work_tags ON work_tags.work_id = works.id
         LEFT JOIN tags ON work_tags.tag_id = tags.id
         WHERE works.id IN (
             SELECT works.id FROM works
             LEFT JOIN work_tags ON work_tags.work_id = works.id
             LEFT JOIN tags ON work_tags.tag_id = tags.id
-            WHERE tags.name IN rarray(?)
+            WHERE tags.id = ?
         )
         GROUP BY works.id
     "#;
     let mut stmt = conn.prepare(query)?;
-    let out = stmt
-        .query_map([string_to_rarray(tags)], DbWork::from_row)?
-        .flatten()
-        .collect();
+    let out = stmt.query_map([tag_id], DbWork::from_row)?.try_fold(
+        Vec::new(),
+        |mut expand, item| -> Result<Vec<DbWork>> {
+            expand.push(item?);
+            Ok(expand)
+        },
+    )?;
     report_slow_query(start, "list_works_with_any_tags", query);
     Ok(out)
 }
 
-pub fn list_all_tags(
+pub fn list_favorite_works(
     conn: &PooledConnection<SqliteConnectionManager>,
-) -> anyhow::Result<Vec<DbTag>> {
+) -> Result<Vec<DbWork>> {
+    let start = Instant::now();
+    let query = r#"
+        SELECT works.*, GROUP_CONCAT(tags.id) as tags FROM works
+        LEFT JOIN work_tags ON work_tags.work_id = works.id
+        LEFT JOIN tags ON work_tags.tag_id = tags.id
+        WHERE works.id IN (
+            SELECT works.id FROM works WHERE works.favorite = 1
+        )
+        GROUP BY works.id
+    "#;
+    let mut stmt = conn.prepare(query)?;
+    let out = stmt.query_map((), DbWork::from_row)?.try_fold(
+        Vec::new(),
+        |mut expand, item| -> Result<Vec<DbWork>> {
+            expand.push(item?);
+            Ok(expand)
+        },
+    )?;
+    report_slow_query(start, "list_favorite_works", query);
+    Ok(out)
+}
+
+pub fn list_all_tags(conn: &PooledConnection<SqliteConnectionManager>) -> Result<Vec<DbTag>> {
     let query = r#"
     SELECT tags.id, tags.name, tags.kind, tags.wiki_url, tags.favorite,
             SUM(plugin_tags.presumed_work_count) AS network_count,
@@ -150,7 +206,7 @@ pub fn list_all_tags(
 
 pub fn count_works_per_tag(
     conn: &PooledConnection<SqliteConnectionManager>,
-) -> anyhow::Result<Vec<(TagId, u64)>> {
+) -> Result<Vec<(TagId, u64)>> {
     let query = r#"SELECT tags.id, COUNT(work_tags.id)
         FROM tags
         LEFT JOIN work_tags ON tags.id == work_tags.tag_id

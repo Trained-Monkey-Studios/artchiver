@@ -1,3 +1,5 @@
+use crate::sync::db::sync::DbSyncHandle;
+use crate::sync::db::tag::{DbTag, TagId};
 use crate::{
     shared::{performance::PerfTrack, tag::TagSet, update::DataUpdate},
     sync::db::{
@@ -60,6 +62,37 @@ impl WorkOrder {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum WorkVisibility {
+    #[default]
+    All,
+    Favorites,
+    Hidden,
+}
+
+impl WorkVisibility {
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut selected = match self {
+            Self::All => 0,
+            Self::Favorites => 1,
+            Self::Hidden => 2,
+        };
+        let labels = ["All", "Favorites", "Hidden"];
+        egui::ComboBox::new("work_visibility", "Visibility")
+            .wrap_mode(egui::TextWrapMode::Truncate)
+            .show_index(ui, &mut selected, labels.len(), |i| labels[i]);
+        let next = match selected {
+            0 => Self::All,
+            1 => Self::Favorites,
+            2 => Self::Hidden,
+            _ => panic!("invalid column selected"),
+        };
+        let changed = *self != next;
+        *self = next;
+        changed
+    }
+}
+
 /// Work caching strategy:
 ///
 /// Works are unbounded, but plan to scale to O(10-100M) works. This is too much for us to just
@@ -76,6 +109,7 @@ pub struct UxWork {
     // Filter state for the works gallery
     tag_selection: TagSet,
     order: WorkOrder,
+    showing: WorkVisibility,
 
     // Don't cache things that are too long or only last one frame
     #[serde(skip)]
@@ -102,6 +136,7 @@ impl Default for UxWork {
             thumb_size: 128.,
             tag_selection: TagSet::default(),
             order: WorkOrder::default(),
+            showing: WorkVisibility::default(),
             per_frame_work_upload_count: 0,
             work_matching_tag: None,
             work_filtered: Vec::new(),
@@ -119,10 +154,19 @@ impl UxWork {
         trace!("Starting up work UX");
 
         self.data_dir = data_dir.to_owned();
-        db.get_works(&self.tag_selection.enabled_vec());
+        if let Some(tag_id) = self.tag_selection.enabled().next() {
+            db.get_works_for_tag(tag_id);
+        } else if self.tag_selection.is_empty() {
+            db.get_favorite_works();
+        }
     }
 
-    pub fn handle_updates(&mut self, db: &DbReadHandle, updates: &[DataUpdate]) {
+    pub fn handle_updates(
+        &mut self,
+        tags: Option<&HashMap<TagId, DbTag>>,
+        db: &DbReadHandle,
+        updates: &[DataUpdate],
+    ) {
         for update in updates {
             match update {
                 DataUpdate::FetchWorksComplete { works } => {
@@ -131,7 +175,7 @@ impl UxWork {
                     self.reproject_work();
                 }
                 DataUpdate::WorksWereUpdatedForTag { .. } => {
-                    self.tags_changed(db);
+                    self.tags_changed(tags, db);
                 }
                 DataUpdate::WorkDownloadCompleted {
                     id,
@@ -158,10 +202,15 @@ impl UxWork {
         &self.tag_selection
     }
 
-    pub fn set_tag_selection(&mut self, tag_set: TagSet, db: &DbReadHandle) {
+    pub fn set_tag_selection(
+        &mut self,
+        tags: Option<&HashMap<TagId, DbTag>>,
+        tag_set: TagSet,
+        db: &DbReadHandle,
+    ) {
         if &tag_set != self.tag_selection() {
             self.tag_selection = tag_set;
-            self.tags_changed(db);
+            self.tags_changed(tags, db);
         }
     }
 
@@ -169,11 +218,22 @@ impl UxWork {
         self.selected.is_some()
     }
 
-    fn tags_changed(&mut self, db: &DbReadHandle) {
-        self.work_matching_tag = None;
-        self.work_filtered = Vec::new();
-        self.selected = None;
-        db.get_works(&self.tag_selection.enabled_vec());
+    fn tags_changed(&mut self, tags: Option<&HashMap<TagId, DbTag>>, db: &DbReadHandle) {
+        if let Some(tag_id) = self.tag_selection.get_best_refresh(tags) {
+            self.work_matching_tag = None;
+            self.work_filtered = Vec::new();
+            self.selected = None;
+            db.get_works_for_tag(tag_id);
+        } else if self.tag_selection.is_empty() {
+            self.work_matching_tag = None;
+            self.work_filtered = Vec::new();
+            self.selected = None;
+            db.get_favorite_works();
+        }
+
+        if self.tag_selection.reset_changed() {
+            self.reproject_work();
+        }
     }
 
     fn reproject_work(&mut self) {
@@ -181,6 +241,11 @@ impl UxWork {
             self.work_filtered = works
                 .values()
                 .filter(|work| work.screen_path().is_some())
+                .filter(|work| {
+                    (self.showing == WorkVisibility::All && !work.hidden())
+                        || (self.showing == WorkVisibility::Favorites && work.favorite())
+                        || (self.showing == WorkVisibility::Hidden && work.hidden())
+                })
                 .filter(|work| self.tag_selection.matches(work))
                 .sorted_by(|a, b| {
                     let ord = match self.order.column {
@@ -193,6 +258,13 @@ impl UxWork {
                 })
                 .map(|work| work.id())
                 .collect();
+            if let Some(selected) = self.selected {
+                if self.work_filtered.is_empty() {
+                    self.selected = None;
+                } else if selected >= self.work_filtered.len() {
+                    self.selected = Some(self.work_filtered.len() - 1);
+                }
+            }
             info!(
                 "Showing {} of {} matching works",
                 self.work_filtered.len(),
@@ -203,8 +275,8 @@ impl UxWork {
         }
     }
 
-    fn check_key_binds(&mut self, n_wide: usize, ui: &egui::Ui) {
-        const KEYS: [Key; 10] = [
+    fn check_key_binds(&mut self, db_sync: &DbSyncHandle, n_wide: usize, ui: &egui::Ui) {
+        const KEYS: [Key; 13] = [
             Key::ArrowLeft,
             Key::ArrowRight,
             Key::ArrowUp,
@@ -215,6 +287,9 @@ impl UxWork {
             Key::A,
             Key::S,
             Key::D,
+            Key::F6,
+            Key::F7,
+            Key::Delete,
         ];
         let mut pressed = HashSet::new();
         ui.ctx().input_mut(|input| {
@@ -251,6 +326,25 @@ impl UxWork {
                         .min(self.work_filtered.len() - 1),
                 );
             }
+            if let Some(work) = self.get_selected_work_mut() {
+                if pressed.contains(&Key::F6) {
+                    db_sync
+                        .set_work_favorite(work.id(), true)
+                        .expect("set favorite");
+                    work.set_favorite(true);
+                } else if pressed.contains(&Key::F7) {
+                    db_sync
+                        .set_work_favorite(work.id(), false)
+                        .expect("set favorite");
+                    work.set_favorite(false);
+                } else if pressed.contains(&Key::Delete) {
+                    db_sync
+                        .set_work_hidden(work.id(), !work.hidden())
+                        .expect("set favorite");
+                    work.set_hidden(!work.hidden());
+                    self.reproject_work();
+                }
+            }
         }
     }
 
@@ -262,7 +356,20 @@ impl UxWork {
         })
     }
 
-    pub fn info_ui(&mut self, db: &DbReadHandle, ui: &mut egui::Ui) {
+    pub fn get_selected_work_mut(&mut self) -> Option<&mut DbWork> {
+        self.work_matching_tag.as_mut().and_then(|m| {
+            self.selected
+                .and_then(|offset| self.work_filtered.get_mut(offset))
+                .and_then(|id| m.get_mut(id))
+        })
+    }
+
+    pub fn info_ui(
+        &mut self,
+        tags: Option<&HashMap<TagId, DbTag>>,
+        db: &DbReadHandle,
+        ui: &mut egui::Ui,
+    ) {
         let Some(works) = self.work_matching_tag.as_ref() else {
             ui.spinner();
             return;
@@ -274,7 +381,6 @@ impl UxWork {
             return;
         };
 
-        let mut changed = false;
         let work = &works[work_id];
         egui::Grid::new("work_info_grid").show(ui, |ui| {
             ui.label("Offset");
@@ -310,26 +416,37 @@ impl UxWork {
                 ui.end_row();
             }
         });
-        ui.label(" ");
-        ui.heading("Tags");
-        ui.separator();
-        for tag in work.tags() {
-            if self.tag_selection.ui_for_tag(tag, ui) {
-                changed = true;
+        let mut changed = false;
+        if let Some(tags) = tags {
+            ui.label(" ");
+            ui.heading("Tags");
+            ui.separator();
+            for tag_id in work.tags() {
+                if let Some(tag) = tags.get(&tag_id)
+                    && self.tag_selection.tag_row_ui(tag, ui)
+                {
+                    changed = true;
+                }
             }
         }
         if changed {
-            self.tags_changed(db);
+            self.tags_changed(tags, db);
         }
     }
 
-    pub fn gallery_ui(&mut self, db: &DbReadHandle, perf: &mut PerfTrack, ui: &mut egui::Ui) {
-        if self.tag_selection.is_empty() {
-            self.selected = None;
-        }
+    pub fn gallery_ui(
+        &mut self,
+        tags: Option<&HashMap<TagId, DbTag>>,
+        db: &DbReadHandle,
+        db_sync: &DbSyncHandle,
+        perf: &mut PerfTrack,
+        ui: &mut egui::Ui,
+    ) {
         ui.horizontal(|ui| {
-            if self.tag_selection.ui(ui) {
-                self.tags_changed(db);
+            if let Some(tags) = tags
+                && self.tag_selection.ui(tags, ui)
+            {
+                self.tags_changed(Some(tags), db);
             }
             ui.label(format!("({})", self.work_filtered.len()));
             ui.add(
@@ -341,11 +458,10 @@ impl UxWork {
                     .show_value(true)
                     .suffix("px"),
             );
+            if self.showing.ui(ui) {
+                self.reproject_work();
+            }
         });
-        if self.tag_selection.is_empty() {
-            // FIXME: special case this to show favorites or something
-            return;
-        }
         if self.work_matching_tag.is_none() {
             ui.spinner();
             return;
@@ -356,7 +472,7 @@ impl UxWork {
         let n_wide = (width / size).floor().max(1.) as usize;
         let n_rows = self.work_filtered.len().div_ceil(n_wide);
 
-        self.check_key_binds(n_wide, ui);
+        self.check_key_binds(db_sync, n_wide, ui);
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -462,7 +578,7 @@ impl UxWork {
             });
     }
 
-    pub fn slideshow_ui(&mut self, ctx: &egui::Context) {
+    pub fn slideshow_ui(&mut self, db_sync: &DbSyncHandle, ctx: &egui::Context) {
         let work_offset = self
             .selected
             .expect("entered slideshow without a selection");
@@ -474,9 +590,7 @@ impl UxWork {
             let size = self.thumb_size;
             let width = ui.available_width();
             let n_wide = (width / size).floor().max(1.) as usize;
-            self.check_key_binds(n_wide, ui);
-
-            // TODO: scroll to gallery position when exiting slideshow
+            self.check_key_binds(db_sync, n_wide, ui);
 
             self.ensure_work_cached(ui.ctx(), work_offset);
             for offset in work_offset.saturating_sub(10)
@@ -507,9 +621,14 @@ impl UxWork {
                         }
                         img.paint_at(ui, Rect::from_x_y_ranges(left..=right, top..=bottom));
                     }
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{work_offset} of {}", self.work_filtered.len()));
+                        if work.favorite() {
+                            ui.label("✨");
+                        }
+                    });
                 }
             }
-            ui.label(format!("{work_offset} of {}", self.work_filtered.len()));
         });
     }
 
@@ -541,10 +660,10 @@ impl UxWork {
         ctx: &egui::Context,
         work_offset: usize, /* work: &DbWork*/
     ) {
-        assert!(
-            self.work_matching_tag.is_some(),
-            "ensure_cached with no work"
-        );
+        // If we restore from an exit in slideshow mode and haven't loaded yet.
+        if self.work_matching_tag.is_none() {
+            return;
+        }
 
         // Limit number of times we call try_load_image per frame to prevent pauses
         if self.per_frame_work_upload_count > Self::MAX_PER_FRAME_UPLOADS {

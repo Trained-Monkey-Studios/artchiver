@@ -1,3 +1,4 @@
+use crate::sync::db::sync::DbSyncHandle;
 use crate::{
     shared::{performance::PerfTrack, progress::UpdateSource, update::DataUpdate},
     sync::{
@@ -103,19 +104,22 @@ pub struct UxState {
 struct SyncViewer<'a> {
     sync: &'a mut PluginHost,
     state: &'a mut UxState,
-    db_threads: &'a DbReadHandle,
+    db: &'a DbReadHandle,
+    db_sync: &'a DbSyncHandle,
 }
 
 impl<'a> SyncViewer<'a> {
     fn wrap(
         sync: &'a mut PluginHost,
         state: &'a mut UxState,
-        db_threads: &'a DbReadHandle,
+        db: &'a DbReadHandle,
+        db_sync: &'a DbSyncHandle,
     ) -> Self {
         Self {
             sync,
             state,
-            db_threads,
+            db,
+            db_sync,
         }
     }
 
@@ -238,20 +242,26 @@ impl<'a> SyncViewer<'a> {
         self.state.tag_ux.ui(&mut tag_set, self.sync, ui);
         self.state
             .work_ux
-            .set_tag_selection(tag_set, self.db_threads);
+            .set_tag_selection(self.state.tag_ux.tags(), tag_set, self.db);
         self.state.perf.sample("Show Tags", start.elapsed());
     }
 
     fn show_works(&mut self, ui: &mut egui::Ui) {
         let start = Instant::now();
-        self.state
-            .work_ux
-            .gallery_ui(self.db_threads, &mut self.state.perf, ui);
+        self.state.work_ux.gallery_ui(
+            self.state.tag_ux.tags(),
+            self.db,
+            self.db_sync,
+            &mut self.state.perf,
+            ui,
+        );
         self.state.perf.sample("Show Works", start.elapsed());
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
-        self.state.work_ux.info_ui(self.db_threads, ui);
+        self.state
+            .work_ux
+            .info_ui(self.state.tag_ux.tags(), self.db, ui);
     }
 
     fn render_slideshow(&mut self, ctx: &egui::Context) {
@@ -260,7 +270,7 @@ impl<'a> SyncViewer<'a> {
             self.state.mode = UxMode::Browser;
             return;
         }
-        self.state.work_ux.slideshow_ui(ctx);
+        self.state.work_ux.slideshow_ui(self.db_sync, ctx);
     }
 }
 
@@ -341,7 +351,9 @@ impl UxToplevel {
         // self.state.plugin_ux.handle_updates(updates);
         self.state.db_ux.handle_updates(updates);
         self.state.tag_ux.handle_updates(db, updates);
-        self.state.work_ux.handle_updates(db, updates);
+        self.state
+            .work_ux
+            .handle_updates(self.state.tag_ux.tags(), db, updates);
 
         // Note: we need this to live above the dock impl for clarity, so do it here.
         for update in updates {
@@ -360,6 +372,7 @@ impl UxToplevel {
     pub fn main(
         &mut self,
         db: &DbReadHandle,
+        db_sync: &DbSyncHandle,
         host: &mut PluginHost,
         ctx: &egui::Context,
     ) -> Result<()> {
@@ -388,7 +401,10 @@ impl UxToplevel {
                         // Show the main dock area
                         DockArea::new(&mut self.dock_state)
                             .style(Style::from_egui(ui.style().as_ref()))
-                            .show(ctx, &mut SyncViewer::wrap(host, &mut self.state, db));
+                            .show(
+                                ctx,
+                                &mut SyncViewer::wrap(host, &mut self.state, db, db_sync),
+                            );
                     });
 
                 // Show any windows that are open
@@ -397,7 +413,7 @@ impl UxToplevel {
                 self.render_about(ctx);
             }
             UxMode::Slideshow => {
-                SyncViewer::wrap(host, &mut self.state, db).render_slideshow(ctx);
+                SyncViewer::wrap(host, &mut self.state, db, db_sync).render_slideshow(ctx);
             }
         }
 

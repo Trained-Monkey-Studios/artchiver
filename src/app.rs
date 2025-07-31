@@ -92,7 +92,7 @@ impl eframe::App for ArtchiverApp {
         self.toplevel.handle_updates(&updates, &self.db_read);
 
         self.toplevel
-            .main(&self.db_read, &mut self.host, ctx)
+            .main(&self.db_read, &self.db_sync, &mut self.host, ctx)
             .expect("ux update error");
     }
 
@@ -107,6 +107,7 @@ impl eframe::App for ArtchiverApp {
             .expect("failed to cleanup plugins on exit");
 
         // Try to shut down the database cleanly.
+        self.db_write.send_exit_request();
         self.db_read.wait_for_exit();
     }
 }
