@@ -1,15 +1,18 @@
-use crate::sync::db::models::plugin::{DbPlugin, PluginId};
-use crate::sync::db::models::tag::DbTag;
 use crate::{
+    db::{
+        models::{
+            plugin::{DbPlugin, PluginId},
+            tag::DbTag,
+        },
+        sync::DbSyncHandle,
+        writer::DbWriteHandle,
+    },
+    plugin::client::create_plugin_task,
     shared::{
         environment::Environment,
         plugin::{PluginCancellation, PluginRequest},
         progress::{Progress, ProgressMonitor, UpdateSource},
         update::DataUpdate,
-    },
-    sync::{
-        db::{sync::DbSyncHandle, writer::DbWriteHandle},
-        plugin::client::create_plugin_task,
     },
 };
 use anyhow::Result;

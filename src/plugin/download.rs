@@ -1,10 +1,11 @@
 use crate::{
+    db::writer::DbWriteHandle,
+    plugin::client::make_temp_path,
     shared::{
         plugin::PluginCancellation,
         progress::{LogSender, ProgressSender},
         throttle::CallingThrottle,
     },
-    sync::{db::writer::DbWriteHandle, plugin::client::make_temp_path},
 };
 use anyhow::Result;
 use artchiver_sdk::Work;

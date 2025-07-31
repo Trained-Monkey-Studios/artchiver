@@ -26,6 +26,6 @@ o Add wiki entry to each tag, if present
 o Resizable works gallery images
 o Fix tag counts
 o Reorder tags by name, count, etc
+o Support negative tags
 * Give authors the same support as tags
 * Expand work with ALL THE DATA
-* Support negative tags

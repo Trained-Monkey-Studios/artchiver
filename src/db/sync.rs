@@ -1,12 +1,14 @@
-use crate::sync::db::models::plugin::{DbPlugin, PluginId};
-use crate::sync::db::models::tag::TagId;
-use crate::sync::db::models::work::WorkId;
 use crate::{
-    shared::{environment::Environment, progress::ProgressMonitor},
-    sync::db::{
+    db::{
+        models::{
+            plugin::{DbPlugin, PluginId},
+            tag::TagId,
+            work::WorkId,
+        },
         reader::DbReadHandle,
         writer::{DbBgWriter, DbWriteHandle},
     },
+    shared::{environment::Environment, progress::ProgressMonitor},
 };
 use anyhow::Result;
 use crossbeam::channel;
@@ -62,7 +64,7 @@ pub fn connect_or_create(
     };
 
     // Execute and record all migration statements
-    for (ordinal, migration) in crate::sync::db::model::MIGRATIONS.iter().enumerate() {
+    for (ordinal, migration) in crate::db::model::MIGRATIONS.iter().enumerate() {
         if !finished_migrations.contains(&(ordinal as i64)) {
             conn.execute(migration, ())?;
             conn.execute("INSERT INTO migrations (ordinal) VALUES (?)", [ordinal])?;

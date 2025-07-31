@@ -2,8 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 mod app;
+pub mod db;
+pub mod plugin;
 pub mod shared;
-pub mod sync;
 pub mod ux;
 
 use crate::{app::ArtchiverApp, shared::environment::Environment};

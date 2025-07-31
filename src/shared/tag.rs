@@ -1,5 +1,7 @@
-use crate::sync::db::models::tag::{DbTag, TagId};
-use crate::sync::db::models::work::DbWork;
+use crate::db::{
+    models::tag::{DbTag, TagId},
+    models::work::DbWork,
+};
 use itertools::Itertools as _;
 use log::trace;
 use serde::{Deserialize, Serialize};

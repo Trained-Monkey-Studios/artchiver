@@ -1,7 +1,11 @@
-use crate::shared::update::DataUpdate;
-use crate::sync::db::models::plugin::{DbPlugin, PluginId};
-use crate::sync::db::models::tag::{DbTag, TagId};
-use crate::sync::db::models::work::{DbWork, WorkId};
+use crate::{
+    db::models::{
+        plugin::{DbPlugin, PluginId},
+        tag::{DbTag, TagId},
+        work::{DbWork, WorkId},
+    },
+    shared::update::DataUpdate,
+};
 use anyhow::Result;
 use artchiver_sdk::PluginMetadata;
 use crossbeam::channel::{self, Receiver, Sender};

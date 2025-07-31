@@ -1,13 +1,11 @@
 use crate::{
-    shared::{environment::Environment, progress::ProgressMonitor},
-    sync::{
-        db::{
-            reader::DbReadHandle,
-            sync::{DbSyncHandle, connect_or_create},
-            writer::DbWriteHandle,
-        },
-        plugin::host::PluginHost,
+    db::{
+        reader::DbReadHandle,
+        sync::{DbSyncHandle, connect_or_create},
+        writer::DbWriteHandle,
     },
+    plugin::host::PluginHost,
+    shared::{environment::Environment, progress::ProgressMonitor},
     ux::dock::UxToplevel,
 };
 use eframe::glow;

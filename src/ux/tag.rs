@@ -1,13 +1,11 @@
 use crate::{
-    shared::{tag::TagSet, update::DataUpdate},
-    sync::{
-        db::{
-            model::OrderDir,
-            models::tag::{DbTag, TagId},
-            reader::DbReadHandle,
-        },
-        plugin::host::PluginHost,
+    db::{
+        model::OrderDir,
+        models::tag::{DbTag, TagId},
+        reader::DbReadHandle,
     },
+    plugin::host::PluginHost,
+    shared::{tag::TagSet, update::DataUpdate},
 };
 use itertools::Itertools as _;
 use log::trace;

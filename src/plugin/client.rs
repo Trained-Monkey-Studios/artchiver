@@ -1,15 +1,15 @@
-use crate::sync::db::models::plugin::PluginId;
 use crate::{
+    db::{
+        models::plugin::PluginId,
+        {sync::DbSyncHandle, writer::DbWriteHandle},
+    },
+    plugin::download::download_works,
     shared::{
         environment::Environment,
         plugin::{PluginCancellation, PluginRequest},
         progress::{HostUpdateSender, LogSender, ProgressSender, UpdateSource},
         throttle::CallingThrottle,
         update::DataUpdate,
-    },
-    sync::{
-        db::{sync::DbSyncHandle, writer::DbWriteHandle},
-        plugin::download::download_works,
     },
 };
 use anyhow::Result;

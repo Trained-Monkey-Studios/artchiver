@@ -1,11 +1,15 @@
-use crate::sync::db::models::tag::{DbTag, TagId};
-use crate::sync::db::models::work::DbWork;
 use crate::{
+    db::{
+        model::report_slow_query,
+        models::{
+            tag::{DbTag, TagId},
+            work::DbWork,
+        },
+    },
     shared::{
         progress::{HostUpdateSender, LogSender, UpdateSource},
         update::DataUpdate,
     },
-    sync::db::model::report_slow_query,
 };
 use anyhow::Result;
 use crossbeam::channel::Sender;
