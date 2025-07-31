@@ -1,20 +1,15 @@
-use crate::sync::db::tag::{DbTag, TagId};
-use crate::{
-    shared::update::DataUpdate,
-    sync::db::{
-        plugin::{DbPlugin, PluginId},
-        work::{DbWork, WorkId},
-    },
-};
+use crate::shared::update::DataUpdate;
+use crate::sync::db::models::plugin::{DbPlugin, PluginId};
+use crate::sync::db::models::tag::{DbTag, TagId};
+use crate::sync::db::models::work::{DbWork, WorkId};
 use anyhow::Result;
 use artchiver_sdk::PluginMetadata;
 use crossbeam::channel::{self, Receiver, Sender};
 use log::{Level, debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::{fmt, path::Path};
+use std::{collections::HashMap, fmt, path::Path};
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub enum Progress {
     #[default]
     None,

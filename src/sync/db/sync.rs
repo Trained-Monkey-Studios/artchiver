@@ -1,10 +1,10 @@
-use crate::sync::db::work::WorkId;
+use crate::sync::db::models::plugin::{DbPlugin, PluginId};
+use crate::sync::db::models::tag::TagId;
+use crate::sync::db::models::work::WorkId;
 use crate::{
     shared::{environment::Environment, progress::ProgressMonitor},
     sync::db::{
-        plugin::{DbPlugin, PluginId},
         reader::DbReadHandle,
-        tag::TagId,
         writer::{DbBgWriter, DbWriteHandle},
     },
 };

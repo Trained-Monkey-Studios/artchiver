@@ -1,3 +1,4 @@
+use crate::sync::db::models::plugin::PluginId;
 use crate::{
     shared::{
         environment::Environment,
@@ -7,7 +8,7 @@ use crate::{
         update::DataUpdate,
     },
     sync::{
-        db::{plugin::PluginId, sync::DbSyncHandle, writer::DbWriteHandle},
+        db::{sync::DbSyncHandle, writer::DbWriteHandle},
         plugin::download::download_works,
     },
 };

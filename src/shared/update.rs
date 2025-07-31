@@ -1,11 +1,7 @@
-use crate::{
-    shared::progress::{Progress, UpdateSource},
-    sync::db::{
-        plugin::DbPlugin,
-        tag::{DbTag, TagId},
-        work::{DbWork, WorkId},
-    },
-};
+use crate::shared::progress::{Progress, UpdateSource};
+use crate::sync::db::models::plugin::DbPlugin;
+use crate::sync::db::models::tag::{DbTag, TagId};
+use crate::sync::db::models::work::{DbWork, WorkId};
 use artchiver_sdk::PluginMetadata;
 use log::Level;
 use std::{collections::HashMap, path::PathBuf};

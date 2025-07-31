@@ -1,4 +1,5 @@
-use crate::sync::db::writer::DbWriteHandle;
+use crate::sync::db::models::plugin::{DbPlugin, PluginId};
+use crate::sync::db::models::tag::DbTag;
 use crate::{
     shared::{
         environment::Environment,
@@ -7,11 +8,7 @@ use crate::{
         update::DataUpdate,
     },
     sync::{
-        db::{
-            plugin::{DbPlugin, PluginId},
-            sync::DbSyncHandle,
-            tag::DbTag,
-        },
+        db::{sync::DbSyncHandle, writer::DbWriteHandle},
         plugin::client::create_plugin_task,
     },
 };

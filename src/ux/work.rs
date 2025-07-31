@@ -1,12 +1,8 @@
-use crate::sync::db::sync::DbSyncHandle;
-use crate::sync::db::tag::{DbTag, TagId};
+use crate::sync::db::models::tag::{DbTag, TagId};
+use crate::sync::db::models::work::{DbWork, WorkId};
 use crate::{
     shared::{performance::PerfTrack, tag::TagSet, update::DataUpdate},
-    sync::db::{
-        model::OrderDir,
-        reader::DbReadHandle,
-        work::{DbWork, WorkId},
-    },
+    sync::db::{model::OrderDir, reader::DbReadHandle, sync::DbSyncHandle},
 };
 use egui::{Key, Margin, Modifiers, Rect, Sense, SizeHint, Vec2, include_image};
 use itertools::Itertools as _;

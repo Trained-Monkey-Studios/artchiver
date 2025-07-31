@@ -1,7 +1,5 @@
-use crate::sync::db::{
-    tag::{DbTag, TagId},
-    work::DbWork,
-};
+use crate::sync::db::models::tag::{DbTag, TagId};
+use crate::sync::db::models::work::DbWork;
 use itertools::Itertools as _;
 use log::trace;
 use serde::{Deserialize, Serialize};
@@ -57,8 +55,8 @@ impl TagSet {
             return None;
         }
         // We already have it in the last-fetched set.
-        if let Some(prior) = dbg!(self.last_fetched)
-            && dbg!(&self.enabled).contains(&prior)
+        if let Some(prior) = self.last_fetched
+            && self.enabled.contains(&prior)
         {
             trace!("Last fetched tag is still enabled, skipping");
             return None;

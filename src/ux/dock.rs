@@ -1,8 +1,7 @@
-use crate::sync::db::sync::DbSyncHandle;
 use crate::{
     shared::{performance::PerfTrack, progress::UpdateSource, update::DataUpdate},
     sync::{
-        db::reader::DbReadHandle,
+        db::{reader::DbReadHandle, sync::DbSyncHandle},
         plugin::host::{PluginHandle, PluginHost},
     },
     ux::{db::UxDb, tag::UxTag, work::UxWork},

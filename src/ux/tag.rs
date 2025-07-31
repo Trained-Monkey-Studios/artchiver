@@ -3,8 +3,8 @@ use crate::{
     sync::{
         db::{
             model::OrderDir,
+            models::tag::{DbTag, TagId},
             reader::DbReadHandle,
-            tag::{DbTag, TagId},
         },
         plugin::host::PluginHost,
     },

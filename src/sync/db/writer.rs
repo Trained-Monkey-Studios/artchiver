@@ -1,9 +1,11 @@
+use crate::sync::db::models::plugin::PluginId;
+use crate::sync::db::models::work::WorkId;
 use crate::{
     shared::{
         progress::{HostUpdateSender, LogSender, ProgressSender, UpdateSource},
         update::DataUpdate,
     },
-    sync::db::{model::string_to_rarray, plugin::PluginId, work::WorkId},
+    sync::db::model::string_to_rarray,
 };
 use anyhow::{Result, ensure};
 use artchiver_sdk::{Tag, Work};

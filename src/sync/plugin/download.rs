@@ -9,8 +9,10 @@ use crate::{
 use anyhow::Result;
 use artchiver_sdk::Work;
 use sha2::{Digest as _, Sha256};
-use std::path::{Path, PathBuf};
-use std::{fs, io};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 use ureq::Agent;
 
 pub fn download_works(

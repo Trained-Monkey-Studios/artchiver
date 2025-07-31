@@ -1,4 +1,4 @@
-use crate::sync::db::tag::TagId;
+use crate::sync::db::models::tag::TagId;
 use jiff::civil::Date;
 use rusqlite::types::{ToSqlOutput, Value};
 use rusqlite::{Row, ToSql};
