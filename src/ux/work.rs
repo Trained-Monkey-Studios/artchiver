@@ -1,8 +1,12 @@
+use crate::plugin::host::PluginHost;
+use crate::shared::tag::TagRefresh;
 use crate::{
     db::{
-        models::tag::{DbTag, TagId},
-        models::work::{DbWork, WorkId},
-        {model::OrderDir, reader::DbReadHandle, sync::DbSyncHandle},
+        models::{
+            tag::{DbTag, TagId},
+            work::{DbWork, WorkId},
+        },
+        {model::OrderDir, reader::DbReadHandle, writer::DbWriteHandle},
     },
     shared::{performance::PerfTrack, tag::TagSet, update::DataUpdate},
 };
@@ -12,6 +16,7 @@ use log::{info, trace};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     time::Instant,
@@ -36,8 +41,8 @@ impl WorkSortCol {
         let mut selected = match self {
             Self::Date => 0,
         };
-        let labels = ["Name", "Total Count"];
-        egui::ComboBox::new("tag_order_column", "Column")
+        let labels = ["Date"];
+        egui::ComboBox::new("tag_order_column", "")
             .wrap_mode(egui::TextWrapMode::Truncate)
             .show_index(ui, &mut selected, labels.len(), |i| labels[i]);
         *self = match selected {
@@ -54,9 +59,11 @@ pub struct WorkOrder {
 }
 
 impl WorkOrder {
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let prior = *self;
         self.column.ui(ui);
         self.order.ui("tags", ui);
+        *self != prior
     }
 }
 
@@ -76,7 +83,7 @@ impl WorkVisibility {
             Self::Hidden => 2,
         };
         let labels = ["All", "Favorites", "Hidden"];
-        egui::ComboBox::new("work_visibility", "Visibility")
+        egui::ComboBox::new("work_visibility", "")
             .wrap_mode(egui::TextWrapMode::Truncate)
             .show_index(ui, &mut selected, labels.len(), |i| labels[i]);
         let next = match selected {
@@ -107,6 +114,8 @@ pub struct UxWork {
     // Filter state for the works gallery
     tag_selection: TagSet,
     order: WorkOrder,
+
+    #[serde(skip)]
     showing: WorkVisibility,
 
     // Don't cache things that are too long or only last one frame
@@ -167,10 +176,17 @@ impl UxWork {
     ) {
         for update in updates {
             match update {
-                DataUpdate::FetchWorksComplete { works } => {
-                    trace!("Received {} works", works.len());
-                    self.work_matching_tag = Some(works.to_owned());
-                    self.reproject_work();
+                DataUpdate::FetchWorksComplete { tag_id, works } => {
+                    if *tag_id == self.tag_selection.last_fetched() {
+                        trace!("Received {} works for tag {tag_id:?}", works.len());
+                        self.work_matching_tag = Some(works.to_owned());
+                        self.reproject_work();
+                    } else {
+                        trace!(
+                            "Ignoring works for tag {tag_id:?} (expected {:?})",
+                            self.tag_selection.last_fetched()
+                        );
+                    }
                 }
                 DataUpdate::WorksWereUpdatedForTag { .. } => {
                     self.tags_changed(tags, db);
@@ -217,16 +233,20 @@ impl UxWork {
     }
 
     fn tags_changed(&mut self, tags: Option<&HashMap<TagId, DbTag>>, db: &DbReadHandle) {
-        if let Some(tag_id) = self.tag_selection.get_best_refresh(tags) {
-            self.work_matching_tag = None;
-            self.work_filtered = Vec::new();
-            self.selected = None;
-            db.get_works_for_tag(tag_id);
-        } else if self.tag_selection.is_empty() {
-            self.work_matching_tag = None;
-            self.work_filtered = Vec::new();
-            self.selected = None;
-            db.get_favorite_works();
+        match self.tag_selection.get_best_refresh(tags) {
+            TagRefresh::NoneNeeded => {}
+            TagRefresh::NeedRefresh(tag_id) => {
+                self.work_matching_tag = None;
+                self.work_filtered = Vec::new();
+                self.selected = None;
+                db.get_works_for_tag(tag_id);
+            }
+            TagRefresh::Favorites => {
+                self.work_matching_tag = None;
+                self.work_filtered = Vec::new();
+                self.selected = None;
+                db.get_favorite_works();
+            }
         }
 
         if self.tag_selection.reset_changed() {
@@ -247,7 +267,10 @@ impl UxWork {
                 .filter(|work| self.tag_selection.matches(work))
                 .sorted_by(|a, b| {
                     let ord = match self.order.column {
-                        WorkSortCol::Date => a.date().cmp(b.date()),
+                        WorkSortCol::Date => match a.date().cmp(b.date()) {
+                            Ordering::Equal => a.id().cmp(&b.id()),
+                            v => v,
+                        },
                     };
                     match self.order.order {
                         OrderDir::Asc => ord,
@@ -273,7 +296,7 @@ impl UxWork {
         }
     }
 
-    fn check_key_binds(&mut self, db_sync: &DbSyncHandle, n_wide: usize, ui: &egui::Ui) {
+    fn check_key_binds(&mut self, db_write: &DbWriteHandle, n_wide: usize, ui: &egui::Ui) {
         const KEYS: [Key; 13] = [
             Key::ArrowLeft,
             Key::ArrowRight,
@@ -326,17 +349,17 @@ impl UxWork {
             }
             if let Some(work) = self.get_selected_work_mut() {
                 if pressed.contains(&Key::F6) {
-                    db_sync
+                    db_write
                         .set_work_favorite(work.id(), true)
                         .expect("set favorite");
                     work.set_favorite(true);
                 } else if pressed.contains(&Key::F7) {
-                    db_sync
+                    db_write
                         .set_work_favorite(work.id(), false)
                         .expect("set favorite");
                     work.set_favorite(false);
                 } else if pressed.contains(&Key::Delete) {
-                    db_sync
+                    db_write
                         .set_work_hidden(work.id(), !work.hidden())
                         .expect("set favorite");
                     work.set_hidden(!work.hidden());
@@ -365,7 +388,9 @@ impl UxWork {
     pub fn info_ui(
         &mut self,
         tags: Option<&HashMap<TagId, DbTag>>,
-        db: &DbReadHandle,
+        db_read: &DbReadHandle,
+        db_write: &DbWriteHandle,
+        host: &mut PluginHost,
         ui: &mut egui::Ui,
     ) {
         let Some(works) = self.work_matching_tag.as_ref() else {
@@ -420,15 +445,15 @@ impl UxWork {
             ui.heading("Tags");
             ui.separator();
             for tag_id in work.tags() {
-                if let Some(tag) = tags.get(&tag_id)
-                    && self.tag_selection.tag_row_ui(tag, ui)
-                {
-                    changed = true;
+                if let Some(tag) = tags.get(&tag_id) {
+                    if self.tag_selection.tag_row_ui(tag, host, db_write, ui) {
+                        changed = true;
+                    }
                 }
             }
         }
         if changed {
-            self.tags_changed(tags, db);
+            self.tags_changed(tags, db_read);
         }
     }
 
@@ -436,7 +461,7 @@ impl UxWork {
         &mut self,
         tags: Option<&HashMap<TagId, DbTag>>,
         db: &DbReadHandle,
-        db_sync: &DbSyncHandle,
+        db_write: &DbWriteHandle,
         perf: &mut PerfTrack,
         ui: &mut egui::Ui,
     ) {
@@ -447,16 +472,27 @@ impl UxWork {
                 self.tags_changed(Some(tags), db);
             }
             ui.label(format!("({})", self.work_filtered.len()));
+
+            ui.separator();
+            ui.label("Size");
             ui.add(
                 egui::Slider::new(&mut self.thumb_size, 128f32..=512f32)
-                    .text("Thumbnail Size")
                     .step_by(1.)
                     .fixed_decimals(0)
                     .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 })
                     .show_value(true)
                     .suffix("px"),
             );
+
+            ui.separator();
+            ui.label("Showing");
             if self.showing.ui(ui) {
+                self.reproject_work();
+            }
+
+            ui.separator();
+            ui.label("Sort");
+            if self.order.ui(ui) {
                 self.reproject_work();
             }
         });
@@ -470,7 +506,45 @@ impl UxWork {
         let n_wide = (width / size).floor().max(1.) as usize;
         let n_rows = self.work_filtered.len().div_ceil(n_wide);
 
-        self.check_key_binds(db_sync, n_wide, ui);
+        self.check_key_binds(db_write, n_wide, ui);
+
+        // If we had an event that needs us to scroll to selection, compute a rect and go there.
+        if let Some(selected) = self.selected {
+            let row = selected / n_wide;
+            // let spacing_y = ui.spacing().item_spacing.y;
+            let y = ui.cursor().top() + row as f32 * (size + 0.);
+            // println!("{y} = {} + {row} * {size}", ui.cursor().top());
+            let rect = Rect::from_x_y_ranges(0f32..=10f32, y..=y + size);
+            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+
+            /*
+            fn make_scroll_area(ui: &mut Ui, idx: usize, scroll_offset: f32) -> f32 {
+                let text_style = egui::TextStyle::Body;
+                let row_height = ui.text_style_height(&text_style);
+                let spacing_y = ui.spacing().item_spacing.y;
+                let area_offset = ui.cursor();
+                let y = area_offset.top() + idx as f32 * (row_height + spacing_y);
+                let target_rect = Rect {
+                    min: Pos2 {
+                        x: 0.0,
+                        y: y - scroll_offset,
+                    },
+                    max: Pos2 {
+                        x: 10.0,
+                        y: y + row_height - scroll_offset,
+                    },
+                };
+                ui.scroll_to_rect(target_rect, Some(Align::Center));
+                let scroll = egui::ScrollArea::vertical()
+                    .show_rows(ui, row_height, n_rows, |ui, row_range| {
+                        for filtered_idx in row_range {
+                            // add labels
+                        }
+                    });
+                scroll.state.offset.y
+            }
+             */
+        }
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -518,7 +592,6 @@ impl UxWork {
                                 .expect("no work after check")[&self.work_filtered[work_offset]];
 
                             // Selection uses the selection color for the background
-                            // let is_selected = self.state.selected_work.is_selected(work.id());
                             let is_selected = self.selected == Some(work_offset);
 
                             let img = self
@@ -561,9 +634,9 @@ impl UxWork {
                             frm.show(ui, |ui| {
                                 rsz.show(ui, |ui| {
                                     let resp = ui.add(btn);
-                                    if is_selected {
-                                        resp.scroll_to_me(None);
-                                    }
+                                    // if is_selected {
+                                    //     resp.scroll_to_me(None);
+                                    // }
                                     if resp.clicked() {
                                         self.selected = Some(work_offset);
                                     }
@@ -576,7 +649,7 @@ impl UxWork {
             });
     }
 
-    pub fn slideshow_ui(&mut self, db_sync: &DbSyncHandle, ctx: &egui::Context) {
+    pub fn slideshow_ui(&mut self, db_write: &DbWriteHandle, ctx: &egui::Context) {
         let work_offset = self
             .selected
             .expect("entered slideshow without a selection");
@@ -588,11 +661,13 @@ impl UxWork {
             let size = self.thumb_size;
             let width = ui.available_width();
             let n_wide = (width / size).floor().max(1.) as usize;
-            self.check_key_binds(db_sync, n_wide, ui);
+            self.check_key_binds(db_write, n_wide, ui);
 
             self.ensure_work_cached(ui.ctx(), work_offset);
             for offset in work_offset.saturating_sub(10)
-                ..work_offset.saturating_add(10).min(self.work_filtered.len())
+                ..work_offset
+                    .saturating_add(10)
+                    .min(self.work_filtered.len() - 1)
             {
                 self.ensure_work_cached(ui.ctx(), offset);
             }

@@ -42,7 +42,7 @@ impl PerfTrack {
         for (name, perf) in &self.perf {
             ui.label(name);
             let line_points: PlotPoints<'_> = perf.iter().copied().collect();
-            Plot::new("frame_time")
+            Plot::new(format!("frame_time_{name}"))
                 .height(64.0)
                 .show_y(true)
                 .allow_zoom(false)

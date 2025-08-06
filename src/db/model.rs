@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const MIGRATIONS: [&str; 18] = [
+pub const MIGRATIONS: [&str; 22] = [
     // Migrations
     r#"CREATE TABLE migrations (
         id INTEGER PRIMARY KEY,
@@ -36,6 +36,8 @@ pub const MIGRATIONS: [&str; 18] = [
         favorite BOOLEAN NOT NULL DEFAULT false
     );"#,
     r#"CREATE UNIQUE INDEX tag_name_idx ON tags(name);"#,
+    r#"CREATE INDEX tag_favorite_idx ON tags(favorite);"#,
+    r#"CREATE INDEX tag_hidden_idx ON tags(hidden);"#,
     // Works: A work of art
     r#"CREATE TABLE works (
         id INTEGER PRIMARY KEY,
@@ -56,6 +58,8 @@ pub const MIGRATIONS: [&str; 18] = [
     r#"CREATE INDEX work_name_idx ON works(name);"#,
     r#"CREATE INDEX work_date_idx ON works(date);"#,
     r#"CREATE INDEX work_id_date_idx ON works(id, date);"#,
+    r#"CREATE INDEX work_favorite_idx ON works(favorite);"#,
+    r#"CREATE INDEX work_hidden_idx ON works(hidden);"#,
     // Artists: The creator of a work of art
     r#"CREATE TABLE artists (
         id INTEGER PRIMARY KEY,
@@ -118,7 +122,7 @@ impl OrderDir {
             Self::Desc => 1,
         };
         let options = ["Ascending", "Descending"];
-        egui::ComboBox::new(format!("order_dir_{salt}"), "Order")
+        egui::ComboBox::new(format!("order_dir_{salt}"), "")
             .wrap_mode(egui::TextWrapMode::Truncate)
             .show_index(ui, &mut selected, options.len(), |i| options[i]);
         *self = match selected {

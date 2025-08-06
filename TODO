@@ -27,5 +27,13 @@ o Resizable works gallery images
 o Fix tag counts
 o Reorder tags by name, count, etc
 o Support negative tags
+o Favorite tags
+* Drag n Drop reorder of the work queue
+* Save the work queue between runs, (including restarting the current job)
+* Sort work tags
+* Hide mouse pointer in slideshow
+* Only scroll to selection on a move event or leaving slideshow
+* Hidden / always-hidden tags
 * Give authors the same support as tags
 * Expand work with ALL THE DATA
+* Find more open-access galleries

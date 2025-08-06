@@ -11,7 +11,7 @@ all-features = true
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [workspace]
-exclude = ["plugins/artchiver_sdk", "plugins/the_met", "plugins/nga"]
+exclude = ["plugins/artchiver_sdk", "plugins/artx-met", "plugins/artx-nga", "plugins/artx-demo"]
 members = []
 
 [dependencies]
@@ -56,6 +56,7 @@ itertools = "0.14"
 jiff = { version ="0.2", features = ["serde"] }
 log = "0.4.27"
 lru = "0.16"
+open = "5.3"
 parking_lot = "0.12"
 platform-dirs = "0.3"
 r2d2 = "0.8"

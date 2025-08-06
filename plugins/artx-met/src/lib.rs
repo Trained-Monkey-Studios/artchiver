@@ -6,50 +6,69 @@ use std::collections::HashMap;
 
 import_section!();
 
-/*
-Column                      |           Type           | Collation | Nullable | Default
-----------------------------+--------------------------+-----------+----------+---------
-objectid                    | integer                  |           |          |
-accessioned                 | integer                  |           |          |
-accessionnum                | character varying(32)    |           |          |
-locationid                  | integer                  |           |          |
-title                       | character varying(2048)  |           |          |
-displaydate                 | character varying(256)   |           |          |
-beginyear                   | integer                  |           |          |
-endyear                     | integer                  |           |          |
-visualbrowsertimespan       | character varying(32)    |           |          |
-medium                      | character varying(2048)  |           |          |
-dimensions                  | character varying(2048)  |           |          |
-inscription                 | character varying        |           |          |
-markings                    | character varying        |           |          |
-attributioninverted         | character varying(1024)  |           |          |
-attribution                 | character varying(1024)  |           |          |
-provenancetext              | character varying        |           |          |
-creditline                  | character varying(2048)  |           |          |
-classification              | character varying(64)    |           |          |
-subclassification           | character varying(64)    |           |          |
-visualbrowserclassification | character varying(32)    |           |          |
-parentid                    | integer                  |           |          |
-isvirtual                   | integer                  |           |          |
-departmentabbr              | character varying(32)    |           |          |
-portfolio                   | character varying(2048)  |           |          |
-series                      | character varying(850)   |           |          |
-volume                      | character varying(850)   |           |          |
-watermarks                  | character varying(512)   |           |          |
-lastdetectedmodification    | timestamp with time zone |           |          |
-wikidataid                  | character varying(64)    |           |          |
-customprinturl              | character varying(512)   |           |          |
- */
-const OBJECTS_URL: &str =
-    "https://github.com/NationalGalleryOfArt/opendata/raw/refs/heads/main/data/objects.csv";
+// 0: Object Number,
+// 1: Is Highlight,
+// 2: Is Timeline Work,
+// 3: Is Public Domain,
+// 4: Object ID,
+// 5: Gallery Number,
+// 6: Department,
+// 7: AccessionYear,
+// 8: Object Name,
+// 9: Title,
+// 10: Culture,
+// 11: Period,
+// 12: Dynasty,
+// 13: Reign,
+// 14: Portfolio,
+// 15: Constituent ID,
+// 16: Artist Role,
+// 17: Artist Prefix,
+// 18: Artist Display Name,
+// 19: Artist Display Bio,
+// 20: Artist Suffix,
+// 21: Artist Alpha Sort,
+// 22: Artist Nationality,
+// 23: Artist Begin Date,
+// 24: Artist End Date,
+// 25: Artist Gender,
+// 26: Artist ULAN URL,
+// 27: Artist Wikidata URL,
+// 28: Object Date,
+// 29: Object Begin Date,
+// 30: Object End Date,
+// 31: Medium,
+// 32: Dimensions,
+// 33: Credit Line,
+// 34: Geography Type,
+// 35: City,
+// 36: State,
+// 37: County,
+// 38: Country,
+// 39: Region,
+// 40: Subregion,
+// 41: Locale,
+// 42: Locus,
+// 43: Excavation,
+// 44: River,
+// 45: Classification,
+// 46: Rights and Reproduction,
+// 47: Link Resource,
+// 48: Object Wikidata URL,
+// 49: Metadata Date,
+// 50: Repository,
+// 51: Tags,
+// 52: Tags AAT URL,
+// 53: Tags Wikidata URL
+const CSV_URL: &str = "https://media.githubusercontent.com/media/metmuseum/openaccess/refs/heads/master/MetObjects.csv";
 
 #[plugin_fn]
 pub fn startup() -> FnResult<Json<PluginMetadata>> {
     Ok(Json(
         PluginMetadata::new(
-            "The National Gallery of Art",
+            "The Metropolitan Gallery of Art",
             "0.0.1",
-            "A plugin for Artchiver to provide The National Gallery of the Art (nga.gov) open data.",
+            "A plugin for Artchiver to provide The Metropolitan Gallery of the Arts open data.",
         )
         .with_rate_limit(1, 2.0),
     ))
@@ -75,13 +94,6 @@ fn get_record_tags(record: &csv::StringRecord) -> impl Iterator<Item = (&str, &s
 #[plugin_fn]
 pub fn list_tags() -> FnResult<Json<Vec<Tag>>> {
     Progress::spinner()?;
-    let raw = Web::fetch_text(Request::get(OBJECTS_URL))?;
-    let mut rdr = make_reader(&raw)?;
-    for result in rdr.records() {
-        let record = result?;
-        Log::info(format!("{record:?}"))?;
-    }
-    /*
     let mut all_names: HashMap<String, usize> = HashMap::new();
     let mut wiki_map: HashMap<String, String> = HashMap::new();
     let raw = Web::fetch_text(Request::get(CSV_URL))?;
@@ -105,16 +117,12 @@ pub fn list_tags() -> FnResult<Json<Vec<Tag>>> {
         .map(|(tag, count)| {
             Tag::new(
                 &tag,
-                TagKind::default(),
                 Some(count as u64),
                 wiki_map.get(&tag).cloned(),
             )
         })
         .collect::<Vec<Tag>>()
         .into())
-     */
-    Progress::clear()?;
-    Ok(Vec::new().into())
 }
 
 #[allow(non_snake_case, unused)]
@@ -215,7 +223,7 @@ struct ObjectInfo {
     metadataDate: String,
     repository: String,
     objectURL: String,
-    tags: Vec<Tag>,
+    tags: Vec<MetTag>,
     objectWikidata_URL: String,
     isTimelineWork: bool,
     GalleryNumber: String,
@@ -227,7 +235,6 @@ const OBJECTS_PATH: &str = "/public/collection/v1/objects";
 
 #[plugin_fn]
 pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
-    /*
     // Query the search api with tags= to get the list of works by id
     let req = Request::get(URL)
         .in_path(SEARCH_PATH)
@@ -260,17 +267,13 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
         if !object.primaryImage.is_empty() {
             matching_works.push(Work::new(
                 object.title,
-                0,
                 Date::strptime("%Y-%m-%d", format!("{}-01-01", object.objectBeginDate))?,
                 object.primaryImageSmall.to_owned(),
                 object.primaryImage.to_owned(),
-                None,
                 object.tags.iter().map(|t| &t.term).cloned().collect(),
             ));
         }
     }
     Progress::clear()?;
     Ok(matching_works.into())
-     */
-    Ok(Vec::new().into())
 }

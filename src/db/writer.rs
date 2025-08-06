@@ -1,3 +1,4 @@
+use crate::db::models::tag::TagId;
 use crate::{
     db::{
         model::string_to_rarray,
@@ -31,6 +32,22 @@ pub enum DbWriterRequest {
         preview_path: String,
         screen_path: String,
         archive_path: Option<String>,
+    },
+    SetWorkFavorite {
+        work_id: WorkId,
+        favorite: bool,
+    },
+    SetWorkHidden {
+        work_id: WorkId,
+        hidden: bool,
+    },
+    SetTagFavorite {
+        tag_id: TagId,
+        favorite: bool,
+    },
+    SetTagHidden {
+        tag_id: TagId,
+        hidden: bool,
     },
     Shutdown,
 }
@@ -80,6 +97,30 @@ impl DbWriteHandle {
                 screen_path,
                 archive_path,
             })?;
+        Ok(())
+    }
+
+    pub fn set_work_favorite(&self, work_id: WorkId, favorite: bool) -> Result<()> {
+        self.tx_to_writer
+            .send(DbWriterRequest::SetWorkFavorite { work_id, favorite })?;
+        Ok(())
+    }
+
+    pub fn set_work_hidden(&self, work_id: WorkId, hidden: bool) -> Result<()> {
+        self.tx_to_writer
+            .send(DbWriterRequest::SetWorkHidden { work_id, hidden })?;
+        Ok(())
+    }
+
+    pub fn set_tag_favorite(&self, tag_id: TagId, favorite: bool) -> Result<()> {
+        self.tx_to_writer
+            .send(DbWriterRequest::SetTagFavorite { tag_id, favorite })?;
+        Ok(())
+    }
+
+    pub fn set_tag_hidden(&self, tag_id: TagId, hidden: bool) -> Result<()> {
+        self.tx_to_writer
+            .send(DbWriterRequest::SetTagHidden { tag_id, hidden })?;
         Ok(())
     }
 }
@@ -158,6 +199,22 @@ impl DbBgWriter {
                     &mut host,
                 )?;
             }
+            DbWriterRequest::SetWorkFavorite { work_id, favorite } => {
+                set_work_favorite(&self.pool.get()?, work_id, favorite)?;
+                host.note_work_favorite_status_changed(work_id, favorite)?;
+            }
+            DbWriterRequest::SetWorkHidden { work_id, hidden } => {
+                set_work_hidden(&self.pool.get()?, work_id, hidden)?;
+                host.note_work_hidden_status_changed(work_id, hidden)?;
+            }
+            DbWriterRequest::SetTagFavorite { tag_id, favorite } => {
+                set_tag_favorite(&self.pool.get()?, tag_id, favorite)?;
+                host.note_tag_favorite_status_changed(tag_id, favorite)?;
+            }
+            DbWriterRequest::SetTagHidden { tag_id, hidden } => {
+                set_tag_hidden(&self.pool.get()?, tag_id, hidden)?;
+                host.note_tag_hidden_status_changed(tag_id, hidden)?;
+            }
         }
         Ok(())
     }
@@ -180,32 +237,35 @@ pub fn upsert_tags(
         let xaction = conn.transaction()?;
         {
             let mut insert_tag_stmt = xaction
-                .prepare("INSERT OR IGNORE INTO tags (name, kind, wiki_url) VALUES (?, ?, ?)")?;
+                .prepare("INSERT INTO tags (name, kind, wiki_url) VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET kind = ?, wiki_url = ? WHERE tags.name = ?")?;
             let mut select_tag_id_stmt = xaction.prepare("SELECT id FROM tags WHERE name = ?")?;
             let mut insert_plugin_tag_stmt =
-                xaction.prepare("INSERT OR IGNORE INTO plugin_tags (plugin_id, tag_id, presumed_work_count) VALUES (?, ?, ?)")?;
+                xaction.prepare("INSERT INTO plugin_tags (plugin_id, tag_id, presumed_work_count) VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET presumed_work_count = ?")?;
 
-            // conn.execute("BEGIN TRANSACTION", ())?;
             for tag in chunk {
                 let row_cnt = insert_tag_stmt.execute(params![
                     tag.name(),
                     tag.kind().to_string(),
                     tag.wiki_url(),
+                    tag.kind().to_string(),
+                    tag.wiki_url(),
+                    tag.name(),
                 ])?;
-                let tag_id = if row_cnt > 0 {
-                    xaction.last_insert_rowid()
-                } else {
-                    select_tag_id_stmt.query_row(params![tag.name()], |row| row.get(0))?
-                };
-                insert_plugin_tag_stmt.execute(params![
+                ensure!(row_cnt == 1, "failed to insert tag");
+                let mut tag_id = xaction.last_insert_rowid();
+                if tag_id == 0 {
+                    tag_id = select_tag_id_stmt.query_row(params![tag.name()], |row| row.get(0))?;
+                }
+                let row_cnt = insert_plugin_tag_stmt.execute(params![
                     plugin_id,
                     tag_id,
                     tag.presumed_work_count(),
+                    tag.presumed_work_count(),
                 ])?;
+                ensure!(row_cnt == 1, "failed to insert plugin_tag binding");
             }
         }
         xaction.commit()?;
-        // conn.execute("COMMIT TRANSACTION", ())?;
 
         current_pos += chunk.len();
         progress.set_percent(current_pos, total_count);
@@ -260,8 +320,6 @@ pub fn upsert_works(
                     ));
                     continue;
                 };
-                log::trace!("db->upsert_works with tags: {:?}", work.tags());
-                log.trace(format!("db->upsert_works with tags: {:?}", work.tags()));
                 let tag_ids: Vec<i64> = select_tag_ids_from_names
                     .query_map([string_to_rarray(work.tags())], |row| row.get(0))?
                     .flatten()
@@ -306,6 +364,54 @@ pub fn update_work_paths(
         preview_path,
         screen_path,
         archive_path,
+    )?;
+    Ok(())
+}
+
+fn set_work_favorite(
+    conn: &PooledConnection<SqliteConnectionManager>,
+    work_id: WorkId,
+    favorite: bool,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE works SET favorite = ? WHERE id = ?",
+        params![favorite, work_id],
+    )?;
+    Ok(())
+}
+
+fn set_work_hidden(
+    conn: &PooledConnection<SqliteConnectionManager>,
+    work_id: WorkId,
+    hidden: bool,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE works SET hidden = ? WHERE id = ?",
+        params![hidden, work_id],
+    )?;
+    Ok(())
+}
+
+fn set_tag_favorite(
+    conn: &PooledConnection<SqliteConnectionManager>,
+    tag_id: TagId,
+    favorite: bool,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE tags SET favorite = ? WHERE id = ?",
+        params![favorite, tag_id],
+    )?;
+    Ok(())
+}
+
+fn set_tag_hidden(
+    conn: &PooledConnection<SqliteConnectionManager>,
+    tag_id: TagId,
+    hidden: bool,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE tags SET hidden = ? WHERE id = ?",
+        params![hidden, tag_id],
     )?;
     Ok(())
 }

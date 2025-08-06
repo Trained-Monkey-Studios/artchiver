@@ -108,7 +108,7 @@ impl DbReadHandle {
                 .map(|w| (w.id(), w))
                 .collect::<HashMap<_, _>>();
             log.trace(format!("Finished collecting {} works", works.len()));
-            host.fetch_works_completed(works)
+            host.fetch_works_completed(Some(tag_id), works)
                 .expect("connection closed");
             trace!("Dispatching fetched works to UX");
         });
@@ -126,7 +126,7 @@ impl DbReadHandle {
                 .map(|w| (w.id(), w))
                 .collect::<HashMap<_, _>>();
             log.trace(format!("Finished collecting {} works", works.len()));
-            host.fetch_works_completed(works)
+            host.fetch_works_completed(None, works)
                 .expect("connection closed");
             trace!("Dispatching fetched works to UX");
         });
@@ -139,21 +139,17 @@ pub fn list_works_with_tag(
 ) -> Result<Vec<DbWork>> {
     let start = Instant::now();
 
-    // TODO: stream back incrementally?
     // If we decide we *have* to apply AND up front, it looks like this.
     // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
     let query = r#"
-        SELECT works.*, GROUP_CONCAT(tags.id) as tags FROM works
-        LEFT JOIN work_tags ON work_tags.work_id = works.id
-        LEFT JOIN tags ON work_tags.tag_id = tags.id
-        WHERE works.id IN (
-            SELECT works.id FROM works
-            LEFT JOIN work_tags ON work_tags.work_id = works.id
-            LEFT JOIN tags ON work_tags.tag_id = tags.id
-            WHERE tags.id = ?
-        )
-        GROUP BY works.id
-    "#;
+    SELECT works.*, GROUP_CONCAT(tags.id) as tags FROM works
+    LEFT JOIN work_tags ON work_tags.work_id = works.id
+    LEFT JOIN tags ON work_tags.tag_id = tags.id
+    WHERE works.id IN (
+        SELECT work_tags.work_id FROM work_tags WHERE work_tags.tag_id = ?
+    )
+    GROUP BY works.id
+"#;
     let mut stmt = conn.prepare(query)?;
     let out = stmt.query_map([tag_id], DbWork::from_row)?.try_fold(
         Vec::new(),
@@ -171,14 +167,14 @@ pub fn list_favorite_works(
 ) -> Result<Vec<DbWork>> {
     let start = Instant::now();
     let query = r#"
-        SELECT works.*, GROUP_CONCAT(tags.id) as tags FROM works
-        LEFT JOIN work_tags ON work_tags.work_id = works.id
-        LEFT JOIN tags ON work_tags.tag_id = tags.id
-        WHERE works.id IN (
-            SELECT works.id FROM works WHERE works.favorite = 1
-        )
-        GROUP BY works.id
-    "#;
+    SELECT works.*, GROUP_CONCAT(tags.id) as tags FROM works
+    LEFT JOIN work_tags ON work_tags.work_id = works.id
+    LEFT JOIN tags ON work_tags.tag_id = tags.id
+    WHERE works.id IN (
+        SELECT works.id FROM works WHERE works.favorite = 1 OR works.hidden = 1 -- Why are these not showing up?
+    )
+    GROUP BY works.id
+"#;
     let mut stmt = conn.prepare(query)?;
     let out = stmt.query_map((), DbWork::from_row)?.try_fold(
         Vec::new(),
@@ -193,14 +189,13 @@ pub fn list_favorite_works(
 
 pub fn list_all_tags(conn: &PooledConnection<SqliteConnectionManager>) -> Result<Vec<DbTag>> {
     let query = r#"
-    SELECT tags.id, tags.name, tags.kind, tags.wiki_url, tags.favorite,
-            SUM(plugin_tags.presumed_work_count) AS network_count,
-            GROUP_CONCAT(plugins.name) AS plugin_names
-        FROM tags
-        LEFT JOIN plugin_tags ON tags.id == plugin_tags.tag_id
-        LEFT JOIN plugins ON plugin_tags.plugin_id == plugins.id
-        WHERE tags.hidden = 0
-        GROUP BY tags.name, plugin_tags.presumed_work_count;"#;
+SELECT tags.id, tags.name, tags.kind, tags.wiki_url, tags.favorite,
+        SUM(plugin_tags.presumed_work_count) AS network_count,
+        GROUP_CONCAT(plugins.name) AS plugin_names
+    FROM tags
+    LEFT JOIN plugin_tags ON tags.id == plugin_tags.tag_id
+    LEFT JOIN plugins ON plugin_tags.plugin_id == plugins.id
+    GROUP BY tags.name, plugin_tags.presumed_work_count;"#;
     let mut stmt = conn.prepare(query)?;
     let tags: Vec<DbTag> = stmt.query_map((), DbTag::from_row)?.flatten().collect();
     Ok(tags)
@@ -210,10 +205,9 @@ pub fn count_works_per_tag(
     conn: &PooledConnection<SqliteConnectionManager>,
 ) -> Result<Vec<(TagId, u64)>> {
     let query = r#"SELECT tags.id, COUNT(work_tags.id)
-        FROM tags
-        LEFT JOIN work_tags ON tags.id == work_tags.tag_id
-        WHERE tags.hidden = 0
-        GROUP BY tags.id;"#;
+    FROM tags
+    LEFT JOIN work_tags ON tags.id == work_tags.tag_id
+    GROUP BY tags.id;"#;
     let out = conn
         .prepare(query)?
         .query_map((), |row| {

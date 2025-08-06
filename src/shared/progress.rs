@@ -142,6 +142,38 @@ impl HostUpdateSender {
         Ok(())
     }
 
+    pub fn note_work_favorite_status_changed(
+        &mut self,
+        work_id: WorkId,
+        favorite: bool,
+    ) -> Result<()> {
+        self.tx_to_runner
+            .send(DataUpdate::WorkFavoriteStatusChanged { work_id, favorite })?;
+        Ok(())
+    }
+
+    pub fn note_work_hidden_status_changed(&mut self, work_id: WorkId, hidden: bool) -> Result<()> {
+        self.tx_to_runner
+            .send(DataUpdate::WorkHiddenStatusChanged { work_id, hidden })?;
+        Ok(())
+    }
+
+    pub fn note_tag_favorite_status_changed(
+        &mut self,
+        tag_id: TagId,
+        favorite: bool,
+    ) -> Result<()> {
+        self.tx_to_runner
+            .send(DataUpdate::TagFavoriteStatusChanged { tag_id, favorite })?;
+        Ok(())
+    }
+
+    pub fn note_tag_hidden_status_changed(&mut self, tag_id: TagId, hidden: bool) -> Result<()> {
+        self.tx_to_runner
+            .send(DataUpdate::TagHiddenStatusChanged { tag_id, hidden })?;
+        Ok(())
+    }
+
     pub fn note_completed_download(
         &mut self,
         id: WorkId,
@@ -158,9 +190,13 @@ impl HostUpdateSender {
         Ok(())
     }
 
-    pub fn fetch_works_completed(&mut self, works: HashMap<WorkId, DbWork>) -> Result<()> {
+    pub fn fetch_works_completed(
+        &mut self,
+        tag_id: Option<TagId>,
+        works: HashMap<WorkId, DbWork>,
+    ) -> Result<()> {
         self.tx_to_runner
-            .send(DataUpdate::FetchWorksComplete { works })?;
+            .send(DataUpdate::FetchWorksComplete { tag_id, works })?;
         Ok(())
     }
 

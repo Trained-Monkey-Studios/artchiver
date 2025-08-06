@@ -1,5 +1,6 @@
+use crate::db::writer::DbWriteHandle;
 use crate::{
-    db::{reader::DbReadHandle, sync::DbSyncHandle},
+    db::reader::DbReadHandle,
     plugin::host::{PluginHandle, PluginHost},
     shared::{performance::PerfTrack, progress::UpdateSource, update::DataUpdate},
     ux::{db::UxDb, tag::UxTag, work::UxWork},
@@ -101,22 +102,22 @@ pub struct UxState {
 struct SyncViewer<'a> {
     sync: &'a mut PluginHost,
     state: &'a mut UxState,
-    db: &'a DbReadHandle,
-    db_sync: &'a DbSyncHandle,
+    db_read: &'a DbReadHandle,
+    db_write: &'a DbWriteHandle,
 }
 
 impl<'a> SyncViewer<'a> {
     fn wrap(
         sync: &'a mut PluginHost,
         state: &'a mut UxState,
-        db: &'a DbReadHandle,
-        db_sync: &'a DbSyncHandle,
+        db_read: &'a DbReadHandle,
+        db_write: &'a DbWriteHandle,
     ) -> Self {
         Self {
             sync,
             state,
-            db,
-            db_sync,
+            db_read,
+            db_write,
         }
     }
 
@@ -236,10 +237,12 @@ impl<'a> SyncViewer<'a> {
     fn show_tags(&mut self, ui: &mut egui::Ui) {
         let start = Instant::now();
         let mut tag_set = self.state.work_ux.tag_selection().to_owned();
-        self.state.tag_ux.ui(&mut tag_set, self.sync, ui);
+        self.state
+            .tag_ux
+            .ui(&mut tag_set, self.sync, self.db_write, ui);
         self.state
             .work_ux
-            .set_tag_selection(self.state.tag_ux.tags(), tag_set, self.db);
+            .set_tag_selection(self.state.tag_ux.tags(), tag_set, self.db_read);
         self.state.perf.sample("Show Tags", start.elapsed());
     }
 
@@ -247,8 +250,8 @@ impl<'a> SyncViewer<'a> {
         let start = Instant::now();
         self.state.work_ux.gallery_ui(
             self.state.tag_ux.tags(),
-            self.db,
-            self.db_sync,
+            self.db_read,
+            self.db_write,
             &mut self.state.perf,
             ui,
         );
@@ -256,9 +259,13 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
-        self.state
-            .work_ux
-            .info_ui(self.state.tag_ux.tags(), self.db, ui);
+        self.state.work_ux.info_ui(
+            self.state.tag_ux.tags(),
+            self.db_read,
+            self.db_write,
+            self.sync,
+            ui,
+        );
     }
 
     fn render_slideshow(&mut self, ctx: &egui::Context) {
@@ -267,7 +274,7 @@ impl<'a> SyncViewer<'a> {
             self.state.mode = UxMode::Browser;
             return;
         }
-        self.state.work_ux.slideshow_ui(self.db_sync, ctx);
+        self.state.work_ux.slideshow_ui(self.db_write, ctx);
     }
 }
 
@@ -369,7 +376,7 @@ impl UxToplevel {
     pub fn main(
         &mut self,
         db: &DbReadHandle,
-        db_sync: &DbSyncHandle,
+        db_write: &DbWriteHandle,
         host: &mut PluginHost,
         ctx: &egui::Context,
     ) -> Result<()> {
@@ -400,7 +407,7 @@ impl UxToplevel {
                             .style(Style::from_egui(ui.style().as_ref()))
                             .show(
                                 ctx,
-                                &mut SyncViewer::wrap(host, &mut self.state, db, db_sync),
+                                &mut SyncViewer::wrap(host, &mut self.state, db, db_write),
                             );
                     });
 
@@ -410,7 +417,7 @@ impl UxToplevel {
                 self.render_about(ctx);
             }
             UxMode::Slideshow => {
-                SyncViewer::wrap(host, &mut self.state, db, db_sync).render_slideshow(ctx);
+                SyncViewer::wrap(host, &mut self.state, db, db_write).render_slideshow(ctx);
             }
         }
 

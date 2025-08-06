@@ -38,6 +38,24 @@ pub enum DataUpdate {
         archive_path: Option<String>,
     },
 
+    // Status change for favorite and hidden flags.
+    WorkFavoriteStatusChanged {
+        work_id: WorkId,
+        favorite: bool,
+    },
+    WorkHiddenStatusChanged {
+        work_id: WorkId,
+        hidden: bool,
+    },
+    TagFavoriteStatusChanged {
+        tag_id: TagId,
+        favorite: bool,
+    },
+    TagHiddenStatusChanged {
+        tag_id: TagId,
+        hidden: bool,
+    },
+
     // Notify the PluginHost that the source has completed a task and needs to be fed new work.
     CompletedTask {
         source: UpdateSource,
@@ -60,6 +78,7 @@ pub enum DataUpdate {
 
     // Fulfills a request by the UX to get the current list of works for a tag.
     FetchWorksComplete {
+        tag_id: Option<TagId>,
         works: HashMap<WorkId, DbWork>,
     },
 }

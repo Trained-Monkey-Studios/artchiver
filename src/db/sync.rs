@@ -3,7 +3,6 @@ use crate::{
         models::{
             plugin::{DbPlugin, PluginId},
             tag::TagId,
-            work::WorkId,
         },
         reader::DbReadHandle,
         writer::{DbBgWriter, DbWriteHandle},
@@ -79,9 +78,8 @@ pub fn connect_or_create(
         progress_mon.monitor_channel(),
     );
     let writer_handle = thread::spawn(move || {
-        if let Err(e) = writer.main() {
-            error!("Error in DB writer thread: {e}");
-            panic!("Error in DB writer thread: {e}")
+        while let Err(e) = writer.main() {
+            error!("Error in DB writer thread: {e}\n{}", e.backtrace());
         }
     });
     let db_writer = DbWriteHandle::new(tx_to_writer);
@@ -165,25 +163,6 @@ impl DbSyncHandle {
             )?;
         }
         xaction.commit()?;
-        Ok(())
-    }
-
-    // WORK POKE /////////////////////////////////////////
-    pub fn set_work_favorite(&self, work_id: WorkId, favorite: bool) -> Result<()> {
-        let conn = self.pool.get()?;
-        conn.execute(
-            "UPDATE works SET favorite = ? WHERE id = ?",
-            params![favorite, work_id],
-        )?;
-        Ok(())
-    }
-
-    pub fn set_work_hidden(&self, work_id: WorkId, hidden: bool) -> Result<()> {
-        let conn = self.pool.get()?;
-        conn.execute(
-            "UPDATE works SET hidden = ? WHERE id = ?",
-            params![hidden, work_id],
-        )?;
         Ok(())
     }
 }

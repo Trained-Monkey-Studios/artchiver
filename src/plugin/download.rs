@@ -7,7 +7,7 @@ use crate::{
         throttle::CallingThrottle,
     },
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use artchiver_sdk::Work;
 use sha2::{Digest as _, Sha256};
 use std::{
@@ -39,7 +39,11 @@ pub fn download_works(
                     (&mut log.clone(), cancellation),
                 ) {
                     // Note: ignore download failures and let the user re-try, if needed.
-                    log.error(format!("Error downloading work {}: {e}", work.name()));
+                    log.error(format!(
+                        "Error downloading work {}: {e}\n{}",
+                        work.name(),
+                        e.backtrace()
+                    ));
                 }
 
                 // FIXME: we need to send this from the db side so that we (1) only show things
@@ -54,7 +58,13 @@ pub fn download_works(
 
 // Returns the absolute path for I/O and the relative path in the data directory for metadata.
 pub fn get_data_path_for_url(data_dir: &Path, url: &str) -> Result<(PathBuf, String)> {
-    let ext = url.rsplit('.').next().unwrap_or_default();
+    let ext = url
+        .rsplit('/')
+        .next_back()
+        .unwrap_or_default()
+        .rsplit('.')
+        .next()
+        .unwrap_or_default();
     let key = Sha256::digest(url.as_bytes());
     let key = format!("{key:x}");
     let level1 = &key[0..2];
@@ -62,7 +72,7 @@ pub fn get_data_path_for_url(data_dir: &Path, url: &str) -> Result<(PathBuf, Str
     let file_base = &key[4..];
     let relative = format!("{level1}/{level2}/{file_base}.{ext}");
     let dir_path = data_dir.join(level1).join(level2);
-    fs::create_dir_all(&dir_path)?;
+    fs::create_dir_all(&dir_path).context("failed to create data path dirs")?;
     Ok((data_dir.join(&relative), relative))
 }
 
@@ -93,19 +103,21 @@ fn ensure_work_data_is_cached(
         cancellation,
     )?;
 
-    let archive_path = if let Some(archive_url) = work.archive_url() {
-        Some(ensure_data_url(
-            archive_url,
-            data_dir,
-            tmp_dir,
-            agent,
-            log,
-            throttle,
-            cancellation,
-        )?)
-    } else {
-        None
-    };
+    // FIXME: figure out how to download an iiif tiled image.
+    let archive_path = None;
+    // let archive_path = if let Some(archive_url) = work.archive_url() {
+    //     Some(ensure_data_url(
+    //         archive_url,
+    //         data_dir,
+    //         tmp_dir,
+    //         agent,
+    //         log,
+    //         throttle,
+    //         cancellation,
+    //     )?)
+    // } else {
+    //     None
+    // };
 
     db.set_work_download_paths(work.screen_url(), preview_path, screen_path, archive_path)?;
     Ok(())
@@ -133,14 +145,16 @@ fn ensure_data_url(
     let tmp_path = make_temp_path(tmp_dir);
     {
         // Note: in a block to Drop, to close the file before renaming it, just for sanity.
-        let tmp_fp = fs::File::create(&tmp_path)?;
+        let tmp_fp = fs::File::create(&tmp_path).context("failed to create temporary file")?;
         log.trace(format!("ensure_data_url({url})"));
         let mut resp = agent.get(url).call()?;
         io::copy(
             &mut resp.body_mut().as_reader(),
             &mut io::BufWriter::new(tmp_fp),
-        )?;
+        )
+        .context("failed to download file")?;
     }
-    fs::rename(&tmp_path, &abs_path)?;
+    fs::rename(&tmp_path, &abs_path)
+        .with_context(|| format!("failed to rename temporary file {tmp_path:?} -> {abs_path:?}"))?;
     Ok(rel_path)
 }

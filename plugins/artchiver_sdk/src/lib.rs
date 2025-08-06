@@ -1,7 +1,9 @@
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use std::{
+    cmp::Ordering,
     fmt,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
@@ -189,19 +191,49 @@ pub struct Tag {
     wiki_url: Option<String>,
 }
 
+impl PartialEq for Tag {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for Tag {}
+
+impl PartialOrd for Tag {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.name.partial_cmp(&other.name)
+    }
+}
+
+impl Ord for Tag {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.name.cmp(&other.name)
+    }
+}
+
+impl Hash for Tag {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+
 impl Tag {
     pub fn new<N: ToString, W: ToString>(
         name: N,
-        kind: TagKind,
         work_count: Option<u64>,
         wiki_url: Option<W>,
     ) -> Self {
         Self {
             name: name.to_string(),
-            kind,
+            kind: TagKind::default(),
             presumed_work_count: work_count,
             wiki_url: wiki_url.map(|s| s.to_string()),
         }
+    }
+
+    pub fn with_kind(mut self, kind: TagKind) -> Self {
+        self.kind = kind;
+        self
     }
 
     pub fn name(&self) -> &str {
@@ -268,6 +300,11 @@ impl Work {
         self
     }
 
+    pub fn with_archive_url(mut self, url: impl ToString) -> Self {
+        self.archive_url = Some(url.to_string());
+        self
+    }
+
     pub fn remote_id(&self) -> Option<&str> {
         self.remote_id.as_deref()
     }
@@ -327,7 +364,7 @@ impl Request {
         Self {
             method: "GET".to_string(),
             url: url.to_string(),
-            path: "/".to_string(),
+            path: "".to_string(),
             query: Vec::new(),
             headers: Vec::new(),
         }

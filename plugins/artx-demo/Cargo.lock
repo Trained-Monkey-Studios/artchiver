@@ -22,6 +22,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "artx-demo"
+version = "0.0.1"
+dependencies = [
+ "artchiver_sdk",
+ "csv",
+ "extism-pdk",
+ "jiff",
+ "serde",
+ "serde_json",
+ "urlencoding",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -452,19 +465,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "the_met"
-version = "0.0.1"
-dependencies = [
- "artchiver_sdk",
- "csv",
- "extism-pdk",
- "jiff",
- "serde",
- "serde_json",
- "urlencoding",
 ]
 
 [[package]]

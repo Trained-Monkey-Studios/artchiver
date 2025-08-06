@@ -1,5 +1,5 @@
 [package]
-name = "the_met"
+name = "artx-demo"
 description = "Plugin for Artchiver to access The Metropolitan Gallery of the Arts open data collection."
 version = "0.0.1"
 edition = "2024"

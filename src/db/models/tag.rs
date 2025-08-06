@@ -28,6 +28,7 @@ pub struct DbTag {
     local_count: Option<u64>,
     hidden: bool,
     favorite: bool,
+    wiki_url: Option<String>,
     sources: Vec<String>,
 }
 
@@ -45,6 +46,7 @@ impl DbTag {
             local_count: None,
             hidden: row.get("hidden").ok().unwrap_or(false),
             favorite: row.get("favorite")?,
+            wiki_url: row.get("wiki_url")?,
             sources: row
                 .get::<&str, String>("plugin_names")?
                 .split(',')
@@ -81,8 +83,20 @@ impl DbTag {
         self.hidden
     }
 
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.hidden = hidden;
+    }
+
     pub fn favorite(&self) -> bool {
         self.favorite
+    }
+
+    pub fn set_favorite(&mut self, favorite: bool) {
+        self.favorite = favorite;
+    }
+
+    pub fn wiki_url(&self) -> Option<&str> {
+        self.wiki_url.as_deref()
     }
 
     pub fn sources(&self) -> &[String] {

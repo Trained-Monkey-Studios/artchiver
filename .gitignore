@@ -19,3 +19,4 @@ target_wasm
 # our programs own state directories
 data
 cache
+plugins/*.wasm

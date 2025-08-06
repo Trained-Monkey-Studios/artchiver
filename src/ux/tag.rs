@@ -3,6 +3,7 @@ use crate::{
         model::OrderDir,
         models::tag::{DbTag, TagId},
         reader::DbReadHandle,
+        writer::DbWriteHandle,
     },
     plugin::host::PluginHost,
     shared::{tag::TagSet, update::DataUpdate},
@@ -10,7 +11,7 @@ use crate::{
 use itertools::Itertools as _;
 use log::trace;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{cmp::Ordering, collections::HashMap};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum TagSortCol {
@@ -113,6 +114,20 @@ impl UxTag {
                 DataUpdate::WorksWereUpdatedForTag { .. } => {
                     db.get_tag_local_counts();
                 }
+                DataUpdate::TagFavoriteStatusChanged { tag_id, favorite } => {
+                    if let Some(tags) = &mut self.tag_all {
+                        if let Some(tag) = tags.get_mut(tag_id) {
+                            tag.set_favorite(*favorite);
+                        }
+                    }
+                }
+                DataUpdate::TagHiddenStatusChanged { tag_id, hidden } => {
+                    if let Some(tags) = &mut self.tag_all {
+                        if let Some(tag) = tags.get_mut(tag_id) {
+                            tag.set_hidden(*hidden);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -135,24 +150,45 @@ impl UxTag {
                 })
                 // FIXME: add UX and filter to hide, browse hidden tags, and unhide
                 // .filter(|(_, t)| t.hidden)
-                .sorted_by(|(_, a), (_, b)| {
-                    let ord = match self.order.column {
-                        TagSortCol::Name => a.name().cmp(b.name()),
-                        TagSortCol::LocalCount => a.local_count().cmp(&b.local_count()),
-                        TagSortCol::NetworkCount => a.network_count().cmp(&b.network_count()),
-                    };
-                    match self.order.order {
-                        OrderDir::Asc => ord,
-                        OrderDir::Desc => ord.reverse(),
-                    }
-                })
+                .sorted_by(
+                    |(_, a), (_, b)| match a.favorite().cmp(&b.favorite()).reverse() {
+                        Ordering::Equal => {
+                            let inner = match self.order.column {
+                                TagSortCol::Name => a.name().cmp(b.name()),
+                                TagSortCol::LocalCount => {
+                                    match a.local_count().cmp(&b.local_count()) {
+                                        Ordering::Equal => a.name().cmp(b.name()),
+                                        v => v,
+                                    }
+                                }
+                                TagSortCol::NetworkCount => {
+                                    match a.network_count().cmp(&b.network_count()) {
+                                        Ordering::Equal => a.name().cmp(b.name()),
+                                        v => v,
+                                    }
+                                }
+                            };
+                            match self.order.order {
+                                OrderDir::Asc => inner,
+                                OrderDir::Desc => inner.reverse(),
+                            }
+                        }
+                        v => v,
+                    },
+                )
                 .map(|(id, _)| *id)
                 .collect();
         }
     }
 
     // Note: no pool so no way to block
-    pub fn ui(&mut self, tag_set: &mut TagSet, host: &mut PluginHost, ui: &mut egui::Ui) {
+    pub fn ui(
+        &mut self,
+        tag_set: &mut TagSet,
+        host: &mut PluginHost,
+        db_write: &DbWriteHandle,
+        ui: &mut egui::Ui,
+    ) {
         if self.tag_all.is_none() {
             ui.spinner();
             return;
@@ -177,15 +213,18 @@ impl UxTag {
                     selected = offset;
                 }
             }
+            let prior = selected;
             egui::ComboBox::new("tag_filter_sources", "Source")
                 .wrap_mode(egui::TextWrapMode::Truncate)
                 .show_index(ui, &mut selected, options.len(), |i| &options[i]);
-            if options[selected] == "All" {
-                self.source_filter = None;
-                self.reproject_tags();
-            } else {
-                self.source_filter = Some(options[selected].clone());
-                self.reproject_tags();
+            if prior != selected {
+                if options[selected] == "All" {
+                    self.source_filter = None;
+                    self.reproject_tags();
+                } else {
+                    self.source_filter = Some(options[selected].clone());
+                    self.reproject_tags();
+                }
             }
         });
         // Sorting
@@ -206,58 +245,7 @@ impl UxTag {
                     .show(ui, |ui| {
                         for tag_id in &self.tag_filtered[row_range] {
                             let tag = all_tags.get(tag_id).expect("missing tag");
-                            let status = tag_set.status(tag);
-                            if ui
-                                .add(egui::Button::new("✔").small().selected(status.enabled()))
-                                .on_hover_text("replace filter")
-                                .clicked()
-                            {
-                                tag_set.clear();
-                                tag_set.enable(tag);
-                            }
-                            if ui
-                                .add(egui::Button::new("+").small().selected(status.enabled()))
-                                .on_hover_text("add filter")
-                                .clicked()
-                            {
-                                tag_set.enable(tag);
-                            }
-                            if ui
-                                .add(egui::Button::new(" ").small())
-                                .on_hover_text("remove filter")
-                                .clicked()
-                            {
-                                tag_set.unselect(tag);
-                            }
-                            if ui
-                                .add(egui::Button::new("x").small().selected(status.disabled()))
-                                .on_hover_text("filter on negation")
-                                .clicked()
-                            {
-                                tag_set.disable(tag);
-                            }
-                            ui.label("   ");
-                            if ui.button("⟳").on_hover_text("refresh works").clicked() {
-                                host.refresh_works_for_tag(tag).ok();
-                            }
-                            ui.label("   ");
-                            let content = if let Some(local_count) = tag.local_count() {
-                                format!(
-                                    "{} ({} of {})",
-                                    tag.name(),
-                                    local_count,
-                                    tag.network_count()
-                                )
-                            } else {
-                                format!("{} ([loading...] of {})", tag.name(), tag.network_count())
-                            };
-                            if status.disabled() {
-                                ui.label(egui::RichText::new(content).strikethrough());
-                            } else if status.enabled() {
-                                ui.label(egui::RichText::new(content).strong());
-                            } else {
-                                ui.label(content);
-                            }
+                            tag_set.tag_row_ui(tag, host, db_write, ui);
                             ui.end_row();
                         }
                     });
