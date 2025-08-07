@@ -47,6 +47,7 @@ clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
 egui = "0.32"
 egui_dock = { version = "0.17", features = ["serde"] }
+egui_dnd = "0.13"
 egui_extras = { version = "0.32", features = ["image", "file", "gif", "webp"] } # matching bevy_egui
 egui_plot = "0.33"
 #egui-video = { version = "0.9", default-features = false }

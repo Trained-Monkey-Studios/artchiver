@@ -36,9 +36,7 @@ pub struct TagSet {
     enabled: HashSet<TagId>,
     disabled: HashSet<TagId>,
 
-    #[serde(skip)]
     last_fetched: Option<TagId>,
-    #[serde(skip)]
     changed: bool,
 }
 

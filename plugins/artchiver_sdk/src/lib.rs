@@ -236,6 +236,10 @@ impl Tag {
         self
     }
 
+    pub fn set_work_count(&mut self, count: u64) {
+        self.presumed_work_count = Some(count);
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

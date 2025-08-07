@@ -60,7 +60,7 @@ pub fn download_works(
 pub fn get_data_path_for_url(data_dir: &Path, url: &str) -> Result<(PathBuf, String)> {
     let ext = url
         .rsplit('/')
-        .next_back()
+        .next()
         .unwrap_or_default()
         .rsplit('.')
         .next()

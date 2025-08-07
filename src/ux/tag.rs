@@ -229,7 +229,11 @@ impl UxTag {
         });
         // Sorting
         ui.horizontal(|ui| {
+            let prior = self.order;
             self.order.ui(ui);
+            if prior != self.order {
+                self.reproject_tags();
+            }
         });
 
         let all_tags = self.tag_all.as_ref().expect("no tags after check");
