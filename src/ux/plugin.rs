@@ -1,5 +1,9 @@
 use crate::plugin::host::{PluginHandle, PluginHost};
 use egui::{Margin, TextWrapMode};
+use egui_dnd::{
+    DragUpdate,
+    dnd
+};
 use log::Level;
 use serde::{Deserialize, Serialize};
 
@@ -91,17 +95,27 @@ impl UxPlugin {
                     }
                 }
                 ui.separator();
+
+                let mut offset = 0;
                 let mut removed = None;
-                for (i, task) in plugin.task_queue().enumerate() {
-                    ui.horizontal(|ui| {
-                        if ui.small_button("x").on_hover_text("Cancel").clicked() {
-                            removed = Some(i);
-                        }
-                        ui.label(format!("{i}: {task}"));
-                    });
-                }
-                if let Some(index) = removed {
-                    plugin.remove_queued_task(index);
+                let resp = dnd(ui, &format!("task_queue_{}", plugin.name())).show(
+                    plugin.task_queue(),
+                    |ui, req, handle, _state| {
+                        handle.ui(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.small_button("x").on_hover_text("Cancel").clicked() {
+                                    removed = Some(req.clone());
+                                }
+                                ui.label(format!("{offset}: {req}"));
+                                offset += 1;
+                            });
+                        });
+                    }
+                );
+                if let Some(req) = removed {
+                    plugin.remove_queued_task(&req);
+                } else if let Some(DragUpdate { from, to }) = resp.update {
+                    plugin.swap_task_queue_items(from, to);
                 }
             });
     }

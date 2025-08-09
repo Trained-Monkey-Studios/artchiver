@@ -52,8 +52,9 @@
           ];
 
           packages = [
-            rlwrap
             just
+            rlwrap
+            sqlite
           ];
 
           LD_LIBRARY_PATH = "${lib.makeLibraryPath buildInputs}";

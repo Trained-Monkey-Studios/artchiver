@@ -2,7 +2,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::{fmt, sync::Arc};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum PluginRequest {
     ApplyConfiguration { config: Vec<(String, String)> },
     RefreshTags,

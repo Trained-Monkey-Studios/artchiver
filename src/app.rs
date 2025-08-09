@@ -30,7 +30,6 @@ pub struct ArtchiverApp {
     db_read: DbReadHandle,
 
     // Rebuild plugins on each run as we don't know where we'll be running from.
-    #[serde(skip)]
     host: PluginHost,
 
     // The main ux container.
@@ -44,8 +43,7 @@ impl Default for ArtchiverApp {
         let progress_mon = ProgressMonitor::default();
         let (db_sync, db_write, db_read) =
             connect_or_create(&env, &progress_mon).expect("failed to connect to database");
-        let host = PluginHost::new(&env, &progress_mon, &db_sync, &db_write)
-            .expect("failed to set up plugins");
+        let host = PluginHost::default();
         let toplevel = UxToplevel::default();
 
         Self {
@@ -68,7 +66,11 @@ impl ArtchiverApp {
 
         // Load or create a new app.
         let mut app: Self = if let Some(storage) = cc.storage {
-            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
+            let mut app: Self = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+            app.host
+                .initialize(&app.env, &app.progress_mon, &app.db_sync, &app.db_write)
+                .expect("failed to initialize app");
+            app
         } else {
             Default::default()
         };

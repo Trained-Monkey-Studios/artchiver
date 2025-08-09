@@ -1,8 +1,7 @@
-use crate::db::models::tag::TagId;
 use crate::{
     db::{
         model::string_to_rarray,
-        models::{plugin::PluginId, work::WorkId},
+        models::{plugin::PluginId, tag::TagId, work::WorkId},
     },
     shared::{
         progress::{HostUpdateSender, LogSender, ProgressSender, UpdateSource},
@@ -231,16 +230,16 @@ pub fn upsert_tags(
 
     let total_count = tags.len();
     let mut current_pos = 0;
-    log.info(format!("Writing {total_count} tags to the database..."));
+    log.info(format!("Writing {total_count} tags for plugin {plugin_id} to the database..."));
     for chunk in tags.chunks(10_000) {
+        let mut tag_ids = Vec::new();
+
         log.trace(format!("db->upsert_tags chunk of {}", chunk.len()));
         let xaction = conn.transaction()?;
         {
             let mut insert_tag_stmt = xaction
                 .prepare("INSERT INTO tags (name, kind, wiki_url) VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET kind = ?, wiki_url = ? WHERE tags.name = ?")?;
             let mut select_tag_id_stmt = xaction.prepare("SELECT id FROM tags WHERE name = ?")?;
-            let mut insert_plugin_tag_stmt =
-                xaction.prepare("INSERT INTO plugin_tags (plugin_id, tag_id, presumed_work_count) VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET presumed_work_count = ?")?;
 
             for tag in chunk {
                 let row_cnt = insert_tag_stmt.execute(params![
@@ -256,11 +255,22 @@ pub fn upsert_tags(
                 if tag_id == 0 {
                     tag_id = select_tag_id_stmt.query_row(params![tag.name()], |row| row.get(0))?;
                 }
+                tag_ids.push((tag_id, tag.presumed_work_count()));
+            }
+        }
+        xaction.commit()?;
+
+        let xaction = conn.transaction()?;
+        {
+            let mut insert_plugin_tag_stmt =
+                xaction.prepare("INSERT INTO plugin_tags (plugin_id, tag_id, presumed_work_count) VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET presumed_work_count = ?")?;
+
+            for (tag_id, work_count) in &tag_ids {
                 let row_cnt = insert_plugin_tag_stmt.execute(params![
                     plugin_id,
                     tag_id,
-                    tag.presumed_work_count(),
-                    tag.presumed_work_count(),
+                    *work_count,
+                    *work_count,
                 ])?;
                 ensure!(row_cnt == 1, "failed to insert plugin_tag binding");
             }
