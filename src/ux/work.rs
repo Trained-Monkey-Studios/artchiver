@@ -318,6 +318,7 @@ impl UxWork {
 
     fn reproject_work(&mut self) {
         if let Some(works) = self.work_matching_tag.as_ref() {
+            let selected = self.get_selected_work().map(|w| w.id());
             self.work_filtered = works
                 .values()
                 .filter(|work| work.screen_path().is_some())
@@ -346,13 +347,11 @@ impl UxWork {
                 self.work_filtered.len(),
                 works.len()
             );
-            if let Some(selected) = self.selected {
-                if self.work_filtered.is_empty() {
-                    self.clear_selected();
-                } else if selected >= self.work_filtered.len() {
-                    self.set_selected(self.work_filtered.len() - 1);
-                }
-            }
+            // The position of the selected work may have changed in our newly filtered list.
+            // Re-look-up the position of the selected id. If the selected id is no longer in
+            // the filtered list, the selection will become None via the and_then.
+            self.selected =
+                selected.and_then(|id| self.work_filtered.iter().position(|i| *i == id));
         } else {
             self.work_filtered = Vec::new();
         }
@@ -466,7 +465,7 @@ impl UxWork {
     pub fn get_selected_work(&self) -> Option<&DbWork> {
         self.work_matching_tag.as_ref().and_then(|m| {
             self.selected
-                .map(|offset| &self.work_filtered[offset])
+                .and_then(|offset| self.work_filtered.get(offset))
                 .and_then(|id| m.get(id))
         })
     }

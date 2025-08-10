@@ -31,7 +31,7 @@ o Favorite tags
 o Drag n Drop reorder of the work queue
 o Save the work queue between runs, (including restarting the current job)
 o Zoom and pan in slideshow mode
-* Fix shift in images when new stuff loads in in front of you
+o Fix shift in images when new stuff loads in in front of you
 * Sort work tags
 * Hide mouse pointer in slideshow when mouse is not moving
 * Only scroll to selection on a move event or leaving slideshow
