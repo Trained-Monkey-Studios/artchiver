@@ -189,7 +189,7 @@ pub fn list_favorite_works(
 
 pub fn list_all_tags(conn: &PooledConnection<SqliteConnectionManager>) -> Result<Vec<DbTag>> {
     let query = r#"
-SELECT tags.id, tags.name, tags.kind, tags.wiki_url, tags.favorite,
+SELECT tags.id, tags.name, tags.kind, tags.wiki_url, tags.favorite, tags.hidden,
         SUM(plugin_tags.presumed_work_count) AS network_count,
         GROUP_CONCAT(plugins.name) AS plugin_names
     FROM tags

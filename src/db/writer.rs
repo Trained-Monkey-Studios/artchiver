@@ -207,10 +207,12 @@ impl DbBgWriter {
                 host.note_work_hidden_status_changed(work_id, hidden)?;
             }
             DbWriterRequest::SetTagFavorite { tag_id, favorite } => {
+                log.info(format!("Setting tag {tag_id} to favorite: {favorite}"));
                 set_tag_favorite(&self.pool.get()?, tag_id, favorite)?;
                 host.note_tag_favorite_status_changed(tag_id, favorite)?;
             }
             DbWriterRequest::SetTagHidden { tag_id, hidden } => {
+                log.info(format!("Setting tag {tag_id} to hidden: {hidden}"));
                 set_tag_hidden(&self.pool.get()?, tag_id, hidden)?;
                 host.note_tag_hidden_status_changed(tag_id, hidden)?;
             }

@@ -142,14 +142,12 @@ impl UxTag {
             self.tag_filtered = tags
                 .iter()
                 .filter(|(_id, t)| t.name().contains(&self.name_filter))
+                .filter(|(_, t)| !t.hidden() || self.source_filter.as_deref() == Some("Hidden"))
                 // include only selected plugin sources in the tags list response
                 .filter(|(_, t)| {
                     self.source_filter.is_none()
-                        || t.sources()
-                            .contains(self.source_filter.as_ref().expect("checked"))
+                        || self.source_filter.as_deref() == Some("Hidden") && t.hidden()
                 })
-                // FIXME: add UX and filter to hide, browse hidden tags, and unhide
-                // .filter(|(_, t)| t.hidden)
                 .sorted_by(
                     |(_, a), (_, b)| match a.favorite().cmp(&b.favorite()).reverse() {
                         Ordering::Equal => {
@@ -208,6 +206,7 @@ impl UxTag {
             let mut selected = 0usize;
             let mut options = host.plugins().map(|p| p.name()).collect::<Vec<_>>();
             options.insert(0, "All".to_owned());
+            options.push("Hidden".to_owned());
             if let Some(source) = self.source_filter.as_deref() {
                 if let Some((offset, _)) = options.iter().find_position(|v| v == &source) {
                     selected = offset;
