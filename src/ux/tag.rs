@@ -118,6 +118,7 @@ impl UxTag {
                     if let Some(tags) = &mut self.tag_all {
                         if let Some(tag) = tags.get_mut(tag_id) {
                             tag.set_favorite(*favorite);
+                            self.reproject_tags();
                         }
                     }
                 }
@@ -125,6 +126,7 @@ impl UxTag {
                     if let Some(tags) = &mut self.tag_all {
                         if let Some(tag) = tags.get_mut(tag_id) {
                             tag.set_hidden(*hidden);
+                            self.reproject_tags();
                         }
                     }
                 }
@@ -141,7 +143,13 @@ impl UxTag {
         if let Some(tags) = &self.tag_all {
             self.tag_filtered = tags
                 .iter()
-                .filter(|(_id, t)| t.name().contains(&self.name_filter))
+                // Apply the direct name filter, case insensitive
+                .filter(|(_id, t)| {
+                    t.name()
+                        .to_lowercase()
+                        .contains(&self.name_filter.to_lowercase())
+                })
+                // Filter out any hidden tags unless we are showing hidden tags
                 .filter(|(_, t)| !t.hidden() || self.source_filter.as_deref() == Some("Hidden"))
                 // include only selected plugin sources in the tags list response
                 .filter(|(_, t)| {

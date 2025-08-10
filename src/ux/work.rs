@@ -232,7 +232,7 @@ impl UxWork {
                     if *tag_id == self.tag_selection.last_fetched() {
                         trace!("Received {} works for tag {tag_id:?}", works.len());
                         self.work_matching_tag = Some(works.to_owned());
-                        self.reproject_work();
+                        self.reproject_work(tags);
                     } else {
                         trace!(
                             "Ignoring works for tag {tag_id:?} (expected {:?})",
@@ -255,8 +255,13 @@ impl UxWork {
                             let screen_path = self.data_dir.join(screen_path);
                             let archive_path = archive_path.as_ref().map(|a| self.data_dir.join(a));
                             work.set_paths(preview_path, screen_path, archive_path);
-                            self.reproject_work();
+                            self.reproject_work(tags);
                         }
+                    }
+                }
+                DataUpdate::TagHiddenStatusChanged { tag_id, .. } => {
+                    if self.tag_selection.enabled().contains(tag_id) {
+                        self.reproject_work(tags);
                     }
                 }
                 _ => {}
@@ -312,22 +317,38 @@ impl UxWork {
         }
 
         if self.tag_selection.reset_changed() {
-            self.reproject_work();
+            self.reproject_work(tags);
         }
     }
 
-    fn reproject_work(&mut self) {
+    fn reproject_work(&mut self, tags: Option<&HashMap<TagId, DbTag>>) {
         if let Some(works) = self.work_matching_tag.as_ref() {
             let selected = self.get_selected_work().map(|w| w.id());
             self.work_filtered = works
                 .values()
+                // Only show works that we can actually show.
                 .filter(|work| work.screen_path().is_some())
+                // Filter out hidden or favorite works if we're not showing them.
                 .filter(|work| {
                     (self.showing == WorkVisibility::All && !work.hidden())
                         || (self.showing == WorkVisibility::Favorites && work.favorite())
                         || (self.showing == WorkVisibility::Hidden && work.hidden())
                 })
+                // Only show works that match the current tag selection.
                 .filter(|work| self.tag_selection.matches(work))
+                // Filter our any works with tags that have been hidden.
+                .filter(|work| {
+                    if let Some(tags) = tags {
+                        for tag_id in work.tags() {
+                            if let Some(tag) = tags.get(&tag_id) {
+                                if tag.hidden() {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    true
+                })
                 .sorted_by(|a, b| {
                     let ord = match self.order.column {
                         WorkSortCol::Date => match a.date().cmp(b.date()) {
@@ -369,7 +390,13 @@ impl UxWork {
         pressed
     }
 
-    fn check_common_key_binds(&mut self, db_write: &DbWriteHandle, n_wide: usize, ui: &egui::Ui) {
+    fn check_common_key_binds(
+        &mut self,
+        tags: Option<&HashMap<TagId, DbTag>>,
+        db_write: &DbWriteHandle,
+        n_wide: usize,
+        ui: &egui::Ui,
+    ) {
         let pressed = Self::get_pressed_keys(
             ui,
             &[
@@ -431,7 +458,7 @@ impl UxWork {
                         .set_work_hidden(work.id(), !work.hidden())
                         .expect("set favorite");
                     work.set_hidden(!work.hidden());
-                    self.reproject_work();
+                    self.reproject_work(tags);
                 }
             }
         }
@@ -537,13 +564,14 @@ impl UxWork {
             ui.label(" ");
             ui.heading("Tags");
             ui.separator();
-            for tag_id in work.tags() {
-                if let Some(tag) = tags.get(&tag_id) {
+            work.tags()
+                .filter_map(|tag_id| tags.get(&tag_id))
+                .sorted_by_key(|tag| tag.name())
+                .for_each(|tag| {
                     if self.tag_selection.tag_row_ui(tag, host, db_write, ui) {
                         changed = true;
                     }
-                }
-            }
+                });
         }
         if changed {
             self.tags_changed(tags, db_read);
@@ -565,8 +593,22 @@ impl UxWork {
                 self.tags_changed(Some(tags), db);
             }
             ui.label(format!("({})", self.work_filtered.len()));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Sort");
+            if self.order.ui(ui) {
+                self.reproject_work(tags);
+            }
 
             ui.separator();
+
+            ui.label("Showing");
+            if self.showing.ui(ui) {
+                self.reproject_work(tags);
+            }
+
+            ui.separator();
+
             ui.label("Size");
             ui.add(
                 egui::Slider::new(&mut self.thumb_size, 128f32..=512f32)
@@ -576,18 +618,6 @@ impl UxWork {
                     .show_value(true)
                     .suffix("px"),
             );
-
-            ui.separator();
-            ui.label("Showing");
-            if self.showing.ui(ui) {
-                self.reproject_work();
-            }
-
-            ui.separator();
-            ui.label("Sort");
-            if self.order.ui(ui) {
-                self.reproject_work();
-            }
         });
         if self.work_matching_tag.is_none() {
             ui.spinner();
@@ -599,7 +629,7 @@ impl UxWork {
         let n_wide = (width / size).floor().max(1.) as usize;
         let n_rows = self.work_filtered.len().div_ceil(n_wide);
 
-        self.check_common_key_binds(db_write, n_wide, ui);
+        self.check_common_key_binds(tags, db_write, n_wide, ui);
 
         // If we had an event that needs us to scroll to selection, compute a rect and go there.
         if let Some(selected) = self.selected {
@@ -743,7 +773,12 @@ impl UxWork {
             });
     }
 
-    pub fn slideshow_ui(&mut self, db_write: &DbWriteHandle, ctx: &egui::Context) {
+    pub fn slideshow_ui(
+        &mut self,
+        tags: Option<&HashMap<TagId, DbTag>>,
+        db_write: &DbWriteHandle,
+        ctx: &egui::Context,
+    ) {
         let work_offset = self
             .selected
             .expect("entered slideshow without a selection");
@@ -751,7 +786,7 @@ impl UxWork {
             let size = self.thumb_size;
             let width = ui.available_width();
             let n_wide = (width / size).floor().max(1.) as usize;
-            self.check_common_key_binds(db_write, n_wide, ui);
+            self.check_common_key_binds(tags, db_write, n_wide, ui);
             self.check_slideshow_key_binds(ui);
 
             self.ensure_work_cached(ui.ctx(), work_offset);

@@ -163,7 +163,9 @@ impl<'a> SyncViewer<'a> {
             self.state.mode = UxMode::Browser;
             return;
         }
-        self.state.work_ux.slideshow_ui(self.db_write, ctx);
+        self.state
+            .work_ux
+            .slideshow_ui(self.state.tag_ux.tags(), self.db_write, ctx);
     }
 }
 
