@@ -1,9 +1,6 @@
 use crate::plugin::host::{PluginHandle, PluginHost};
 use egui::{Margin, TextWrapMode};
-use egui_dnd::{
-    DragUpdate,
-    dnd
-};
+use egui_dnd::{DragUpdate, dnd};
 use log::Level;
 use serde::{Deserialize, Serialize};
 
@@ -98,7 +95,7 @@ impl UxPlugin {
 
                 let mut offset = 0;
                 let mut removed = None;
-                let resp = dnd(ui, &format!("task_queue_{}", plugin.name())).show(
+                let resp = dnd(ui, format!("task_queue_{}", plugin.name())).show(
                     plugin.task_queue(),
                     |ui, req, handle, _state| {
                         handle.ui(ui, |ui| {
@@ -110,7 +107,7 @@ impl UxPlugin {
                                 offset += 1;
                             });
                         });
-                    }
+                    },
                 );
                 if let Some(req) = removed {
                     plugin.remove_queued_task(&req);

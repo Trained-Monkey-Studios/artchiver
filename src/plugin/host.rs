@@ -212,10 +212,12 @@ impl PluginHandle {
         cancellation: PluginCancellation,
         tx_to_plugin: channel::Sender<PluginRequest>,
     ) {
-        assert_eq!(self.source, source, "initializing the wrong plugin");
         assert!(self.remote.is_none(), "reinitializing a plugin");
+        self.source = source.to_owned();
         if let Some(req) = self.active_task.as_ref() {
-            tx_to_plugin.send(req.clone()).expect("sent to stopped plugin");
+            tx_to_plugin
+                .send(req.clone())
+                .expect("sent to stopped plugin");
         }
         self.remote = Some(PluginRemote::new(task, cancellation, tx_to_plugin));
     }

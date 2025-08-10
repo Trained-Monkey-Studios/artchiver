@@ -10,7 +10,7 @@ use crate::{
     },
     shared::{performance::PerfTrack, tag::TagSet, update::DataUpdate},
 };
-use egui::{Key, Margin, Modifiers, Rect, Sense, SizeHint, Vec2, include_image};
+use egui::{Key, Margin, Modifiers, PointerButton, Rect, Sense, SizeHint, Vec2, include_image};
 use itertools::Itertools as _;
 use log::{info, trace};
 use lru::LruCache;
@@ -98,6 +98,54 @@ impl WorkVisibility {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ZoomPan {
+    zoom: f32,
+    pan: Vec2,
+}
+
+impl Default for ZoomPan {
+    fn default() -> Self {
+        Self {
+            zoom: 1.,
+            pan: Vec2::ZERO,
+        }
+    }
+}
+
+impl ZoomPan {
+    pub fn zoom_in(&mut self, pos: Vec2) {
+        self.zoom *= 1.1;
+
+        // Note: adjust the pan when we change zoom levels. We want to maintain the spot under
+        // `pos` having the same visual position after the zoom. e.g. If `pos` is the top left
+        // corner, then we want to shift nowhere. If pos is the bottom right corner, on the other
+        // hand, we need to shift by the full delta in the shown area after the zoom.
+        let prior_edge_to_pos = pos - self.pan;
+        let next_edge_to_pos = prior_edge_to_pos * 1.1;
+        self.pan = pos - next_edge_to_pos;
+    }
+
+    pub fn zoom_out(&mut self, pos: Vec2) {
+        let prior_zoom = self.zoom;
+        self.zoom /= 1.1;
+        self.zoom = self.zoom.max(1.0);
+
+        // zoom' = zoom / x;
+        // zoom = zoom' * x;
+        // x = zoom / zoom';
+        let effective_zoom = prior_zoom / self.zoom;
+
+        let prior_edge_to_pos = pos - self.pan;
+        let next_edge_to_pos = prior_edge_to_pos / effective_zoom;
+        self.pan = pos - next_edge_to_pos;
+    }
+
+    pub fn pan(&mut self, delta: Vec2) {
+        self.pan += delta;
+    }
+}
+
 /// Work caching strategy:
 ///
 /// Works are unbounded, but plan to scale to O(10-100M) works. This is too much for us to just
@@ -117,6 +165,9 @@ pub struct UxWork {
 
     #[serde(skip)]
     showing: WorkVisibility,
+
+    #[serde(skip)]
+    slide_xform: ZoomPan,
 
     // Don't cache things that are too long or only last one frame
     #[serde(skip)]
@@ -144,6 +195,7 @@ impl Default for UxWork {
             tag_selection: TagSet::default(),
             order: WorkOrder::default(),
             showing: WorkVisibility::default(),
+            slide_xform: ZoomPan::default(),
             per_frame_work_upload_count: 0,
             work_matching_tag: None,
             work_filtered: Vec::new(),
@@ -232,19 +284,29 @@ impl UxWork {
         self.selected.is_some()
     }
 
+    pub fn set_selected(&mut self, selected: usize) {
+        self.selected = Some(selected);
+        self.slide_xform = ZoomPan::default();
+    }
+
+    pub fn clear_selected(&mut self) {
+        self.selected = None;
+        self.slide_xform = ZoomPan::default();
+    }
+
     fn tags_changed(&mut self, tags: Option<&HashMap<TagId, DbTag>>, db: &DbReadHandle) {
         match self.tag_selection.get_best_refresh(tags) {
             TagRefresh::NoneNeeded => {}
             TagRefresh::NeedRefresh(tag_id) => {
                 self.work_matching_tag = None;
                 self.work_filtered = Vec::new();
-                self.selected = None;
+                self.clear_selected();
                 db.get_works_for_tag(tag_id);
             }
             TagRefresh::Favorites => {
                 self.work_matching_tag = None;
                 self.work_filtered = Vec::new();
-                self.selected = None;
+                self.clear_selected();
                 db.get_favorite_works();
             }
         }
@@ -279,47 +341,54 @@ impl UxWork {
                 })
                 .map(|work| work.id())
                 .collect();
-            if let Some(selected) = self.selected {
-                if self.work_filtered.is_empty() {
-                    self.selected = None;
-                } else if selected >= self.work_filtered.len() {
-                    self.selected = Some(self.work_filtered.len() - 1);
-                }
-            }
             info!(
                 "Showing {} of {} matching works",
                 self.work_filtered.len(),
                 works.len()
             );
+            if let Some(selected) = self.selected {
+                if self.work_filtered.is_empty() {
+                    self.clear_selected();
+                } else if selected >= self.work_filtered.len() {
+                    self.set_selected(self.work_filtered.len() - 1);
+                }
+            }
         } else {
             self.work_filtered = Vec::new();
         }
     }
 
-    fn check_key_binds(&mut self, db_write: &DbWriteHandle, n_wide: usize, ui: &egui::Ui) {
-        const KEYS: [Key; 13] = [
-            Key::ArrowLeft,
-            Key::ArrowRight,
-            Key::ArrowUp,
-            Key::ArrowDown,
-            Key::N,
-            Key::P,
-            Key::W,
-            Key::A,
-            Key::S,
-            Key::D,
-            Key::F6,
-            Key::F7,
-            Key::Delete,
-        ];
+    fn get_pressed_keys(ui: &egui::Ui, keys: &[Key]) -> HashSet<Key> {
         let mut pressed = HashSet::new();
         ui.ctx().input_mut(|input| {
-            for key in &KEYS {
+            for key in keys {
                 if input.consume_key(Modifiers::NONE, *key) {
                     pressed.insert(*key);
                 }
             }
         });
+        pressed
+    }
+
+    fn check_common_key_binds(&mut self, db_write: &DbWriteHandle, n_wide: usize, ui: &egui::Ui) {
+        let pressed = Self::get_pressed_keys(
+            ui,
+            &[
+                Key::ArrowLeft,
+                Key::ArrowRight,
+                Key::ArrowUp,
+                Key::ArrowDown,
+                Key::N,
+                Key::P,
+                Key::W,
+                Key::A,
+                Key::S,
+                Key::D,
+                Key::F6,
+                Key::F7,
+                Key::Delete,
+            ],
+        );
 
         // Some keys work the same in any mode
         let pressed_up = pressed.contains(&Key::ArrowUp) || pressed.contains(&Key::W);
@@ -332,16 +401,16 @@ impl UxWork {
             || pressed.contains(&Key::D);
         if let Some(selected) = self.selected {
             if pressed_left {
-                self.selected = Some(selected.wrapping_sub(1).min(self.work_filtered.len() - 1));
+                self.set_selected(selected.wrapping_sub(1).min(self.work_filtered.len() - 1));
             }
             if pressed_right {
-                self.selected = Some(selected.saturating_add(1) % self.work_filtered.len());
+                self.set_selected(selected.saturating_add(1) % self.work_filtered.len());
             }
             if pressed_up {
-                self.selected = Some(selected.saturating_sub(n_wide));
+                self.set_selected(selected.saturating_sub(n_wide));
             }
             if pressed_down {
-                self.selected = Some(
+                self.set_selected(
                     selected
                         .saturating_add(n_wide)
                         .min(self.work_filtered.len() - 1),
@@ -367,6 +436,31 @@ impl UxWork {
                 }
             }
         }
+    }
+
+    fn check_slideshow_key_binds(&mut self, ui: &egui::Ui) {
+        let pressed = Self::get_pressed_keys(ui, &[Key::Equals, Key::Plus, Key::Minus, Key::Num0]);
+        if pressed.contains(&Key::Plus) || pressed.contains(&Key::Equals) {
+            self.slide_xform.zoom_in(ui.available_size() / 2.);
+        }
+        if pressed.contains(&Key::Minus) {
+            self.slide_xform.zoom_out(ui.available_size() / 2.);
+        }
+
+        ui.ctx().input_mut(|input| {
+            if input.pointer.button_down(PointerButton::Primary) {
+                if let Some(motion) = input.pointer.motion() {
+                    self.slide_xform.pan(motion);
+                }
+            }
+            if input.raw_scroll_delta.y > 0. {
+                self.slide_xform
+                    .zoom_in(input.pointer.hover_pos().unwrap_or_default().to_vec2());
+            } else if input.raw_scroll_delta.y < 0. {
+                self.slide_xform
+                    .zoom_out(input.pointer.hover_pos().unwrap_or_default().to_vec2());
+            }
+        });
     }
 
     pub fn get_selected_work(&self) -> Option<&DbWork> {
@@ -506,7 +600,7 @@ impl UxWork {
         let n_wide = (width / size).floor().max(1.) as usize;
         let n_rows = self.work_filtered.len().div_ceil(n_wide);
 
-        self.check_key_binds(db_write, n_wide, ui);
+        self.check_common_key_binds(db_write, n_wide, ui);
 
         // If we had an event that needs us to scroll to selection, compute a rect and go there.
         if let Some(selected) = self.selected {
@@ -639,6 +733,7 @@ impl UxWork {
                                     // }
                                     if resp.clicked() {
                                         self.selected = Some(work_offset);
+                                        self.slide_xform = ZoomPan::default();
                                     }
                                 });
                             });
@@ -654,14 +749,11 @@ impl UxWork {
             .selected
             .expect("entered slideshow without a selection");
         egui::CentralPanel::default().show(ctx, |ui| {
-            // TODO: zoom and pan
-            // See https://github.com/emilk/egui/blob/0f6310c598b5be92f339c9275a00d5decd838c1b/examples/custom_plot_manipulation/src/main.rs
-            // for an example of how to do zoom and pan on a paint-like thing.
-
             let size = self.thumb_size;
             let width = ui.available_width();
             let n_wide = (width / size).floor().max(1.) as usize;
-            self.check_key_binds(db_write, n_wide, ui);
+            self.check_common_key_binds(db_write, n_wide, ui);
+            self.check_slideshow_key_binds(ui);
 
             self.ensure_work_cached(ui.ctx(), work_offset);
             for offset in work_offset.saturating_sub(10)
@@ -681,7 +773,7 @@ impl UxWork {
                         .show_loading_spinner(false)
                         .maintain_aspect_ratio(true);
 
-                    let avail = ui.available_size();
+                    let avail = ui.available_size() * self.slide_xform.zoom;
                     if let Some(size) = img.load_and_calc_size(ui, avail) {
                         let (mut left, mut right, mut top, mut bottom) = (0., avail.x, 0., avail.y);
                         if avail.y > size.y {
@@ -692,7 +784,9 @@ impl UxWork {
                             left = (avail.x - size.x) / 2.;
                             right = avail.x - left;
                         }
-                        img.paint_at(ui, Rect::from_x_y_ranges(left..=right, top..=bottom));
+                        let rect = Rect::from_x_y_ranges(left..=right, top..=bottom)
+                            .translate(self.slide_xform.pan);
+                        img.paint_at(ui, rect);
                     }
                     ui.horizontal(|ui| {
                         ui.label(format!("{work_offset} of {}", self.work_filtered.len()));

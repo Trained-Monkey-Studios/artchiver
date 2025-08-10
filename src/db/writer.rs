@@ -230,7 +230,9 @@ pub fn upsert_tags(
 
     let total_count = tags.len();
     let mut current_pos = 0;
-    log.info(format!("Writing {total_count} tags for plugin {plugin_id} to the database..."));
+    log.info(format!(
+        "Writing {total_count} tags for plugin {plugin_id} to the database..."
+    ));
     for chunk in tags.chunks(10_000) {
         let mut tag_ids = Vec::new();
 
