@@ -15,6 +15,7 @@ use itertools::Itertools as _;
 use log::{info, trace};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
@@ -168,6 +169,9 @@ pub struct UxWork {
     order: WorkOrder,
 
     #[serde(skip)]
+    last_mouse_motion: Instant,
+
+    #[serde(skip)]
     showing: WorkVisibility,
 
     #[serde(skip)]
@@ -198,6 +202,7 @@ impl Default for UxWork {
             thumb_size: 128.,
             tag_selection: TagSet::default(),
             order: WorkOrder::default(),
+            last_mouse_motion: Instant::now(),
             showing: WorkVisibility::default(),
             slide_xform: ZoomPan::default(),
             per_frame_work_upload_count: 0,
@@ -838,6 +843,26 @@ impl UxWork {
                 }
             }
         });
+
+        // Hide the mouse cursor on inactivity
+        let mouse_is_moving = ctx.input_mut(|input| {
+            input.raw_scroll_delta != Vec2::ZERO
+                || input.pointer.button_down(PointerButton::Primary)
+                || input.pointer.button_down(PointerButton::Secondary)
+                || (input.pointer.motion().is_some() && input.pointer.motion() != Some(Vec2::ZERO))
+        });
+        if mouse_is_moving {
+            self.last_mouse_motion = Instant::now();
+            // Note: make sure we call through this path again after we might expire, otherwise
+            //       the cursor won't get hidden, because we don't redraw if we're inactive
+            ctx.request_repaint_after(Duration::from_secs(2));
+        } else if self.last_mouse_motion.elapsed() < Duration::from_secs(2) {
+            // Note: we may have gotten painted again after the above check but before we make it
+            //       below, so request repaint again until we hit the 2 second timeout
+            ctx.request_repaint_after(Duration::from_secs(2) - self.last_mouse_motion.elapsed());
+        } else if self.last_mouse_motion.elapsed() >= Duration::from_millis(1900) {
+            ctx.set_cursor_icon(egui::CursorIcon::None);
+        }
     }
 
     fn get_best_image<'b>(&self, work: &'b DbWork, req_sz: WorkSize) -> egui::Image<'b> {
