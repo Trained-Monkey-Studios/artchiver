@@ -214,11 +214,6 @@ impl PluginHandle {
     ) {
         assert!(self.remote.is_none(), "reinitializing a plugin");
         self.source = source.to_owned();
-        if let Some(req) = self.active_task.as_ref() {
-            tx_to_plugin
-                .send(req.clone())
-                .expect("sent to stopped plugin");
-        }
         self.remote = Some(PluginRemote::new(task, cancellation, tx_to_plugin));
     }
 
@@ -286,7 +281,9 @@ impl PluginHandle {
     }
 
     pub fn swap_task_queue_items(&mut self, from: usize, to: usize) {
-        self.task_queue.swap(from, to);
+        if (0..self.task_queue.len()).contains(&from) && (0..self.task_queue.len()).contains(&to) {
+            self.task_queue.swap(from, to);
+        }
     }
 
     pub fn remove_queued_task(&mut self, req: &PluginRequest) {
@@ -333,6 +330,16 @@ impl PluginHandle {
                 } if source == &self.source => {
                     self.metadata = Some(metadata.to_owned());
                     self.record = Some(record.to_owned());
+
+                    // Note: only restart our restored active task once init is finished.
+                    if let Some(req) = self.active_task.as_ref() {
+                        self.remote
+                            .as_ref()
+                            .expect("uninit")
+                            .tx_to_plugin
+                            .send(req.clone())
+                            .expect("sent to stopped plugin");
+                    }
                 }
                 DataUpdate::Log {
                     source: UpdateSource::Plugin(id),

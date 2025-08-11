@@ -12,17 +12,13 @@ use clap::Parser;
 use eframe::HardwareAcceleration;
 
 #[derive(Clone, Debug, Parser)]
-pub struct ArtchiverArgs {
-    /// Migrate a data directory to nested layout
-    #[arg(long)]
-    migrate_data_dir: bool,
-}
+pub struct ArtchiverArgs {}
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let args = ArtchiverArgs::parse();
+    let _args = ArtchiverArgs::parse();
 
     let pwd = std::env::current_dir().expect("failed to get working directory");
     let env = Environment::new(&pwd).expect("failed to create environment");
@@ -45,11 +41,6 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             let app = ArtchiverApp::new(cc);
-            if args.migrate_data_dir {
-                app.environment()
-                    .migrate_data_dir()
-                    .expect("failed to migrate data dir");
-            }
             Ok(Box::new(app))
         }),
     )

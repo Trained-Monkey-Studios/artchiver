@@ -268,8 +268,8 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
             matching_works.push(Work::new(
                 object.title,
                 Date::strptime("%Y-%m-%d", format!("{}-01-01", object.objectBeginDate))?,
-                object.primaryImageSmall.to_owned(),
-                object.primaryImage.to_owned(),
+                object.primaryImageSmall.replace(' ', "%20").to_owned(),
+                object.primaryImage.replace(' ', "%20").to_owned(),
                 object.tags.iter().map(|t| &t.term).cloned().collect(),
             ));
         }

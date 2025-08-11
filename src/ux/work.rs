@@ -141,6 +141,10 @@ impl ZoomPan {
         self.pan = pos - next_edge_to_pos;
     }
 
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     pub fn pan(&mut self, delta: Vec2) {
         self.pan += delta;
     }
@@ -259,10 +263,8 @@ impl UxWork {
                         }
                     }
                 }
-                DataUpdate::TagHiddenStatusChanged { tag_id, .. } => {
-                    if self.tag_selection.enabled().contains(tag_id) {
-                        self.reproject_work(tags);
-                    }
+                DataUpdate::TagHiddenStatusChanged { .. } => {
+                    self.reproject_work(tags);
                 }
                 _ => {}
             }
@@ -442,6 +444,7 @@ impl UxWork {
                         .min(self.work_filtered.len() - 1),
                 );
             }
+            let selected = self.selected;
             if let Some(work) = self.get_selected_work_mut() {
                 if pressed.contains(&Key::F6) {
                     db_write
@@ -459,6 +462,7 @@ impl UxWork {
                         .expect("set favorite");
                     work.set_hidden(!work.hidden());
                     self.reproject_work(tags);
+                    self.selected = selected;
                 }
             }
         }
@@ -471,6 +475,9 @@ impl UxWork {
         }
         if pressed.contains(&Key::Minus) {
             self.slide_xform.zoom_out(ui.available_size() / 2.);
+        }
+        if pressed.contains(&Key::Num0) {
+            self.slide_xform.reset();
         }
 
         ui.ctx().input_mut(|input| {

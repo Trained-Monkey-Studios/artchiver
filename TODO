@@ -34,7 +34,9 @@ o Zoom and pan in slideshow mode
 o Fix shift in images when new stuff loads in in front of you
 o Sort work tags
 o Hidden / always-hidden tags
-* Hide mouse pointer in slideshow when mouse is not moving
+o Hide mouse pointer in slideshow when mouse is not moving
+* add a back button to return to previous states
+* Return works incrementally
 * Only scroll to selection on a move event or leaving slideshow
 * Give authors the same support as tags
 * Expand work with ALL THE DATA
