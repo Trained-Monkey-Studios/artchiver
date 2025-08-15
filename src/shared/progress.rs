@@ -190,13 +190,13 @@ impl HostUpdateSender {
         Ok(())
     }
 
-    pub fn fetch_works_completed(
+    pub fn return_list_works_chunk(
         &mut self,
         tag_id: Option<TagId>,
         works: HashMap<WorkId, DbWork>,
     ) -> Result<()> {
         self.tx_to_runner
-            .send(DataUpdate::FetchWorksComplete { tag_id, works })?;
+            .send(DataUpdate::ListWorksChunk { tag_id, works })?;
         Ok(())
     }
 

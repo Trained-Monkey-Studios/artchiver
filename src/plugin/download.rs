@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use artchiver_sdk::Work;
+use rayon::ThreadPool;
 use sha2::{Digest as _, Sha256};
 use std::{
     fs, io,
@@ -19,13 +20,16 @@ use ureq::Agent;
 pub fn download_works(
     mut works: Vec<Work>,
     db: &DbWriteHandle,
+    pool: &ThreadPool,
     (agent, throttle): (&Agent, &CallingThrottle),
     (data_dir, tmp_dir): (&Path, &Path),
     (progress, log, cancellation): (&mut ProgressSender, &mut LogSender, &PluginCancellation),
 ) -> Result<()> {
     log.info(format!("Downloading {} works to disk...", works.len()));
     let works_len = works.len();
-    rayon::scope_fifo(|s| {
+
+    // rayon::scope_fifo(|s| {
+    pool.scope_fifo(|s| {
         for (i, work) in works.drain(..).enumerate() {
             let mut progress = progress.clone();
             let mut log = log.clone();

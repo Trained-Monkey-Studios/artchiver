@@ -3,7 +3,7 @@ use crate::{
         model::report_slow_query,
         models::{
             tag::{DbTag, TagId},
-            work::DbWork,
+            work::{DbWork, WorkId},
         },
     },
     shared::{
@@ -17,6 +17,7 @@ use log::trace;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rayon::ThreadPool;
+use rusqlite::params;
 use std::{collections::HashMap, mem, thread, thread::JoinHandle, time::Instant};
 
 #[derive(Debug)]
@@ -102,15 +103,7 @@ impl DbReadHandle {
         log.trace(format!("Fetching works for tag: {tag_id:?}"));
         let conn = self.pool.get().expect("failed to get connection");
         self.reader_threads.spawn(move || {
-            let works = list_works_with_tag(&conn, tag_id).expect("failed to list works");
-            let works = works
-                .into_iter()
-                .map(|w| (w.id(), w))
-                .collect::<HashMap<_, _>>();
-            log.trace(format!("Finished collecting {} works", works.len()));
-            host.fetch_works_completed(Some(tag_id), works)
-                .expect("connection closed");
-            trace!("Dispatching fetched works to UX");
+            list_works_with_tag(&conn, tag_id, &mut log, &mut host).expect("failed to list works");
         });
     }
 
@@ -126,7 +119,7 @@ impl DbReadHandle {
                 .map(|w| (w.id(), w))
                 .collect::<HashMap<_, _>>();
             log.trace(format!("Finished collecting {} works", works.len()));
-            host.fetch_works_completed(None, works)
+            host.return_list_works_chunk(None, works)
                 .expect("connection closed");
             trace!("Dispatching fetched works to UX");
         });
@@ -136,30 +129,45 @@ impl DbReadHandle {
 pub fn list_works_with_tag(
     conn: &PooledConnection<SqliteConnectionManager>,
     tag_id: TagId,
-) -> Result<Vec<DbWork>> {
-    let start = Instant::now();
-
-    // If we decide we *have* to apply AND up front, it looks like this.
-    // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
-    let query = r#"
-    SELECT works.*, GROUP_CONCAT(tags.id) as tags FROM works
-    LEFT JOIN work_tags ON work_tags.work_id = works.id
-    LEFT JOIN tags ON work_tags.tag_id = tags.id
-    WHERE works.id IN (
-        SELECT work_tags.work_id FROM work_tags WHERE work_tags.tag_id = ?
-    )
-    GROUP BY works.id
-"#;
-    let mut stmt = conn.prepare(query)?;
-    let out = stmt.query_map([tag_id], DbWork::from_row)?.try_fold(
-        Vec::new(),
-        |mut expand, item| -> Result<Vec<DbWork>> {
-            expand.push(item?);
-            Ok(expand)
-        },
-    )?;
-    report_slow_query(start, "list_works_with_any_tags", query);
-    Ok(out)
+    log: &mut LogSender,
+    host: &mut HostUpdateSender,
+) -> Result<()> {
+    const LIMIT: i64 = 1_000;
+    let mut total_count = 0;
+    let mut last_id = Some(WorkId::wrap(0));
+    while let Some(last_work_id) = last_id {
+        println!("last_work_id: {last_work_id:?}");
+        let start = Instant::now();
+        // If we decide we *have* to apply AND up front, it looks like this.
+        // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
+        let query = format!(
+            r#"
+            SELECT works.*, GROUP_CONCAT(tags.id) as tags FROM works
+            LEFT JOIN work_tags ON work_tags.work_id = works.id
+            LEFT JOIN tags ON work_tags.tag_id = tags.id
+            WHERE works.id IN (
+                SELECT work_tags.work_id FROM work_tags WHERE work_tags.tag_id = ?
+            ) AND works.id > ?
+            GROUP BY works.id
+            ORDER BY works.id
+            LIMIT {LIMIT}
+            "#
+        );
+        let mut stmt = conn.prepare(&query)?;
+        let page = stmt
+            .query_map(params![tag_id, last_work_id], DbWork::from_row)?
+            .try_fold(Vec::new(), |mut expand, item| -> Result<Vec<DbWork>> {
+                expand.push(item?);
+                Ok(expand)
+            })?;
+        last_id = page.last().map(|w| w.id());
+        total_count += page.len();
+        let chunk = page.into_iter().map(|w| (w.id(), w)).collect();
+        host.return_list_works_chunk(Some(tag_id), chunk)?;
+        report_slow_query(start, "list_works_with_any_tags", &query);
+    }
+    log.trace(format!("Finished collecting {total_count} works"));
+    Ok(())
 }
 
 pub fn list_favorite_works(

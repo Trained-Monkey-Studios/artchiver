@@ -21,6 +21,7 @@ use extism::{
 use io_tee::TeeWriter;
 use log::info;
 use rand::{Rng as _, distr::Alphanumeric};
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use sha2::{Digest as _, Sha256};
 use std::{
     fs, io,
@@ -157,6 +158,7 @@ fn plugin_main(
     rx_from_runner: &Receiver<PluginRequest>,
 ) -> Result<()> {
     let mut metadata = plugin.call::<(), Json<PluginMetadata>>("startup", ())?.0;
+    let name = metadata.name().to_owned();
     let db_plugin = {
         let state_ref = state.get()?;
         let mut state = state_ref.lock().expect("poison");
@@ -177,6 +179,9 @@ fn plugin_main(
     let mut progress = state.get()?.lock().expect("poison").progress.clone();
     let mut log = state.get()?.lock().expect("poison").log.clone();
     let mut host = state.get()?.lock().expect("poison").host.clone();
+    let pool = ThreadPoolBuilder::default()
+        .thread_name(move |i| format!("Download Thread {name}: {i}"))
+        .build()?;
 
     // Note: restart plugin with configuration in place this time
     plugin = make_plugin(plugin_source, metadata.configurations().to_owned(), state)?;
@@ -207,9 +212,14 @@ fn plugin_main(
             PluginRequest::RefreshTags => {
                 refresh_tags(db_plugin.id(), &mut plugin, state, &mut log)
             }
-            PluginRequest::RefreshWorksForTag { tag } => {
-                refresh_works_for_tag(db_plugin.id(), &tag, &mut plugin, state)
-            }
+            PluginRequest::RefreshWorksForTag { tag } => refresh_works_for_tag(
+                db_plugin.id(),
+                &tag,
+                &mut plugin,
+                state,
+                &pool,
+                (&mut progress, &mut log),
+            ),
         };
         if let Err(e) = rv {
             log.error(format!("Error handling plugin message: {e}"));
@@ -250,8 +260,10 @@ fn refresh_works_for_tag(
     tag: &str,
     plugin: &mut ExtPlugin,
     state: &UserData<PluginState>,
+    pool: &ThreadPool,
+    (progress, log): (&mut ProgressSender, &mut LogSender),
 ) -> Result<()> {
-    let (data_dir, tmp_dir, db, agent, mut progress, mut log, throttle, cancellation) = {
+    let (data_dir, tmp_dir, db, agent, throttle, cancellation) = {
         let state_ref = state.get()?;
         let state = state_ref.lock().expect("poison");
         (
@@ -259,8 +271,6 @@ fn refresh_works_for_tag(
             state.tmp_dir.clone(),
             state.db_write.clone(),
             state.agent.clone(),
-            state.progress.clone(),
-            state.log.clone(),
             state.throttle.clone(),
             state.cancellation.clone(),
         )
@@ -284,9 +294,10 @@ fn refresh_works_for_tag(
     download_works(
         works,
         &db,
+        pool,
         (&agent, &throttle),
         (&data_dir, &tmp_dir),
-        (&mut progress, &mut log, &cancellation),
+        (progress, log, &cancellation),
     )?;
     log.info(format!("Finished download tag {tag}..."));
 

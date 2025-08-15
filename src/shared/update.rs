@@ -77,7 +77,7 @@ pub enum DataUpdate {
     TagsLocalCounts(Vec<(TagId, u64)>),
 
     // Fulfills a request by the UX to get the current list of works for a tag.
-    FetchWorksComplete {
+    ListWorksChunk {
         tag_id: Option<TagId>,
         works: HashMap<WorkId, DbWork>,
     },

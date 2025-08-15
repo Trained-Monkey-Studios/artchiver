@@ -149,12 +149,11 @@ impl UxTag {
                         .to_lowercase()
                         .contains(&self.name_filter.to_lowercase())
                 })
-                // Filter out any hidden tags unless we are showing hidden tags
-                .filter(|(_, t)| !t.hidden() || self.source_filter.as_deref() == Some("Hidden"))
                 // include only selected plugin sources in the tags list response
                 .filter(|(_, t)| {
-                    self.source_filter.is_none()
-                        || self.source_filter.as_deref() == Some("Hidden") && t.hidden()
+                    self.source_filter.is_none() // All
+                        || (self.source_filter.as_deref() == Some("Hidden") && t.hidden())
+                        || t.sources().contains(self.source_filter.as_deref().expect("checked"))
                 })
                 .sorted_by(
                     |(_, a), (_, b)| match a.favorite().cmp(&b.favorite()).reverse() {

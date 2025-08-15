@@ -35,8 +35,11 @@ o Fix shift in images when new stuff loads in in front of you
 o Sort work tags
 o Hidden / always-hidden tags
 o Hide mouse pointer in slideshow when mouse is not moving
+o Fix concurrent download of images from multiple plugins
+o Rate-limit the refresh rate when receiving heavy requests
+o Return works incrementally
 * add a back button to return to previous states
-* Return works incrementally
+* add a refresh-all-tags button
 * Only scroll to selection on a move event or leaving slideshow
 * Give authors the same support as tags
 * Expand work with ALL THE DATA

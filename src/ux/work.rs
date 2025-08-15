@@ -177,6 +177,9 @@ pub struct UxWork {
     #[serde(skip)]
     slide_xform: ZoomPan,
 
+    #[serde(skip)]
+    work_reproject_timer: Option<Instant>,
+
     // Don't cache things that are too long or only last one frame
     #[serde(skip)]
     per_frame_work_upload_count: usize,
@@ -205,6 +208,7 @@ impl Default for UxWork {
             last_mouse_motion: Instant::now(),
             showing: WorkVisibility::default(),
             slide_xform: ZoomPan::default(),
+            work_reproject_timer: None,
             per_frame_work_upload_count: 0,
             work_matching_tag: None,
             work_filtered: Vec::new(),
@@ -235,12 +239,26 @@ impl UxWork {
         db: &DbReadHandle,
         updates: &[DataUpdate],
     ) {
+        // Note: we only care about reprojection cost incurred _not_ by the user: e.g. through
+        //       messages (e.g. database changes). We always need to record the changes, but we
+        //       don't have to immediately show the changes if it's going to lag the UX.
+        if let Some(start) = self.work_reproject_timer
+            && start.elapsed() > Duration::from_secs(4)
+        {
+            self.work_reproject_timer = None;
+            self.reproject_work(tags);
+        }
+
         for update in updates {
             match update {
-                DataUpdate::FetchWorksComplete { tag_id, works } => {
+                DataUpdate::ListWorksChunk { tag_id, works } => {
                     if *tag_id == self.tag_selection.last_fetched() {
                         trace!("Received {} works for tag {tag_id:?}", works.len());
-                        self.work_matching_tag = Some(works.to_owned());
+                        if let Some(local) = self.work_matching_tag.as_mut() {
+                            local.extend(works.iter().map(|(id, work)| (*id, work.to_owned())));
+                        } else {
+                            self.work_matching_tag = Some(works.to_owned());
+                        }
                         self.reproject_work(tags);
                     } else {
                         trace!(
@@ -249,8 +267,13 @@ impl UxWork {
                         );
                     }
                 }
-                DataUpdate::WorksWereUpdatedForTag { .. } => {
-                    self.tags_changed(tags, db);
+                DataUpdate::WorksWereUpdatedForTag { for_tag } => {
+                    if self.tag_selection.enabled().any(|id| {
+                        tags.and_then(|tags| tags.get(&id)).map(|tag| tag.name())
+                            == Some(for_tag.as_str())
+                    }) {
+                        self.tags_changed(tags, db);
+                    }
                 }
                 DataUpdate::WorkDownloadCompleted {
                     id,
@@ -264,7 +287,9 @@ impl UxWork {
                             let screen_path = self.data_dir.join(screen_path);
                             let archive_path = archive_path.as_ref().map(|a| self.data_dir.join(a));
                             work.set_paths(preview_path, screen_path, archive_path);
-                            self.reproject_work(tags);
+                            if self.work_reproject_timer.is_none() {
+                                self.work_reproject_timer = Some(Instant::now());
+                            }
                         }
                     }
                 }

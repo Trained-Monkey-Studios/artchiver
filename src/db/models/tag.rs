@@ -105,7 +105,7 @@ impl DbTag {
         self.wiki_url.as_deref()
     }
 
-    pub fn sources(&self) -> &[String] {
-        &self.sources
+    pub fn sources(&self) -> impl Iterator<Item = &str> {
+        self.sources.iter().map(|s| s.as_str())
     }
 }
