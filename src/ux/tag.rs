@@ -8,6 +8,7 @@ use crate::{
     plugin::host::PluginHost,
     shared::{tag::TagSet, update::DataUpdate},
 };
+use artchiver_sdk::TagKind;
 use itertools::Itertools as _;
 use log::trace;
 use serde::{Deserialize, Serialize};
@@ -58,6 +59,93 @@ impl TagOrder {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TagSourceFilter {
+    source: Option<String>,
+}
+
+impl TagSourceFilter {
+    pub fn ui(&mut self, host: &PluginHost, ui: &mut egui::Ui) -> bool {
+        let mut selected = 0usize;
+        let mut options = host.plugins().map(|p| p.name()).collect::<Vec<_>>();
+        options.insert(0, "All".to_owned());
+        options.push("Hidden".to_owned());
+        if let Some(source) = self.source.as_deref() {
+            if let Some((offset, _)) = options.iter().find_position(|v| v == &source) {
+                selected = offset;
+            }
+        }
+        let prior = selected;
+        egui::ComboBox::new("tag_filter_sources", "Source")
+            .wrap_mode(egui::TextWrapMode::Truncate)
+            .show_index(ui, &mut selected, options.len(), |i| &options[i]);
+        if prior != selected {
+            if options[selected] == "All" {
+                self.source = None;
+            } else {
+                self.source = Some(options[selected].clone());
+            }
+            return true;
+        }
+        false
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TagKindFilter {
+    kind: Option<TagKind>,
+}
+
+impl TagKindFilter {
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut selected = match self.kind {
+            None => 0,
+            Some(TagKind::Default) => 1,
+            Some(TagKind::Character) => 2,
+            Some(TagKind::Copyright) => 3,
+            Some(TagKind::Location) => 4,
+            Some(TagKind::Meta) => 5,
+            Some(TagKind::School) => 6,
+            Some(TagKind::Series) => 7,
+            Some(TagKind::Style) => 8,
+            Some(TagKind::Technique) => 9,
+            Some(TagKind::Theme) => 10,
+        };
+        const LABELS: [&str; 11] = [
+            "All",
+            "Default",
+            "Character",
+            "Copyright",
+            "Location",
+            "Meta",
+            "School",
+            "Series",
+            "Style",
+            "Technique",
+            "Theme",
+        ];
+        let prior = selected;
+        egui::ComboBox::new("tag_filter_kind", "Kind")
+            .wrap_mode(egui::TextWrapMode::Truncate)
+            .show_index(ui, &mut selected, LABELS.len(), |i| LABELS[i]);
+        self.kind = match selected {
+            0 => None,
+            1 => Some(TagKind::Default),
+            2 => Some(TagKind::Character),
+            3 => Some(TagKind::Copyright),
+            4 => Some(TagKind::Location),
+            5 => Some(TagKind::Meta),
+            6 => Some(TagKind::School),
+            7 => Some(TagKind::Series),
+            8 => Some(TagKind::Style),
+            9 => Some(TagKind::Technique),
+            10 => Some(TagKind::Theme),
+            _ => panic!("invalid tag kind selected"),
+        };
+        prior != selected
+    }
+}
+
 /// Tag caching strategy:
 ///
 /// Plan for O(100-500k) tags -- the approximate size of the English vocabulary with misspelling --
@@ -69,7 +157,8 @@ impl TagOrder {
 pub struct UxTag {
     // A substring matcher over tag names
     name_filter: String,
-    source_filter: Option<String>,
+    source_filter: TagSourceFilter,
+    kind_filter: TagKindFilter,
     order: TagOrder,
 
     #[serde(skip, default)]
@@ -151,9 +240,14 @@ impl UxTag {
                 })
                 // include only selected plugin sources in the tags list response
                 .filter(|(_, t)| {
-                    self.source_filter.is_none() // All
-                        || (self.source_filter.as_deref() == Some("Hidden") && t.hidden())
-                        || t.sources().contains(self.source_filter.as_deref().expect("checked"))
+                    self.source_filter.source.is_none() // All
+                        || (self.source_filter.source.as_deref() == Some("Hidden") && t.hidden())
+                        || t.sources().contains(self.source_filter.source.as_deref().expect("checked"))
+                })
+                // include only tags with the selected kind
+                .filter(|(_, t)| {
+                    self.kind_filter.kind.is_none() ||
+                        self.kind_filter.kind == Some(t.kind())
                 })
                 .sorted_by(
                     |(_, a), (_, b)| match a.favorite().cmp(&b.favorite()).reverse() {
@@ -209,30 +303,16 @@ impl UxTag {
                 self.reproject_tags();
             }
             ui.label(format!("({})", self.tag_filtered.len()));
-
-            let mut selected = 0usize;
-            let mut options = host.plugins().map(|p| p.name()).collect::<Vec<_>>();
-            options.insert(0, "All".to_owned());
-            options.push("Hidden".to_owned());
-            if let Some(source) = self.source_filter.as_deref() {
-                if let Some((offset, _)) = options.iter().find_position(|v| v == &source) {
-                    selected = offset;
-                }
+        });
+        ui.horizontal(|ui| {
+            if self.source_filter.ui(host, ui) {
+                self.reproject_tags();
             }
-            let prior = selected;
-            egui::ComboBox::new("tag_filter_sources", "Source")
-                .wrap_mode(egui::TextWrapMode::Truncate)
-                .show_index(ui, &mut selected, options.len(), |i| &options[i]);
-            if prior != selected {
-                if options[selected] == "All" {
-                    self.source_filter = None;
-                    self.reproject_tags();
-                } else {
-                    self.source_filter = Some(options[selected].clone());
-                    self.reproject_tags();
-                }
+            if self.kind_filter.ui(ui) {
+                self.reproject_tags();
             }
         });
+
         // Sorting
         ui.horizontal(|ui| {
             let prior = self.order;

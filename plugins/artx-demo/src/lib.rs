@@ -65,14 +65,16 @@ pub fn list_tags() -> FnResult<Json<Vec<Tag>>> {
         let tag = Tag::new(
             // Any valid Rust string (e.g. UTF-8) is a valid tag.
             word,
-            // We will generate a few works for each tag. Normally the plugin should look up
-            // or count this number from the API, if possible. If None is returned, things will
-            // still work, but the user will not be able to see the data in the UX.
-            Some(3),
-            // The wiki is a link to information about the tag, if it exists. Here we will
-            // link to the dictionary.com page for the word, as an example.
-            Some(format!("https://www.dictionary.com/browse/{word}")),
-        );
+        )
+        // We will generate a few works for each tag. Normally the plugin should look up
+        // or count this number from the API, if possible. This number shows up next to
+        // the tag in the UX so that the user can tell if they've got everything.
+        .with_remote_work_count(3)
+        // The wiki is a link to information about the tag, if it exists. Here we will
+        // link to the dictionary.com page for the word, as an example.
+        .with_wiki_url(format!("https://www.dictionary.com/browse/{word}"));
+
+        // Accumulate the tag into our list to return to Artchiver.
         out.push(tag);
     }
 

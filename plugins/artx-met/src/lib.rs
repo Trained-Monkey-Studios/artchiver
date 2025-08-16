@@ -115,17 +115,15 @@ pub fn list_tags() -> FnResult<Json<Vec<Tag>>> {
     Ok(all_names
         .drain()
         .map(|(tag, count)| {
-            Tag::new(
-                &tag,
-                Some(count as u64),
-                wiki_map.get(&tag).cloned(),
-            )
+            Tag::new(&tag)
+                .with_remote_work_count(count as u64)
+                .with_wiki_url(wiki_map.get(&tag).cloned().unwrap_or_default())
         })
         .collect::<Vec<Tag>>()
         .into())
 }
 
-#[allow(non_snake_case, unused)]
+#[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
 struct SearchResults {
     total: u32,

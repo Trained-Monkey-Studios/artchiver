@@ -35,6 +35,7 @@ pub struct DbTag {
     hidden: bool,
     favorite: bool,
     wiki_url: Option<String>,
+    remote_id: Option<String>,
     sources: Vec<String>,
 }
 
@@ -53,6 +54,7 @@ impl DbTag {
             hidden: row.get("hidden")?,
             favorite: row.get("favorite")?,
             wiki_url: row.get("wiki_url")?,
+            remote_id: row.get("remote_id")?,
             sources: row
                 .get::<&str, String>("plugin_names")?
                 .split(',')
@@ -103,6 +105,10 @@ impl DbTag {
 
     pub fn wiki_url(&self) -> Option<&str> {
         self.wiki_url.as_deref()
+    }
+
+    pub fn remote_id(&self) -> Option<&str> {
+        self.remote_id.as_deref()
     }
 
     pub fn sources(&self) -> impl Iterator<Item = &str> {

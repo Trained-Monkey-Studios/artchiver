@@ -32,6 +32,7 @@ pub const MIGRATIONS: [&str; 22] = [
         name TEXT NOT NULL UNIQUE,
         kind TEXT DEFAULT 'default',
         wiki_url TEXT,
+        remote_id TEXT,
         hidden BOOLEAN NOT NULL DEFAULT false,
         favorite BOOLEAN NOT NULL DEFAULT false
     );"#,

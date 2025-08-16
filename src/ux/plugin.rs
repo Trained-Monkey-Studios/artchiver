@@ -74,6 +74,7 @@ impl UxPlugin {
         egui::CollapsingHeader::new("Tasks")
             .id_salt(format!("tasks_section_{}", plugin.name()))
             .show(ui, |ui| {
+                let mut clear_all = false;
                 match plugin.active_task() {
                     Some(task) => {
                         ui.horizontal(|ui| {
@@ -85,11 +86,20 @@ impl UxPlugin {
                             } else {
                                 ui.label("Cancelling...");
                             }
+                            if plugin.task_queue_len() > 0
+                                && ui.small_button("x Cancel All").clicked()
+                            {
+                                plugin.cancellation().cancel();
+                                clear_all = true;
+                            }
                         });
                     }
                     None => {
                         ui.label("Inactive");
                     }
+                }
+                if clear_all {
+                    plugin.clear_queued_tasks();
                 }
                 ui.separator();
 

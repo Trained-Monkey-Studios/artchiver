@@ -143,27 +143,34 @@ impl PluginMetadata {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum TagKind {
     #[default]
     Default,
-    Artist,
     Character,
-    Series,
     Copyright,
+    Location,
     Meta,
-    Deprecated,
+    School,
+    Series,
+    Style,
+    Technique,
+    Theme,
 }
 
 impl FromStr for TagKind {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
-            "artist" => TagKind::Artist,
             "character" => TagKind::Character,
-            "series" => TagKind::Series,
             "copyright" => TagKind::Copyright,
+            "location" => TagKind::Location,
             "meta" => TagKind::Meta,
+            "school" => TagKind::School,
+            "series" => TagKind::Series,
+            "style" => TagKind::Style,
+            "technique" => TagKind::Technique,
+            "theme" => TagKind::Theme,
             _ => TagKind::Default,
         })
     }
@@ -172,11 +179,15 @@ impl FromStr for TagKind {
 impl fmt::Display for TagKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TagKind::Artist => write!(f, "artist"),
             TagKind::Character => write!(f, "character"),
-            TagKind::Series => write!(f, "series"),
             TagKind::Copyright => write!(f, "copyright"),
+            TagKind::Location => write!(f, "location"),
             TagKind::Meta => write!(f, "meta"),
+            TagKind::School => write!(f, "school"),
+            TagKind::Series => write!(f, "series"),
+            TagKind::Style => write!(f, "style"),
+            TagKind::Technique => write!(f, "technique"),
+            TagKind::Theme => write!(f, "theme"),
             _ => write!(f, "default"),
         }
     }
@@ -187,8 +198,9 @@ impl fmt::Display for TagKind {
 pub struct Tag {
     name: String,
     kind: TagKind,
-    presumed_work_count: Option<u64>,
+    remote_work_count: u64,
     wiki_url: Option<String>,
+    remote_id: Option<String>,
 }
 
 impl PartialEq for Tag {
@@ -218,16 +230,13 @@ impl Hash for Tag {
 }
 
 impl Tag {
-    pub fn new<N: ToString, W: ToString>(
-        name: N,
-        work_count: Option<u64>,
-        wiki_url: Option<W>,
-    ) -> Self {
+    pub fn new(name: impl ToString) -> Self {
         Self {
             name: name.to_string(),
             kind: TagKind::default(),
-            presumed_work_count: work_count,
-            wiki_url: wiki_url.map(|s| s.to_string()),
+            remote_work_count: 0,
+            wiki_url: None,
+            remote_id: None,
         }
     }
 
@@ -236,8 +245,27 @@ impl Tag {
         self
     }
 
+    pub fn with_remote_id(mut self, id: impl ToString) -> Self {
+        self.remote_id = Some(id.to_string());
+        self
+    }
+
+    pub fn with_remote_work_count(mut self, count: u64) -> Self {
+        self.remote_work_count = count;
+        self
+    }
+
+    pub fn with_wiki_url(mut self, url: impl ToString) -> Self {
+        self.wiki_url = Some(url.to_string());
+        self
+    }
+
+    pub fn increment_work_count(&mut self) {
+        self.remote_work_count = self.remote_work_count.saturating_add(1);
+    }
+
     pub fn set_work_count(&mut self, count: u64) {
-        self.presumed_work_count = Some(count);
+        self.remote_work_count = count;
     }
 
     pub fn name(&self) -> &str {
@@ -249,7 +277,7 @@ impl Tag {
     }
 
     pub fn presumed_work_count(&self) -> u64 {
-        self.presumed_work_count.unwrap_or_default()
+        self.remote_work_count
     }
 
     pub fn wiki_url(&self) -> Option<&str> {

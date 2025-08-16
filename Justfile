@@ -4,5 +4,14 @@ plugin:
     pushd plugins/artx-met && cargo build --release --target wasm32-unknown-unknown && popd
     pushd plugins/artx-nga && cargo build --release --target wasm32-unknown-unknown && popd
 
+clippy:
+    pushd plugins/artx-demo && cargo clippy --target wasm32-unknown-unknown && popd
+    pushd plugins/artx-met && cargo clippy --target wasm32-unknown-unknown && popd
+    pushd plugins/artx-nga && cargo clippy --target wasm32-unknown-unknown && popd
+    cargo clippy --all --all-targets
+
 fmt:
+    pushd plugins/artx-demo && cargo fmt && popd
+    pushd plugins/artx-met && cargo  fmt && popd
+    pushd plugins/artx-nga && cargo  fmt && popd
     cargo fmt --all

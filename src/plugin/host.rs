@@ -280,6 +280,10 @@ impl PluginHandle {
         self.task_queue.iter()
     }
 
+    pub fn task_queue_len(&self) -> usize {
+        self.task_queue.len()
+    }
+
     pub fn swap_task_queue_items(&mut self, from: usize, to: usize) {
         if (0..self.task_queue.len()).contains(&from) && (0..self.task_queue.len()).contains(&to) {
             self.task_queue.swap(from, to);
@@ -288,6 +292,10 @@ impl PluginHandle {
 
     pub fn remove_queued_task(&mut self, req: &PluginRequest) {
         self.task_queue.retain(|v| v != req);
+    }
+
+    pub fn clear_queued_tasks(&mut self) {
+        self.task_queue.clear();
     }
 
     pub fn cancellation(&self) -> &PluginCancellation {

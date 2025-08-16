@@ -1,16 +1,9 @@
 use artchiver_sdk::*;
 use extism_pdk::*;
-use uuid::Uuid;
-use jiff::{
-    Zoned,
-    Timestamp,
-    civil::Date
-};
+use jiff::{Timestamp, Zoned, civil::Date};
 use serde::Deserialize;
-use std::collections::{
-    HashSet,
-    HashMap
-};
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 import_section!();
 
@@ -83,17 +76,17 @@ const OBJECTS_URL: &str =
     "https://github.com/NationalGalleryOfArt/opendata/raw/refs/heads/main/data/objects.csv";
 
 #[derive(Clone, Debug, Deserialize)]
-#[allow(unused)]
 pub struct NgaTerm {
     termid: i64,
     objectid: i64,
     termtype: String,
     term: String,
+    #[allow(unused)]
     visualbrowsertheme: String,
+    #[allow(unused)]
     visualbrowserstyle: String,
 }
-const TERMS_URL: &str =
-    "https://raw.githubusercontent.com/NationalGalleryOfArt/opendata/refs/heads/main/data/objects_terms.csv";
+const TERMS_URL: &str = "https://raw.githubusercontent.com/NationalGalleryOfArt/opendata/refs/heads/main/data/objects_terms.csv";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct NgaPublishedImage {
@@ -110,8 +103,7 @@ pub struct NgaPublishedImage {
     depictstmsobjectid: i64,
     assistivetext: String,
 }
-const PUBLISHED_IMAGES_URL: &str =
-    "https://raw.githubusercontent.com/NationalGalleryOfArt/opendata/refs/heads/main/data/published_images.csv";
+const PUBLISHED_IMAGES_URL: &str = "https://raw.githubusercontent.com/NationalGalleryOfArt/opendata/refs/heads/main/data/published_images.csv";
 
 #[plugin_fn]
 pub fn startup() -> FnResult<Json<PluginMetadata>> {
@@ -134,63 +126,91 @@ fn csv_reader(raw: &str) -> FnResult<csv::Reader<&[u8]>> {
 }
 
 fn terms(csv: &str) -> FnResult<Vec<NgaTerm>> {
-    Ok(csv_reader(&csv)?.records().flatten().map(|row| {
-        match row.deserialize::<NgaTerm>(None) {
+    Ok(csv_reader(csv)?
+        .records()
+        .flatten()
+        .map(|row| match row.deserialize::<NgaTerm>(None) {
             Ok(r) => r,
             Err(e) => {
                 Log::error(format!("Failed to deserialize term: {e}")).ok();
                 Log::error(format!("Row is: {row:#?}")).ok();
                 panic!("Failed to deserialize term: {e}")
             }
-        }
-    }).collect())
+        })
+        .collect())
 }
 
 fn objects(csv: &str) -> FnResult<HashMap<i64, NgaObject>> {
-    Ok(csv_reader(&csv)?.records().flatten().map(|row| {
-        let r = match row.deserialize::<NgaObject>(None) {
-            Ok(r) => r,
-            Err(e) => {
-                Log::error(format!("Failed to deserialize object: {e}")).ok();
-                Log::error(format!("Row is: {row:#?}")).ok();
-                panic!("Failed to deserialize object: {e}")
-            }
-        };
-        (r.objectid, r)
-    }).collect())
+    Ok(csv_reader(csv)?
+        .records()
+        .flatten()
+        .map(|row| {
+            let r = match row.deserialize::<NgaObject>(None) {
+                Ok(r) => r,
+                Err(e) => {
+                    Log::error(format!("Failed to deserialize object: {e}")).ok();
+                    Log::error(format!("Row is: {row:#?}")).ok();
+                    panic!("Failed to deserialize object: {e}")
+                }
+            };
+            (r.objectid, r)
+        })
+        .collect())
 }
 
 fn published_images(csv: &str) -> FnResult<Vec<NgaPublishedImage>> {
-    Ok(csv_reader(&csv)?.records().flatten().map(|row| {
-        match row.deserialize::<NgaPublishedImage>(None) {
+    Ok(csv_reader(csv)?
+        .records()
+        .flatten()
+        .map(|row| match row.deserialize::<NgaPublishedImage>(None) {
             Ok(r) => r,
             Err(e) => {
                 Log::error(format!("Failed to deserialize published image: {e}")).ok();
                 Log::error(format!("Row is: {row:#?}")).ok();
                 panic!("Failed to deserialize published image: {e}")
             }
-        }
-    }).collect())
+        })
+        .collect())
 }
 
 #[plugin_fn]
 pub fn list_tags() -> FnResult<Json<Vec<Tag>>> {
-    Progress::spinner()?;
+    Progress::percent(0, 4)?;
 
     let terms_cvs = Web::fetch_text(Request::get(TERMS_URL))?;
     let terms = terms(&terms_cvs)?;
+    Progress::percent(1, 4)?;
 
+    // Collect all unique terms into tags, stripping the objectid association.
     let mut all = HashSet::new();
     for term in &terms {
-        if term.termtype == "Keyword" {
-            all.insert(Tag::new(term.term.to_owned(), None, None::<String>));
-        }
+        let tag_kind = match term.termtype.as_str() {
+            "Keyword" => TagKind::Default,
+            "School" => TagKind::School,
+            "Place Executed" => TagKind::Location,
+            "Technique" => TagKind::Technique,
+            "Systematic Catalogue Volume" => TagKind::Series,
+            "Theme" => TagKind::Theme,
+            "Style" => TagKind::Style,
+            v => panic!("Unknown term type: {v}"),
+        };
+        let tag = Tag::new(term.term.to_owned())
+            .with_remote_id(term.termid)
+            .with_kind(tag_kind);
+        all.insert(tag);
     }
+    Progress::percent(2, 4)?;
+
+    // Sort tags into an ordered vec for return.
     let mut all = all.drain().collect::<Vec<_>>();
     all.sort();
+    Progress::percent(3, 4)?;
 
+    // Count all terms with the same name (and implicitly different object association).
+    // Note: tags has stripped the objectid, so counting terms per tag is the count of objects
+    //       associated with that tag.
     for tag in &mut all {
-        let count = terms.iter().filter(|t| t.termtype == "Keyword" && t.term == tag.name()).count();
+        let count = terms.iter().filter(|t| t.term == tag.name()).count();
         tag.set_work_count(count.try_into()?);
     }
 
@@ -217,7 +237,7 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
     // Find all objects that have the given tag.
     let mut obj_ids_with_tag: HashMap<i64, Vec<String>> = HashMap::new();
     for term in &terms {
-        if term.termtype == "Keyword" && term.term == tag {
+        if term.term == tag {
             obj_ids_with_tag.insert(term.objectid, Vec::new());
         }
     }
@@ -225,8 +245,11 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
 
     // For each object with the tag, collect all tags on that object so we can construct the Work.
     for term in &terms {
-        if term.termtype == "Keyword" && obj_ids_with_tag.contains_key(&term.objectid) {
-            obj_ids_with_tag.get_mut(&term.objectid).unwrap().push(term.term.to_owned());
+        if obj_ids_with_tag.contains_key(&term.objectid) {
+            obj_ids_with_tag
+                .get_mut(&term.objectid)
+                .unwrap()
+                .push(term.term.to_owned());
         }
     }
     Progress::percent(5, 6)?;
@@ -234,25 +257,32 @@ pub fn list_works_for_tag(tag: String) -> FnResult<Json<Vec<Work>>> {
     // Construct each work.
     let mut works = Vec::new();
     for (obj_id, tags) in &obj_ids_with_tag {
-        let Some(img) = published_images.iter().find(|i| i.depictstmsobjectid == *obj_id) else {
-            Log::warn(format!("No published image found for object {}", obj_id))?;
+        let Some(img) = published_images
+            .iter()
+            .find(|i| i.depictstmsobjectid == *obj_id)
+        else {
+            Log::warn(format!("No published image found for object {obj_id}"))?;
             continue;
         };
 
-        let obj = objects.get(obj_id).expect("no object with id for matching term");
-        works.push(Work::new(
-            &obj.title,
-            Date::new(obj.beginyear.unwrap_or(0).try_into()?, 1, 1)?,
-            // Note: this appears to mostly just be a pre-baked call to the iiifurl.
-            &img.iiifthumburl,
-            // Note: max size that the server will send us back, not actual max size;
-            //       native quality, not native image
-            format!("{}/full/max/0/native.jpg", img.iiifurl),
-            tags.clone(),
-        )
+        let obj = objects
+            .get(obj_id)
+            .expect("no object with id for matching term");
+        works.push(
+            Work::new(
+                &obj.title,
+                Date::new(obj.beginyear.unwrap_or(0).try_into()?, 1, 1)?,
+                // Note: this appears to mostly just be a pre-baked call to the iiifurl.
+                &img.iiifthumburl,
+                // Note: max size that the server will send us back, not actual max size;
+                //       native quality, not native image
+                format!("{}/full/max/0/native.jpg", img.iiifurl),
+                tags.clone(),
+            )
             .with_remote_id(obj_id.to_string())
             // Note: archive url is for the iiif tile server and path
-            .with_archive_url(img.iiifurl.to_owned()));
+            .with_archive_url(img.iiifurl.to_owned()),
+        );
     }
 
     Progress::clear()?;
