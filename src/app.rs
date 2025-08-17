@@ -92,7 +92,7 @@ impl eframe::App for ArtchiverApp {
         self.toplevel.handle_updates(&updates, &self.db_read);
 
         self.toplevel
-            .main(&self.db_read, &self.db_write, &mut self.host, ctx)
+            .draw(&self.db_read, &self.db_write, &mut self.host, ctx)
             .expect("ux update error");
     }
 

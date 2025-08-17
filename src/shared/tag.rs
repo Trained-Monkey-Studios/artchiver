@@ -5,7 +5,7 @@ use crate::db::{
 };
 use crate::plugin::host::PluginHost;
 use itertools::Itertools as _;
-use log::trace;
+use log::{trace, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -29,6 +29,7 @@ pub enum TagRefresh {
     NoneNeeded,
     Favorites,
     NeedRefresh(TagId),
+    NeedReproject
 }
 
 #[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -57,7 +58,21 @@ impl TagSet {
         }
     }
 
+    pub fn force_refresh(&mut self) {
+        // Enable/disable/unselect/etc may change the sets we're looking at. This is called
+        // when information is updated on the _DB_ side rather than on the visibility side,
+        // so we need to set the refresh state to "dunno" so we will refresh, when asked.
+        self.changed = true;
+        self.last_fetched = None;
+    }
+
+    // This needs to be called each frame and the TagRefresh responded to in the works view.
     pub fn get_best_refresh(&mut self, tags: Option<&HashMap<TagId, DbTag>>) -> TagRefresh {
+        if !self.changed {
+            return TagRefresh::NoneNeeded;
+        }
+        self.changed = false;
+
         // We don't have any selection, so get favorites instead.
         if self.enabled.is_empty() {
             self.disabled.clear();
@@ -65,38 +80,46 @@ impl TagSet {
             return TagRefresh::Favorites;
         }
 
-        // We already have it in the last-fetched set.
+        // Even though the selected tags changed, we already fetched a superset tag.
         if let Some(prior) = self.last_fetched
             && self.enabled.contains(&prior)
         {
-            return TagRefresh::NoneNeeded;
+            return TagRefresh::NeedReproject;
         }
 
         // Find the tag with the smallest local-count in `enabled` to fetch.
-        if let Some(tags) = tags
-            && let Some(min) = self
+        if let Some(tags) = tags {
+            if let Some(min) = self
                 .enabled
                 .iter()
                 .min_by_key(|t| tags.get(t).map(|t| t.local_count()))
-        {
-            trace!(
-                "Should fetch the smallest tag: {}",
-                tags.get(min).expect("checked").name()
-            );
-            self.last_fetched = Some(*min);
-            return TagRefresh::NeedRefresh(*min);
+            {
+                trace!(
+                    "Fetching the smallest local tag: {}",
+                    tags.get(min).expect("checked").name()
+                );
+                self.last_fetched = Some(*min);
+                return TagRefresh::NeedRefresh(*min);
+            } else if let Some(min) = self
+                .enabled
+                .iter()
+                .min_by_key(|t| tags.get(t).map(|t| t.network_count()))
+            {
+                // Note: fall back to the network counts if we haven't fully loaded yet.
+                warn!(
+                    "Falling back to fetch the smallest network tag: {}",
+                    tags.get(min).expect("checked").name()
+                );
+                self.last_fetched = Some(*min);
+                return TagRefresh::NeedRefresh(*min);
+            }
         }
 
-        // Note: we know there is a first enabled tag because we checked above for empty.
-        trace!("Fetch the first enabled tag");
+        // We're early enough in startup that we haven't even fetched the tags list yet;
+        // however, we know there is at least one tag because we checked above for empty.
+        warn!("Falling back to fetching the first enabled tag");
         self.last_fetched = self.enabled.iter().next().copied();
         TagRefresh::NeedRefresh(self.last_fetched.expect("checked for none"))
-    }
-
-    pub fn reset_changed(&mut self) -> bool {
-        let out = self.changed;
-        self.changed = false;
-        out
     }
 
     pub fn enable(&mut self, tag: &DbTag) {
@@ -147,9 +170,7 @@ impl TagSet {
         self.disabled.iter().copied()
     }
 
-    pub fn ui(&mut self, tags: &HashMap<TagId, DbTag>, ui: &mut egui::Ui) -> bool {
-        let mut changed = false;
-
+    pub fn ui(&mut self, tags: &HashMap<TagId, DbTag>, ui: &mut egui::Ui) {
         let mut remove = None;
         for enabled in self.enabled() {
             if let Some(tag) = tags.get(&enabled) {
@@ -167,7 +188,6 @@ impl TagSet {
         if let Some(remove) = remove {
             if let Some(tag) = tags.get(&remove) {
                 self.unselect(tag);
-                changed = true;
             }
         }
 
@@ -188,19 +208,16 @@ impl TagSet {
         if let Some(unselect) = unselect {
             if let Some(tag) = tags.get(&unselect) {
                 self.unselect(tag);
-                changed = true;
             }
         }
 
         if !self.is_empty() {
             if ui.button("x").clicked() {
                 self.clear();
-                changed = true;
             }
         } else {
             ui.label("Favorites");
         }
-        changed
     }
 
     pub fn tag_row_ui(
@@ -209,8 +226,7 @@ impl TagSet {
         host: &mut PluginHost,
         db_write: &DbWriteHandle,
         ui: &mut egui::Ui,
-    ) -> bool {
-        let mut changed = false;
+    ) {
         ui.horizontal(|ui| {
             let status = self.status(tag);
             let is_eq = self.equals_single_tag(tag);
@@ -224,7 +240,6 @@ impl TagSet {
             {
                 self.clear();
                 self.enable(tag);
-                changed = true;
             }
             if ui
                 .add(egui::Button::new("+").small().selected(status.enabled()))
@@ -236,7 +251,6 @@ impl TagSet {
                 } else {
                     self.enable(tag);
                 }
-                changed = true;
             }
             if ui
                 .add(egui::Button::new("-").small().selected(status.disabled()))
@@ -248,7 +262,6 @@ impl TagSet {
                 } else {
                     self.disable(tag);
                 }
-                changed = true;
             }
             let fav_text = if tag.favorite() { "★" } else { "☆" };
             if ui
@@ -306,6 +319,5 @@ impl TagSet {
 
             ui.style_mut().spacing.item_spacing.x = prior_spacing;
         });
-        changed
     }
 }

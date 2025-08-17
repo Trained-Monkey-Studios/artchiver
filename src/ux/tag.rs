@@ -232,7 +232,7 @@ impl UxTag {
         if let Some(tags) = &self.tag_all {
             self.tag_filtered = tags
                 .iter()
-                // Apply the direct name filter, case insensitive
+                // Apply the direct name filter, case-insensitive
                 .filter(|(_id, t)| {
                     t.name()
                         .to_lowercase()
@@ -280,7 +280,6 @@ impl UxTag {
         }
     }
 
-    // Note: no pool so no way to block
     pub fn ui(
         &mut self,
         tag_set: &mut TagSet,
@@ -293,7 +292,7 @@ impl UxTag {
             return;
         }
 
-        // Filter and view bar
+        // Main textual filter bar
         ui.horizontal(|ui| {
             if ui.text_edit_singleline(&mut self.name_filter).changed() {
                 self.reproject_tags();
@@ -304,6 +303,7 @@ impl UxTag {
             }
             ui.label(format!("({})", self.tag_filtered.len()));
         });
+        // Sub-filters bar
         ui.horizontal(|ui| {
             if self.source_filter.ui(host, ui) {
                 self.reproject_tags();
@@ -312,8 +312,7 @@ impl UxTag {
                 self.reproject_tags();
             }
         });
-
-        // Sorting
+        // Sorting bar
         ui.horizontal(|ui| {
             let prior = self.order;
             self.order.ui(ui);
@@ -335,6 +334,7 @@ impl UxTag {
                     .show(ui, |ui| {
                         for tag_id in &self.tag_filtered[row_range] {
                             let tag = all_tags.get(tag_id).expect("missing tag");
+                            // Note: change is captured internally
                             tag_set.tag_row_ui(tag, host, db_write, ui);
                             ui.end_row();
                         }

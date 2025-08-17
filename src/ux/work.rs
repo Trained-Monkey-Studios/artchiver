@@ -242,6 +242,8 @@ impl UxWork {
         trace!("Starting up work UX");
 
         self.data_dir = data_dir.to_owned();
+
+        // FIXME: this is going to fetch the wrong thing. We want the smallest tag, as selected elsewhere.
         if let Some(tag_id) = self.tag_selection.enabled().next() {
             db.get_works_for_tag(tag_id);
         } else if self.tag_selection.is_empty() {
@@ -283,12 +285,15 @@ impl UxWork {
                         );
                     }
                 }
+                DataUpdate::InitialTags(_) => {
+                    self.tag_selection.force_refresh();
+                }
                 DataUpdate::WorksWereUpdatedForTag { for_tag } => {
                     if self.tag_selection.enabled().any(|id| {
                         tags.and_then(|tags| tags.get(&id)).map(|tag| tag.name())
                             == Some(for_tag.as_str())
                     }) {
-                        self.tags_changed(tags, db);
+                        self.tag_selection.force_refresh();
                     }
                 }
                 DataUpdate::WorkDownloadCompleted {
@@ -315,22 +320,17 @@ impl UxWork {
                 _ => {}
             }
         }
+
+        // Check tag freshness
+        self.ensure_works_up_to_date_with_tag_selection(tags, db);
     }
 
     pub fn tag_selection(&self) -> &TagSet {
         &self.tag_selection
     }
 
-    pub fn set_tag_selection(
-        &mut self,
-        tags: Option<&HashMap<TagId, DbTag>>,
-        tag_set: TagSet,
-        db: &DbReadHandle,
-    ) {
-        if &tag_set != self.tag_selection() {
-            self.tag_selection = tag_set;
-            self.tags_changed(tags, db);
-        }
+    pub fn tag_selection_mut(&mut self) -> &mut TagSet {
+        &mut self.tag_selection
     }
 
     pub fn has_selection(&self) -> bool {
@@ -351,9 +351,16 @@ impl UxWork {
         self.scroll_to_selected = ScrollRequestKind::LeaveSlideshow;
     }
 
-    fn tags_changed(&mut self, tags: Option<&HashMap<TagId, DbTag>>, db: &DbReadHandle) {
+    fn ensure_works_up_to_date_with_tag_selection(
+        &mut self,
+        tags: Option<&HashMap<TagId, DbTag>>,
+        db: &DbReadHandle,
+    ) {
         match self.tag_selection.get_best_refresh(tags) {
             TagRefresh::NoneNeeded => {}
+            TagRefresh::NeedReproject => {
+                self.reproject_work(tags);
+            }
             TagRefresh::NeedRefresh(tag_id) => {
                 self.work_matching_tag = None;
                 self.work_filtered = Vec::new();
@@ -366,10 +373,6 @@ impl UxWork {
                 self.clear_selected();
                 db.get_favorite_works();
             }
-        }
-
-        if self.tag_selection.reset_changed() {
-            self.reproject_work(tags);
         }
     }
 
@@ -569,7 +572,6 @@ impl UxWork {
     pub fn info_ui(
         &mut self,
         tags: Option<&HashMap<TagId, DbTag>>,
-        db_read: &DbReadHandle,
         db_write: &DbWriteHandle,
         host: &mut PluginHost,
         ui: &mut egui::Ui,
@@ -620,38 +622,37 @@ impl UxWork {
                 ui.end_row();
             }
         });
-        let mut changed = false;
         if let Some(tags) = tags {
             ui.label(" ");
-            ui.heading("Tags");
+            ui.horizontal(|ui| {
+                ui.heading("Tags");
+                if ui.button("✔ Select All").clicked() {
+                    self.tag_selection.clear();
+                    for tag in work.tags().filter_map(|tag_id| tags.get(&tag_id)) {
+                        self.tag_selection.enable(tag);
+                    }
+                }
+            });
             ui.separator();
             work.tags()
                 .filter_map(|tag_id| tags.get(&tag_id))
                 .sorted_by_key(|tag| tag.name())
                 .for_each(|tag| {
-                    if self.tag_selection.tag_row_ui(tag, host, db_write, ui) {
-                        changed = true;
-                    }
+                    self.tag_selection.tag_row_ui(tag, host, db_write, ui);
                 });
-        }
-        if changed {
-            self.tags_changed(tags, db_read);
         }
     }
 
     pub fn gallery_ui(
         &mut self,
         tags: Option<&HashMap<TagId, DbTag>>,
-        db: &DbReadHandle,
         db_write: &DbWriteHandle,
         perf: &mut PerfTrack,
         ui: &mut egui::Ui,
     ) {
-        ui.horizontal(|ui| {
-            if let Some(tags) = tags
-                && self.tag_selection.ui(tags, ui)
-            {
-                self.tags_changed(Some(tags), db);
+        ui.horizontal_wrapped(|ui| {
+            if let Some(tags) = tags {
+                self.tag_selection.ui(tags, ui);
             }
             ui.label(format!("({})", self.work_filtered.len()));
         });

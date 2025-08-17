@@ -93,9 +93,24 @@ pub struct UxState {
     perf: PerfTrack,
 }
 
+impl UxState {
+    // Note: we have to punch this through to get joint mutable access to self for work's
+    // tag_selection and the tag_ux state.
+    fn show_tags_list(
+        &mut self,
+        host: &mut PluginHost,
+        db_write: &DbWriteHandle,
+        ui: &mut egui::Ui,
+    ) {
+        self.tag_ux
+            .ui(self.work_ux.tag_selection_mut(), host, db_write, ui);
+    }
+}
+
 struct SyncViewer<'a> {
     sync: &'a mut PluginHost,
     state: &'a mut UxState,
+    #[expect(unused)]
     db_read: &'a DbReadHandle,
     db_write: &'a DbWriteHandle,
 }
@@ -125,13 +140,7 @@ impl<'a> SyncViewer<'a> {
 
     fn show_tags(&mut self, ui: &mut egui::Ui) {
         let start = Instant::now();
-        let mut tag_set = self.state.work_ux.tag_selection().to_owned();
-        self.state
-            .tag_ux
-            .ui(&mut tag_set, self.sync, self.db_write, ui);
-        self.state
-            .work_ux
-            .set_tag_selection(self.state.tag_ux.tags(), tag_set, self.db_read);
+        self.state.show_tags_list(self.sync, self.db_write, ui);
         self.state.perf.sample("Show Tags", start.elapsed());
     }
 
@@ -139,7 +148,6 @@ impl<'a> SyncViewer<'a> {
         let start = Instant::now();
         self.state.work_ux.gallery_ui(
             self.state.tag_ux.tags(),
-            self.db_read,
             self.db_write,
             &mut self.state.perf,
             ui,
@@ -148,13 +156,9 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
-        self.state.work_ux.info_ui(
-            self.state.tag_ux.tags(),
-            self.db_read,
-            self.db_write,
-            self.sync,
-            ui,
-        );
+        self.state
+            .work_ux
+            .info_ui(self.state.tag_ux.tags(), self.db_write, self.sync, ui);
     }
 
     fn render_slideshow(&mut self, ctx: &egui::Context) {
@@ -264,7 +268,7 @@ impl UxToplevel {
         }
     }
 
-    pub fn main(
+    pub fn draw(
         &mut self,
         db: &DbReadHandle,
         db_write: &DbWriteHandle,
