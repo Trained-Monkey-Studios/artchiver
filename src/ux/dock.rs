@@ -370,7 +370,7 @@ impl UxToplevel {
                         self.state.show_performance = false;
                     } else if self.state.show_preferences {
                         self.state.show_preferences = false;
-                    } else if pressed.contains(&Key::Escape) {
+                    } else {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 } else if pressed.contains(&Key::F3) {
@@ -379,6 +379,7 @@ impl UxToplevel {
             }
             UxMode::Slideshow => {
                 if pressed.contains(&Key::Escape) || pressed.contains(&Key::Space) {
+                    self.state.work_ux.on_leave_slideshow();
                     self.state.mode = UxMode::Browser;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
                 }

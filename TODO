@@ -38,9 +38,9 @@ o Hide mouse pointer in slideshow when mouse is not moving
 o Fix concurrent download of images from multiple plugins
 o Rate-limit the refresh rate when receiving heavy requests
 o Return works incrementally
+o Only scroll to selection on a move event or leaving slideshow
 * add a back button to return to previous states
 * add a refresh-all-tags button
-* Only scroll to selection on a move event or leaving slideshow
 * Give authors the same support as tags
 * Expand work with ALL THE DATA
 * Find more open-access galleries

@@ -151,6 +151,18 @@ impl ZoomPan {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ScrollRequestKind {
+    // No movement requested
+    None,
+    // Selection was moved via interaction in the UX. Move the viewport the minimum
+    // amount required to keep the newly selected item in view.
+    Movement,
+    // The user just left the slideshow view. Move the viewport to the currently selected item
+    // if it is not already in view. Center the item, since the move may have been large.
+    LeaveSlideshow,
+}
+
 /// Work caching strategy:
 ///
 /// Works are unbounded, but plan to scale to O(10-100M) works. This is too much for us to just
@@ -167,6 +179,9 @@ pub struct UxWork {
     // Filter state for the works gallery
     tag_selection: TagSet,
     order: WorkOrder,
+
+    #[serde(skip)]
+    scroll_to_selected: ScrollRequestKind,
 
     #[serde(skip)]
     last_mouse_motion: Instant,
@@ -203,6 +218,7 @@ impl Default for UxWork {
         Self {
             selected: None,
             thumb_size: 128.,
+            scroll_to_selected: ScrollRequestKind::None,
             tag_selection: TagSet::default(),
             order: WorkOrder::default(),
             last_mouse_motion: Instant::now(),
@@ -329,6 +345,10 @@ impl UxWork {
     pub fn clear_selected(&mut self) {
         self.selected = None;
         self.slide_xform = ZoomPan::default();
+    }
+
+    pub fn on_leave_slideshow(&mut self) {
+        self.scroll_to_selected = ScrollRequestKind::LeaveSlideshow;
     }
 
     fn tags_changed(&mut self, tags: Option<&HashMap<TagId, DbTag>>, db: &DbReadHandle) {
@@ -460,12 +480,15 @@ impl UxWork {
         if let Some(selected) = self.selected {
             if pressed_left {
                 self.set_selected(selected.wrapping_sub(1).min(self.work_filtered.len() - 1));
+                self.scroll_to_selected = ScrollRequestKind::Movement;
             }
             if pressed_right {
                 self.set_selected(selected.saturating_add(1) % self.work_filtered.len());
+                self.scroll_to_selected = ScrollRequestKind::Movement;
             }
             if pressed_up {
                 self.set_selected(selected.saturating_sub(n_wide));
+                self.scroll_to_selected = ScrollRequestKind::Movement;
             }
             if pressed_down {
                 self.set_selected(
@@ -473,6 +496,7 @@ impl UxWork {
                         .saturating_add(n_wide)
                         .min(self.work_filtered.len() - 1),
                 );
+                self.scroll_to_selected = ScrollRequestKind::Movement;
             }
             let selected = self.selected;
             if let Some(work) = self.get_selected_work_mut() {
@@ -668,47 +692,61 @@ impl UxWork {
 
         self.check_common_key_binds(tags, db_write, n_wide, ui);
 
-        // If we had an event that needs us to scroll to selection, compute a rect and go there.
-        if let Some(selected) = self.selected {
-            let row = selected / n_wide;
-            // let spacing_y = ui.spacing().item_spacing.y;
-            let y = ui.cursor().top() + row as f32 * (size + 0.);
-            // println!("{y} = {} + {row} * {size}", ui.cursor().top());
-            let rect = Rect::from_x_y_ranges(0f32..=10f32, y..=y + size);
-            ui.scroll_to_rect(rect, Some(egui::Align::Center));
-
-            /*
-            fn make_scroll_area(ui: &mut Ui, idx: usize, scroll_offset: f32) -> f32 {
-                let text_style = egui::TextStyle::Body;
-                let row_height = ui.text_style_height(&text_style);
-                let spacing_y = ui.spacing().item_spacing.y;
-                let area_offset = ui.cursor();
-                let y = area_offset.top() + idx as f32 * (row_height + spacing_y);
-                let target_rect = Rect {
-                    min: Pos2 {
-                        x: 0.0,
-                        y: y - scroll_offset,
-                    },
-                    max: Pos2 {
-                        x: 10.0,
-                        y: y + row_height - scroll_offset,
-                    },
-                };
-                ui.scroll_to_rect(target_rect, Some(Align::Center));
-                let scroll = egui::ScrollArea::vertical()
-                    .show_rows(ui, row_height, n_rows, |ui, row_range| {
-                        for filtered_idx in row_range {
-                            // add labels
-                        }
-                    });
-                scroll.state.offset.y
-            }
-             */
-        }
-
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_rows(ui, size, n_rows, |ui, rows| {
+                // We may have advanced past the area covered by `rows`, so we might not
+                // do a draw call on the selected item, which means that we wouldn't ever
+                // call a scroll-to on the response, so the scroll would just not happen.
+                // Instead, we construct a virtual rect in the scroll area to scroll to.
+                //
+                // This is tricky. The viewport max-rect (in this case cursor, since we're
+                // doing this first) is the offset of the current viewport relative
+                // to rows. So if we're at the top, it will be the offset from the top of
+                // the window to the top of the scroll area. As we scroll down, this lowers
+                // to zero when the top of the first drawn item is at the top of the window
+                // (hidden behind the menubar and whatnot). As we scroll further, this goes
+                // negative as the logical top of the first row in the viewport goes above
+                // the top of the window. Once the row is fully out of view, the cursor
+                // resets to the next row, with the offset returning to the distance from
+                // the top of window, to the top of the scroll area.
+                //
+                // So it seems like we need to have the rect relative to the top of the
+                // `window`.
+                //
+                //  - - - - - -  top of scroll
+                //  |-|-|-|-|-|
+                //  -----------  top of window (0)
+                //  |  menus  |
+                //  -----------  cursor.top()
+                //  -----------  top of viewport
+                //  |-|-|-|-|-|
+                //  |-|-|||-|-|  selected
+                //  |-|-|-|-|-|
+                //  -----------  bottom of window
+                if let Some(selected) = self.selected
+                    && self.scroll_to_selected != ScrollRequestKind::None
+                    && !(rows.start..rows.end.saturating_sub(1)).contains(&(selected / n_wide))
+                {
+                    let selected_row = selected / n_wide;
+                    let scroll_to_selected = selected_row as f32 * size;
+                    let scroll_to_cursor = rows.start as f32 * size;
+                    let cursor_to_selected = scroll_to_selected - scroll_to_cursor;
+                    let selected_to_window = ui.cursor().top() + cursor_to_selected;
+                    let y = selected_to_window;
+                    let rect = Rect::from_x_y_ranges(0f32..=10f32, y..=y + size);
+                    match self.scroll_to_selected {
+                        ScrollRequestKind::LeaveSlideshow => {
+                            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                        }
+                        ScrollRequestKind::Movement => {
+                            ui.scroll_to_rect(rect, None);
+                        }
+                        ScrollRequestKind::None => {}
+                    }
+                    self.scroll_to_selected = ScrollRequestKind::None;
+                }
+
                 // Overfetch by 1x our current visible area in both directions so we can
                 // usually scroll in either direction without pause or loading spinners.
                 //
