@@ -13,7 +13,9 @@ use crate::{
     },
 };
 use anyhow::Result;
-use artchiver_sdk::{PluginMetadata, Request, Tag, TextFetchError, TextResponse, Work};
+use artchiver_sdk::{
+    ConfigValue, PluginMetadata, Request, Tag, TextFetchError, TextResponse, Work,
+};
 use crossbeam::channel::{Receiver, Sender};
 use extism::{
     Manifest, PTR, Plugin as ExtPlugin, PluginBuilder, UserData, Wasm, convert::Json, host_fn,
@@ -33,10 +35,14 @@ use ureq::{Agent, config::RedirectAuthHeaders};
 
 fn make_plugin(
     source: &Path,
-    config: Vec<(String, String)>,
+    config: Vec<(String, ConfigValue)>,
     state: &UserData<PluginState>,
 ) -> Result<ExtPlugin> {
-    let manifest = Manifest::new([Wasm::file(source)]).with_config(config.into_iter());
+    let manifest = Manifest::new([Wasm::file(source)]).with_config(
+        config
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::to_string(&v).expect("config serialization"))),
+    );
     let plugin = PluginBuilder::new(manifest)
         .with_wasi(true)
         .with_function("progress_spinner", [], [], state.clone(), progress_spinner)
@@ -172,7 +178,7 @@ fn plugin_main(
         state.host =
             HostUpdateSender::wrap(UpdateSource::Plugin(db_plugin.id()), state.host.channel());
         for (k, v) in db_plugin.configs() {
-            metadata.set_config_value(k, v);
+            metadata.set_config_value(k, v.to_owned());
         }
         db_plugin
     };

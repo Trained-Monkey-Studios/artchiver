@@ -1,3 +1,4 @@
+use artchiver_sdk::ConfigValue;
 use rusqlite::{
     ToSql,
     types::{ToSqlOutput, Value},
@@ -27,11 +28,11 @@ impl fmt::Display for PluginId {
 pub struct DbPlugin {
     id: PluginId,
     name: String,
-    configs: Vec<(String, String)>,
+    configs: Vec<(String, ConfigValue)>,
 }
 
 impl DbPlugin {
-    pub fn new(id: i64, name: String, configs: Vec<(String, String)>) -> Self {
+    pub fn new(id: i64, name: String, configs: Vec<(String, ConfigValue)>) -> Self {
         Self {
             id: PluginId(id),
             name,
@@ -47,7 +48,7 @@ impl DbPlugin {
         &self.name
     }
 
-    pub fn configs(&self) -> &[(String, String)] {
+    pub fn configs(&self) -> &[(String, ConfigValue)] {
         &self.configs
     }
 }

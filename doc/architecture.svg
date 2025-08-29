@@ -1,0 +1,981 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="2160"
+   height="2160"
+   viewBox="0 0 571.5 571.50004"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
+   sodipodi:docname="architecture.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="0.94789814"
+     inkscape:cx="997.99753"
+     inkscape:cy="695.22238"
+     inkscape:window-width="2556"
+     inkscape:window-height="1575"
+     inkscape:window-x="0"
+     inkscape:window-y="21"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1">
+    <rect
+       x="1563.4591"
+       y="560.18677"
+       width="196.22361"
+       height="74.902563"
+       id="rect12" />
+    <rect
+       x="136.73695"
+       y="-46.732883"
+       width="1616.6116"
+       height="1279.0963"
+       id="rect25" />
+    <marker
+       style="overflow:visible"
+       id="DartArrow"
+       refX="0"
+       refY="0"
+       orient="auto-start-reverse"
+       inkscape:stockid="Dart arrow"
+       markerWidth="1"
+       markerHeight="1"
+       viewBox="0 0 1 1"
+       inkscape:isstock="true"
+       inkscape:collect="always"
+       preserveAspectRatio="xMidYMid">
+      <path
+         style="fill:context-stroke;fill-rule:evenodd;stroke:none"
+         d="M 0,0 5,-5 -12.5,0 5,5 Z"
+         transform="scale(-0.5)"
+         id="path6" />
+    </marker>
+    <marker
+       style="overflow:visible"
+       id="Triangle"
+       refX="0"
+       refY="0"
+       orient="auto-start-reverse"
+       inkscape:stockid="Triangle arrow"
+       markerWidth="1"
+       markerHeight="1"
+       viewBox="0 0 1 1"
+       inkscape:isstock="true"
+       inkscape:collect="always"
+       preserveAspectRatio="xMidYMid">
+      <path
+         transform="scale(0.5)"
+         style="fill:context-stroke;fill-rule:evenodd;stroke:context-stroke;stroke-width:1pt"
+         d="M 5.77,0 -2.88,5 V -5 Z"
+         id="path135" />
+    </marker>
+    <rect
+       x="11.653824"
+       y="27.677833"
+       width="612.83426"
+       height="162.09586"
+       id="rect8" />
+    <rect
+       x="304.55026"
+       y="193.4892"
+       width="157.04729"
+       height="61.604183"
+       id="rect6" />
+    <rect
+       x="304.55026"
+       y="189.15088"
+       width="161.3856"
+       height="59.868855"
+       id="rect5" />
+    <rect
+       x="97.178436"
+       y="193.4892"
+       width="183.94489"
+       height="59.868855"
+       id="rect4" />
+  </defs>
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <text
+       xml:space="preserve"
+       transform="scale(0.26458333)"
+       id="text5"
+       style="font-size:24px;line-height:1.25;font-family:sans-serif;white-space:pre;shape-inside:url(#rect5);display:inline" />
+    <rect
+       style="opacity:0.981265;fill:none;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       id="rect1"
+       width="107.89769"
+       height="39.715542"
+       x="271.93939"
+       y="23.867907" />
+    <rect
+       style="opacity:0.981265;fill:none;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       id="rect2"
+       width="50.964447"
+       height="17.217718"
+       x="275.38293"
+       y="41.544765" />
+    <rect
+       style="opacity:0.981265;fill:none;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       id="rect3"
+       width="44.536503"
+       height="16.758579"
+       x="329.79092"
+       y="41.085629" />
+    <text
+       xml:space="preserve"
+       transform="matrix(0.26458333,0,0,0.26458333,250.13028,-8.7309737)"
+       id="text4"
+       style="font-size:24px;line-height:1.25;font-family:sans-serif;white-space:pre;shape-inside:url(#rect4);display:inline"><tspan
+         x="97.177734"
+         y="214.72266"
+         id="tspan1">Plugin Host</tspan></text>
+    <text
+       xml:space="preserve"
+       transform="matrix(0.26458333,0,0,0.26458333,250.13028,-8.7309737)"
+       id="text6"
+       style="font-size:21.3333px;line-height:1.25;font-family:sans-serif;white-space:pre;shape-inside:url(#rect6);display:inline"><tspan
+         x="304.55078"
+         y="212.36325"
+         id="tspan2">UX</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-size:10.5833px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+       x="276.76035"
+       y="35.575958"
+       id="text7"><tspan
+         sodipodi:role="line"
+         id="tspan7"
+         style="stroke-width:0.264583"
+         x="276.76035"
+         y="35.575958">Main Thread</tspan></text>
+    <g
+       id="g7"
+       transform="translate(308.6623,61.239522)">
+      <ellipse
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path7"
+         cx="105"
+         cy="128.44418"
+         rx="21.005617"
+         ry="7.0018725" />
+      <ellipse
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path7-1"
+         cx="105"
+         cy="123.41689"
+         rx="21.005617"
+         ry="7.0018725" />
+      <ellipse
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path7-3"
+         cx="105"
+         cy="118.3896"
+         rx="21.005617"
+         ry="7.0018725" />
+      <ellipse
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path7-6"
+         cx="105"
+         cy="113.3623"
+         rx="21.005617"
+         ry="7.0018725" />
+    </g>
+    <text
+       xml:space="preserve"
+       transform="matrix(0.26458333,0,0,0.26458333,114.94631,4.1215807)"
+       id="text8"
+       style="font-size:42.6667px;line-height:1.25;font-family:sans-serif;white-space:pre;shape-inside:url(#rect8);display:inline"><tspan
+         x="11.654297"
+         y="65.427763"
+         id="tspan3">High Level System </tspan><tspan
+         x="11.654297"
+         y="118.76114"
+         id="tspan4">Architecture</tspan></text>
+    <g
+       id="g22"
+       transform="translate(-12.465384,-13.529911)">
+      <rect
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="rect7"
+         width="48.134346"
+         height="40.762497"
+         x="176.3018"
+         y="100.87807" />
+      <text
+         xml:space="preserve"
+         style="font-size:5.64444px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="178.01154"
+         y="107.5891"
+         id="text9"><tspan
+           sodipodi:role="line"
+           id="tspan8"
+           style="font-weight:bold;font-size:5.64444px;stroke-width:0.264583"
+           x="178.01154"
+           y="107.5891">Plugin Thread</tspan></text>
+      <g
+         id="g21">
+        <rect
+           style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+           id="rect9"
+           width="41.961376"
+           height="29.074259"
+           x="178.59691"
+           y="110.50803" />
+        <text
+           xml:space="preserve"
+           style="font-size:5.64444px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+           x="179.95312"
+           y="116.84717"
+           id="text11"><tspan
+             sodipodi:role="line"
+             id="tspan11"
+             style="font-size:5.64444px;stroke-width:0.264583"
+             x="179.95312"
+             y="116.84717">Client</tspan></text>
+      </g>
+      <g
+         id="g20"
+         transform="translate(0.62615798,0.26835342)">
+        <rect
+           style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+           id="rect10"
+           width="19.921928"
+           height="9.5076303"
+           x="180.28989"
+           y="127.43129"
+           ry="1.7890228" />
+        <text
+           xml:space="preserve"
+           style="font-size:5.64444px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+           x="181.41855"
+           y="134.12823"
+           id="text10"><tspan
+             sodipodi:role="line"
+             id="tspan10"
+             style="font-size:5.64444px;stroke-width:0.264583"
+             x="181.41855"
+             y="134.12823">Wasm</tspan></text>
+      </g>
+    </g>
+    <g
+       id="g22-6"
+       transform="translate(39.339067,-13.838124)">
+      <rect
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="rect7-0"
+         width="48.134346"
+         height="40.762497"
+         x="176.3018"
+         y="100.87807" />
+      <text
+         xml:space="preserve"
+         style="font-size:5.64444px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="178.01154"
+         y="107.5891"
+         id="text9-4"><tspan
+           sodipodi:role="line"
+           id="tspan8-8"
+           style="font-weight:bold;font-size:5.64444px;stroke-width:0.264583"
+           x="178.01154"
+           y="107.5891">Plugin Thread</tspan></text>
+      <g
+         id="g21-8">
+        <rect
+           style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+           id="rect9-8"
+           width="41.961376"
+           height="29.074259"
+           x="178.59691"
+           y="110.50803" />
+        <text
+           xml:space="preserve"
+           style="font-size:5.64444px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+           x="179.95312"
+           y="116.84717"
+           id="text11-9"><tspan
+             sodipodi:role="line"
+             id="tspan11-7"
+             style="font-size:5.64444px;stroke-width:0.264583"
+             x="179.95312"
+             y="116.84717">Client</tspan></text>
+      </g>
+      <g
+         id="g20-7"
+         transform="translate(0.62615798,0.26835342)">
+        <rect
+           style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+           id="rect10-6"
+           width="19.921928"
+           height="9.5076303"
+           x="180.28989"
+           y="127.43129"
+           ry="1.7890228" />
+        <text
+           xml:space="preserve"
+           style="font-size:5.64444px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+           x="181.41855"
+           y="134.12823"
+           id="text10-4"><tspan
+             sodipodi:role="line"
+             id="tspan10-3"
+             style="font-size:5.64444px;stroke-width:0.264583"
+             x="181.41855"
+             y="134.12823">Wasm</tspan></text>
+      </g>
+    </g>
+    <g
+       id="g22-2"
+       transform="translate(91.648531,-13.992676)">
+      <rect
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="rect7-5"
+         width="48.134346"
+         height="40.762497"
+         x="176.3018"
+         y="100.87807" />
+      <text
+         xml:space="preserve"
+         style="font-size:5.64444px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="178.01154"
+         y="107.5891"
+         id="text9-40"><tspan
+           sodipodi:role="line"
+           id="tspan8-5"
+           style="font-weight:bold;font-size:5.64444px;stroke-width:0.264583"
+           x="178.01154"
+           y="107.5891">Plugin Thread</tspan></text>
+      <g
+         id="g21-9">
+        <rect
+           style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+           id="rect9-4"
+           width="41.961376"
+           height="29.074259"
+           x="178.59691"
+           y="110.50803" />
+        <text
+           xml:space="preserve"
+           style="font-size:5.64444px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+           x="179.95312"
+           y="116.84717"
+           id="text11-6"><tspan
+             sodipodi:role="line"
+             id="tspan11-9"
+             style="font-size:5.64444px;stroke-width:0.264583"
+             x="179.95312"
+             y="116.84717">Client</tspan></text>
+      </g>
+      <g
+         id="g20-2"
+         transform="translate(0.62615798,0.26835342)">
+        <rect
+           style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+           id="rect10-2"
+           width="19.921928"
+           height="9.5076303"
+           x="180.28989"
+           y="127.43129"
+           ry="1.7890228" />
+        <text
+           xml:space="preserve"
+           style="font-size:5.64444px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+           x="181.41855"
+           y="134.12823"
+           id="text10-47"><tspan
+             sodipodi:role="line"
+             id="tspan10-7"
+             style="font-size:5.64444px;stroke-width:0.264583"
+             x="181.41855"
+             y="134.12823">Wasm</tspan></text>
+      </g>
+    </g>
+    <rect
+       style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       id="rect11"
+       width="190.84752"
+       height="69.250389"
+       x="169.50961"
+       y="227.22786" />
+    <text
+       xml:space="preserve"
+       style="font-size:10.5833px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+       x="176.59824"
+       y="244.1315"
+       id="text12"><tspan
+         sodipodi:role="line"
+         id="tspan12"
+         style="stroke-width:0.264583"
+         x="176.59824"
+         y="244.1315">Rayon Threadpool</tspan></text>
+    <g
+       id="g14"
+       transform="translate(37.55218,3.6636273)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13"><tspan
+           sodipodi:role="line"
+           id="tspan13"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-2"
+       transform="translate(54.979013,18.466057)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-0"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-2"><tspan
+           sodipodi:role="line"
+           id="tspan13-3"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-7">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-8"
+       transform="translate(60.799752,-4.5182204)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-9"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-7"><tspan
+           sodipodi:role="line"
+           id="tspan13-36"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-1">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-9"
+       transform="translate(77.511946,16.479486)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-4"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-78"><tspan
+           sodipodi:role="line"
+           id="tspan13-4"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-5">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-0"
+       transform="translate(83.861899,-4.2536371)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-6"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-3"><tspan
+           sodipodi:role="line"
+           id="tspan13-2"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-0">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-4"
+       transform="translate(96.679056,19.389856)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-7"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-6"><tspan
+           sodipodi:role="line"
+           id="tspan13-5"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-6">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-5"
+       transform="translate(107.36647,-3.754834)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-2"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-5"><tspan
+           sodipodi:role="line"
+           id="tspan13-47"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-4">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-86"
+       transform="translate(120.02746,18.557101)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-8"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-8"><tspan
+           sodipodi:role="line"
+           id="tspan13-43"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-14">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-89"
+       transform="translate(129.7346,-6.5438437)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-26"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-64"><tspan
+           sodipodi:role="line"
+           id="tspan13-9"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-50">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-7"
+       transform="translate(143.78358,-23.750402)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-27"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-22"><tspan
+           sodipodi:role="line"
+           id="tspan13-6"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-10">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-49"
+       transform="translate(169.14457,-22.752702)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-09"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-1"><tspan
+           sodipodi:role="line"
+           id="tspan13-7"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-71">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-76"
+       transform="translate(155.58991,-1.5252136)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-73"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-65"><tspan
+           sodipodi:role="line"
+           id="tspan13-63"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-9">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-93"
+       transform="translate(143.57089,18.210115)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-90"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-88"><tspan
+           sodipodi:role="line"
+           id="tspan13-50"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-96">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-1"
+       transform="translate(167.44431,21.658293)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-1"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-59"><tspan
+           sodipodi:role="line"
+           id="tspan13-8"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-48">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-44"
+       transform="translate(177.8584,-0.0680452)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-44"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-76"><tspan
+           sodipodi:role="line"
+           id="tspan13-31"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-75">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-78"
+       transform="translate(190.45432,-17.127177)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-5"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-74"><tspan
+           sodipodi:role="line"
+           id="tspan13-1"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-8">Thread</tspan></text>
+    </g>
+    <g
+       id="g14-3"
+       transform="translate(190.8056,17.446823)">
+      <circle
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="path12-88"
+         cx="153.2233"
+         cy="263.91486"
+         r="10.905573" />
+      <text
+         xml:space="preserve"
+         style="font-size:3.88056px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="146.44113"
+         y="263.38757"
+         id="text13-31"><tspan
+           sodipodi:role="line"
+           id="tspan13-89"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="263.38757">Fetch</tspan><tspan
+           sodipodi:role="line"
+           style="font-size:3.88056px;stroke-width:0.264583"
+           x="146.44113"
+           y="268.23828"
+           id="tspan14-64">Thread</tspan></text>
+    </g>
+    <path
+       style="fill:none;stroke:#000000;stroke-width:1.165;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Triangle)"
+       d="M 360.75889,243.86563 402.54552,197.5308"
+       id="path14" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.865;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Triangle)"
+       d="M 336.02803,225.38855 389.75368,192.9826"
+       id="path15" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.865;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Triangle)"
+       d="m 315.56113,223.68297 71.63419,-37.23841"
+       id="path16" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.865;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Triangle)"
+       d="m 361.3274,227.94691 32.40596,-30.98463"
+       id="path17" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.865;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Triangle)"
+       d="m 350.24118,225.95707 40.08104,-29.84758"
+       id="path18" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.865;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Triangle)"
+       d="M 326.36309,225.10429 385.774,190.99276"
+       id="path19" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.865;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Triangle)"
+       d="m 361.61167,255.23614 45.48204,-56.28402"
+       id="path20" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.865;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Triangle)"
+       d="m 307.43861,121.67382 79.45498,50.53858"
+       id="path22" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.865;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Triangle)"
+       d="m 255.07648,123.49738 130.51457,53.40416"
+       id="path23" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:3, 1;stroke-dashoffset:0;stroke-opacity:1;marker-start:url(#DartArrow);marker-end:url(#DartArrow)"
+       d="M 407.36202,162.3688 362.071,64.436792"
+       id="path25"
+       sodipodi:nodetypes="cc" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.865;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#Triangle)"
+       d="m 202.71434,122.71585 176.88503,57.31179"
+       id="path24" />
+    <g
+       id="g25"
+       transform="translate(18.795594,-11.185337)">
+      <rect
+         style="opacity:0.981265;fill:#e7e7e7;fill-opacity:1;stroke:#000000;stroke-width:0.865;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="rect24"
+         width="38.833473"
+         height="6.3078961"
+         x="314.358"
+         y="60.807625" />
+      <text
+         xml:space="preserve"
+         style="font-size:4.93889px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="343.0892"
+         y="132.07762"
+         id="text24"><tspan
+           sodipodi:role="line"
+           id="tspan24"
+           style="font-size:4.93889px;stroke-width:0.264583"
+           x="343.0892"
+           y="132.07762">Async Read and Write</tspan></text>
+    </g>
+    <text
+       xml:space="preserve"
+       transform="scale(0.26458333)"
+       id="text25"
+       style="line-height:1.25;font-family:sans-serif;font-size:40px;text-orientation:auto;white-space:pre;shape-inside:url(#rect25)" />
+    <text
+       xml:space="preserve"
+       transform="matrix(0.26458333,0,0,0.26458333,0.837379,2.7912633)"
+       id="text1"
+       style="font-size:24px;line-height:1.25;font-family:sans-serif;white-space:pre;shape-inside:url(#rect12)"><tspan
+         x="1563.459"
+         y="581.42188"
+         id="tspan5">1x DB Writer
+</tspan><tspan
+         x="1563.459"
+         y="611.42188"
+         id="tspan6">Nx DB Readers</tspan></text>
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.665;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;stroke-dasharray:0.66500002, 1.99500006;stroke-dashoffset:0;marker-end:url(#DartArrow)"
+       d="m 280.8011,59.174781 -88.76219,25.95875"
+       id="path21"
+       sodipodi:nodetypes="cc" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.665;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:0.665, 1.995;stroke-dashoffset:0;stroke-opacity:1;marker-end:url(#DartArrow)"
+       d="M 290.01227,59.174781 245.07292,84.017027"
+       id="path26"
+       sodipodi:nodetypes="cc" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:0.665;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:0.665, 1.995;stroke-dashoffset:0;stroke-opacity:1;marker-end:url(#DartArrow)"
+       d="m 297.8278,58.616529 -6.41991,23.167485"
+       id="path27"
+       sodipodi:nodetypes="cc" />
+    <text
+       xml:space="preserve"
+       style="font-size:3.52778px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+       x="336.90549"
+       y="53.87138"
+       id="text27"><tspan
+         sodipodi:role="line"
+         id="tspan27"
+         style="font-size:3.52778px;stroke-width:0.264583"
+         x="336.90549"
+         y="53.87138">Complete Cache</tspan></text>
+  </g>
+</svg>

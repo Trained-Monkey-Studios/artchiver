@@ -201,6 +201,8 @@ impl UxTag {
                     db.get_tags();
                 }
                 DataUpdate::WorksWereUpdatedForTag { .. } => {
+                    // Note: whenever we fetch more works, the tag counts on unrelated tags will
+                    //       change. We need to do a full recount.
                     db.get_tag_local_counts();
                 }
                 DataUpdate::TagFavoriteStatusChanged { tag_id, favorite } => {

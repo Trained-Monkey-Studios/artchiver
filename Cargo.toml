@@ -11,7 +11,14 @@ all-features = true
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [workspace]
-exclude = ["plugins/artchiver_sdk", "plugins/artx-met", "plugins/artx-nga", "plugins/artx-demo"]
+exclude = [
+    "plugins/artchiver_sdk",
+    "plugins/artx-demo",
+    "plugins/artx-feed",
+    "plugins/artx-met",
+    "plugins/artx-nga",
+    "plugins/artx-podcast"
+]
 members = []
 
 [dependencies]
@@ -46,12 +53,14 @@ anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
 egui = "0.32"
-egui_dock = { version = "0.17", features = ["serde"] }
+egui-video = { path = "../egui-video", default-features = false, features = ["from_bytes"] }
 egui_dnd = "0.13"
+egui_dock = { version = "0.17", features = ["serde"] }
 egui_extras = { version = "0.32", features = ["image", "file", "gif", "webp"] } # matching bevy_egui
 egui_plot = "0.33"
-#egui-video = { version = "0.9", default-features = false }
+env_logger = "0.11.8"
 extism = "1.0"
+ffmpeg-the-third = "3.0.2"
 io_tee = "0.1"
 itertools = "0.14"
 jiff = { version ="0.2", features = ["serde"] }
@@ -66,14 +75,14 @@ rand = "0.9" # as pulled in by glam 29.2
 rayon = "1.10"
 ringbuffer = "0.16"
 rusqlite = { version = "0.37", features = ["array", "bundled", "extra_check", "load_extension", "jiff", "rusqlite-macros", "vtab"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0"
 sha2 = "0.10"
+thiserror = "2.0"
 ureq = { version = "3.0", features = ["json"] }
 
+# Local deps
 artchiver_sdk = { path = "plugins/artchiver_sdk" }
-
-# You only need serde if you want app persistence:
-serde = { version = "1.0.219", features = ["derive"] }
-env_logger = "0.11.8"
 
 [profile.release]
 opt-level = 2 # fast and small wasm

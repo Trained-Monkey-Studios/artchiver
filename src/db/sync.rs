@@ -1,5 +1,6 @@
 use crate::{
     db::{
+        model::DbCancellation,
         models::{
             plugin::{DbPlugin, PluginId},
             tag::TagId,
@@ -10,6 +11,7 @@ use crate::{
     shared::{environment::Environment, progress::ProgressMonitor},
 };
 use anyhow::Result;
+use artchiver_sdk::ConfigValue;
 use crossbeam::channel;
 use log::{error, info};
 use r2d2_sqlite::SqliteConnectionManager;
@@ -19,7 +21,7 @@ use std::{collections::HashSet, thread};
 pub fn connect_or_create(
     env: &Environment,
     progress_mon: &ProgressMonitor,
-) -> Result<(DbSyncHandle, DbWriteHandle, DbReadHandle)> {
+) -> Result<(DbSyncHandle, DbWriteHandle, DbReadHandle, DbCancellation)> {
     info!(
         "Opening Metadata DB at {}",
         env.metadata_file_path().display()
@@ -28,6 +30,7 @@ pub fn connect_or_create(
         .with_init(|conn| rusqlite::vtab::array::load_module(conn));
     let pool = r2d2::Pool::builder().max_size(32).build(manager)?;
     let conn = pool.get()?;
+    let cancel = DbCancellation::default();
     // FIXME: use library intrinsics to set these rather than `execute`
     let params = [("journal_mode", "WAL", "wal")];
     for (name, value, expect) in params {
@@ -74,6 +77,7 @@ pub fn connect_or_create(
     let (tx_to_writer, rx_writer_from_app) = channel::unbounded();
     let mut writer = DbBgWriter::new(
         pool.clone(),
+        cancel.clone(),
         rx_writer_from_app,
         progress_mon.monitor_channel(),
     );
@@ -90,6 +94,7 @@ pub fn connect_or_create(
         .build()?;
     let db_reader = DbReadHandle::new(
         pool.clone(),
+        cancel.clone(),
         reader_pool,
         progress_mon.monitor_channel(),
         writer_handle,
@@ -97,7 +102,7 @@ pub fn connect_or_create(
 
     let db_sync = DbSyncHandle { pool: pool.clone() };
 
-    Ok((db_sync, db_writer, db_reader))
+    Ok((db_sync, db_writer, db_reader, cancel))
 }
 
 #[derive(Clone, Debug)]
@@ -122,10 +127,17 @@ impl DbSyncHandle {
                 |row| row.get(0),
             )?
         };
-        let configs: Vec<(String, String)> = conn
+        let configs: Vec<(String, ConfigValue)> = conn
             .prepare("SELECT key, value FROM plugin_configurations WHERE plugin_id = ?")?
             .query_map(params![plugin_id], |row| {
-                Ok((row.get("key")?, row.get("value")?))
+                let key = row.get("key")?;
+                let val = row.get::<&str, String>("value")?;
+                let config = if let Ok(config) = serde_json::from_str(&val) {
+                    config
+                } else {
+                    ConfigValue::String(val)
+                };
+                Ok((key, config))
             })?
             .flatten()
             .collect();
@@ -149,17 +161,18 @@ impl DbSyncHandle {
     pub fn sync_save_configurations(
         &self,
         plugin_id: PluginId,
-        configs: &[(String, String)],
+        configs: &[(String, ConfigValue)],
     ) -> Result<()> {
         let mut conn = self.pool.get()?;
         let xaction = conn.transaction()?;
         for (k, v) in configs {
+            let vs = serde_json::to_string(v)?;
             xaction.execute(
                 r#"INSERT INTO plugin_configurations (plugin_id, key, value)
                         VALUES (?, ?, ?)
                         ON CONFLICT (plugin_id, key)
                         DO UPDATE SET value=?"#,
-                params![plugin_id, k, v, v],
+                params![plugin_id, k, vs, vs],
             )?;
         }
         xaction.commit()?;

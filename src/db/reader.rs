@@ -1,6 +1,6 @@
 use crate::{
     db::{
-        model::report_slow_query,
+        model::{DbCancellation, report_slow_query},
         models::{
             tag::{DbTag, TagId},
             work::{DbWork, WorkId},
@@ -23,6 +23,8 @@ use std::{collections::HashMap, mem, thread, thread::JoinHandle, time::Instant};
 #[derive(Debug)]
 pub struct DbReadHandle {
     pool: r2d2::Pool<SqliteConnectionManager>,
+    #[expect(unused)]
+    db_cancellation: DbCancellation,
     reader_threads: ThreadPool,
 
     log: LogSender,
@@ -37,12 +39,14 @@ pub struct DbReadHandle {
 impl DbReadHandle {
     pub fn new(
         pool: r2d2::Pool<SqliteConnectionManager>,
+        db_cancellation: DbCancellation,
         reader_threads: ThreadPool,
         tx_to_app: Sender<DataUpdate>,
         writer_handle: JoinHandle<()>,
     ) -> Self {
         Self {
             pool,
+            db_cancellation,
             reader_threads,
 
             log: LogSender::wrap(UpdateSource::DbReader, tx_to_app.clone()),
@@ -67,6 +71,7 @@ impl DbReadHandle {
 
     pub fn get_tags(&self) {
         let conn = self.pool.get().expect("failed to get connection");
+        let mut log = self.log.clone();
         let mut host = self.host.clone();
         self.reader_threads.spawn(move || {
             let tags = list_all_tags(&conn).expect("failed to list tags");
@@ -79,21 +84,16 @@ impl DbReadHandle {
                 .expect("db reader disconnect");
             trace!("Dispatched initial tags to UX; getting counts");
 
-            let work_counts = count_works_per_tag(&conn).expect("failed to count works per tag");
-            host.fetch_tags_local_counts_complete(work_counts)
-                .expect("db reader disconnect");
-            trace!("Dispatching tag local counts to UX");
+            count_works_per_tag(&conn, &mut log, &mut host).expect("failed to count works per tag");
         });
     }
 
     pub fn get_tag_local_counts(&self) {
         let conn = self.pool.get().expect("failed to get connection");
+        let mut log = self.log.clone();
         let mut host = self.host.clone();
         self.reader_threads.spawn(move || {
-            let work_counts = count_works_per_tag(&conn).expect("failed to count works per tag");
-            host.fetch_tags_local_counts_complete(work_counts)
-                .expect("db reader disconnect");
-            trace!("Dispatching tag local counts to UX");
+            count_works_per_tag(&conn, &mut log, &mut host).expect("failed to count works per tag");
         });
     }
 
@@ -211,12 +211,14 @@ pub fn list_all_tags(conn: &PooledConnection<SqliteConnectionManager>) -> Result
 
 pub fn count_works_per_tag(
     conn: &PooledConnection<SqliteConnectionManager>,
-) -> Result<Vec<(TagId, u64)>> {
+    log: &mut LogSender,
+    host: &mut HostUpdateSender,
+) -> Result<()> {
     let query = r#"SELECT tags.id, COUNT(work_tags.id)
     FROM tags
     LEFT JOIN work_tags ON tags.id == work_tags.tag_id
     GROUP BY tags.id;"#;
-    let out = conn
+    let work_counts = conn
         .prepare(query)?
         .query_map((), |row| {
             let tag_id = TagId::wrap(row.get(0)?);
@@ -225,5 +227,10 @@ pub fn count_works_per_tag(
         })?
         .flatten()
         .collect();
-    Ok(out)
+
+    host.fetch_tags_local_counts_complete(work_counts)
+        .expect("db reader disconnect");
+    log.trace("Dispatching tag local counts to UX");
+
+    Ok(())
 }

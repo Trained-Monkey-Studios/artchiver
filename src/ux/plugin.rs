@@ -1,4 +1,5 @@
 use crate::plugin::host::{PluginHandle, PluginHost};
+use artchiver_sdk::ConfigValue;
 use egui::{Margin, TextWrapMode};
 use egui_dnd::{DragUpdate, dnd};
 use log::Level;
@@ -55,12 +56,32 @@ impl UxPlugin {
                         ui.end_row();
                         if let Some(meta) = plugin.metadata_mut() {
                             for (config_key, config_val) in meta.configurations_mut() {
-                                ui.label(config_key);
-                                ui.text_edit_singleline(config_val);
-                                ui.end_row();
+                                match config_val {
+                                    ConfigValue::String(s) => {
+                                        ui.label(config_key);
+                                        ui.text_edit_singleline(s);
+                                        ui.end_row();
+                                    }
+                                    ConfigValue::StringList(v) => {
+                                        ui.label(config_key);
+                                        if ui.button("Add Item").clicked() {
+                                            v.push(String::new());
+                                        }
+                                        ui.end_row();
+
+                                        for (i, s) in v.iter_mut().enumerate() {
+                                            ui.label(format!("Item {i}"));
+                                            ui.text_edit_singleline(s);
+                                            ui.end_row();
+                                        }
+                                    }
+                                }
                             }
-                            if !meta.configurations().is_empty() && ui.button("Update").clicked() {
-                                plugin.apply_configuration()?;
+                            if !meta.configurations().is_empty() {
+                                ui.label("");
+                                if ui.button("Update").clicked() {
+                                    plugin.apply_configuration()?;
+                                }
                             }
                         }
                         Ok(())

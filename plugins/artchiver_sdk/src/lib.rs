@@ -1,5 +1,7 @@
+use anyhow::{Result, bail};
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
+pub use serde_json;
 use std::{
     cmp::Ordering,
     fmt,
@@ -70,7 +72,52 @@ macro_rules! import_section {
                 }
             }
         }
+
+        pub struct Config;
+        impl Config {
+            pub fn get_string(name: impl AsRef<str>) -> FnResult<String> {
+                let raw =
+                    config::get(name)?.ok_or_else(|| extism_pdk::Error::msg("no such config"))?;
+                let val = $crate::serde_json::from_str::<ConfigValue>(&raw)?;
+                Ok(val.as_string()?.to_owned())
+            }
+
+            pub fn get_string_list(name: impl AsRef<str>) -> FnResult<Vec<String>> {
+                let raw =
+                    config::get(name)?.ok_or_else(|| extism_pdk::Error::msg("no such config"))?;
+                let val = $crate::serde_json::from_str::<ConfigValue>(&raw)?;
+                Ok(val.as_string_list()?.to_vec())
+            }
+        }
     };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ConfigKind {
+    String,
+    StringList,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum ConfigValue {
+    String(String),
+    StringList(Vec<String>),
+}
+
+impl ConfigValue {
+    pub fn as_string(&self) -> Result<&str> {
+        match self {
+            ConfigValue::String(s) => Ok(s),
+            _ => bail!("not a string"),
+        }
+    }
+
+    pub fn as_string_list(&self) -> Result<&[String]> {
+        match self {
+            ConfigValue::StringList(v) => Ok(v),
+            _ => bail!("not a string list"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -80,7 +127,8 @@ pub struct PluginMetadata {
     description: String,
     rate_limit_n: u32,   // requests per window
     rate_window_ms: u32, // window time in milliseconds
-    configurations: Vec<(String, String)>,
+    cache_timeout: Duration,
+    configurations: Vec<(String, ConfigValue)>,
 }
 
 impl PluginMetadata {
@@ -91,6 +139,7 @@ impl PluginMetadata {
             description: description.to_string(),
             rate_limit_n: 1,
             rate_window_ms: 1,
+            cache_timeout: Duration::from_secs(7 * 24 * 60 * 60),
             configurations: Vec::new(),
         }
     }
@@ -101,15 +150,25 @@ impl PluginMetadata {
         self
     }
 
-    pub fn with_configuration(mut self, name: &str) -> Self {
-        self.configurations.push((name.to_string(), String::new()));
+    pub fn with_cache_timeout(mut self, timeout: Duration) -> Self {
+        self.cache_timeout = timeout;
         self
     }
 
-    pub fn set_config_value(&mut self, key: &str, value: &str) {
+    pub fn with_configuration(mut self, name: &str, kind: ConfigKind) -> Self {
+        let val = match kind {
+            ConfigKind::String => ConfigValue::String(String::new()),
+            ConfigKind::StringList => ConfigValue::StringList(Vec::new()),
+        };
+        self.configurations.push((name.to_string(), val));
+        self
+    }
+
+    pub fn set_config_value(&mut self, key: &str, value: ConfigValue) {
         for (k, v) in self.configurations_mut() {
             if key == k {
-                *v = value.to_string();
+                *v = value;
+                break;
             }
         }
     }
@@ -134,11 +193,11 @@ impl PluginMetadata {
         Duration::from_millis(self.rate_window_ms.into())
     }
 
-    pub fn configurations(&self) -> &[(String, String)] {
+    pub fn configurations(&self) -> &[(String, ConfigValue)] {
         &self.configurations
     }
 
-    pub fn configurations_mut(&mut self) -> impl Iterator<Item = (&str, &mut String)> {
+    pub fn configurations_mut(&mut self) -> impl Iterator<Item = (&str, &mut ConfigValue)> {
         self.configurations.iter_mut().map(|(k, v)| (k.as_str(), v))
     }
 }
@@ -213,7 +272,7 @@ impl Eq for Tag {}
 
 impl PartialOrd for Tag {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.name.partial_cmp(&other.name)
+        Some(self.cmp(other))
     }
 }
 

@@ -30,11 +30,14 @@
 
             # misc. libraries
             clang
+            cmake
             libclang
             pkg-config
             mold-wrapped
             ffmpeg.dev
-            SDL2
+            pipewire.dev
+            libffi.dev
+            SDL2.dev
 
             # GUI libs
             libxkbcommon
@@ -49,6 +52,7 @@
             xorg.libXrandr
             xorg.libXi
             xorg.libX11
+            libdrm.dev
           ];
 
           packages = [

@@ -11,7 +11,6 @@ use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use log::log;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, path::Path, time::Instant};
-// use egui_video::{AudioDevice, Player};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TabMetadata {
@@ -75,7 +74,7 @@ impl WorkSelection {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct UxState {
     // Window and display state
     mode: UxMode,
@@ -199,19 +198,11 @@ pub enum UxMode {
     Slideshow,
 }
 
-// fn init_audio_device() -> AudioDevice {
-//     AudioDevice::new().expect("Failed to create audio output")
-// }
-
 #[derive(Serialize, Deserialize)]
 pub struct UxToplevel {
     dock_state: DockState<TabMetadata>,
     state: UxState,
     errors: Vec<String>,
-    // #[serde(skip, default = "init_audio_device")]
-    // audio_device: AudioDevice,
-    // #[serde(skip, default)]
-    // video_player: Option<Player>,
 }
 
 impl Default for UxToplevel {
@@ -234,8 +225,6 @@ impl Default for UxToplevel {
             dock_state,
             state: UxState::default(),
             errors: Vec::new(),
-            // audio_device: init_audio_device(),
-            // video_player: None,
         }
     }
 }

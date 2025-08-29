@@ -1,11 +1,17 @@
 use crate::shared::plugin::PluginCancellation;
-use anyhow::{Result, bail};
 use parking_lot::Mutex;
 use std::{
     sync::Arc,
     thread::sleep,
     time::{Duration, Instant},
 };
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ThrottleError {
+    #[error("download was cancelled")]
+    Cancelled,
+}
 
 #[derive(Debug)]
 struct CallingThrottleData {
@@ -36,11 +42,11 @@ impl CallingThrottle {
         }
     }
 
-    pub fn throttle(&self, cancellation: &PluginCancellation) -> Result<()> {
+    pub fn throttle(&self, cancellation: &PluginCancellation) -> Result<(), ThrottleError> {
         let mut data = self.lock.lock();
         while data.timestamps.len() == data.nb_call_times_limit {
             if cancellation.is_cancelled() {
-                bail!("cancelled");
+                return Err(ThrottleError::Cancelled);
             }
             let now = Instant::now();
             let timeout = data.expired_time;

@@ -1,0 +1,16 @@
+[package]
+name = "artx-podcast"
+description = "Plugin for Artchiver to access Podcasts via RSS."
+license = "GPL-3"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+artchiver_sdk = { path = "../artchiver_sdk" }
+extism-pdk = "1.4"
+jiff = "0.2"
+serde = "1.0"
+rss = "2.0"

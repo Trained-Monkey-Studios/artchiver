@@ -1,5 +1,3 @@
-use crate::plugin::host::PluginHost;
-use crate::shared::tag::TagRefresh;
 use crate::{
     db::{
         models::{
@@ -8,27 +6,31 @@ use crate::{
         },
         {model::OrderDir, reader::DbReadHandle, writer::DbWriteHandle},
     },
-    shared::{performance::PerfTrack, tag::TagSet, update::DataUpdate},
+    plugin::{host::PluginHost, thumbnail::is_image},
+    shared::{
+        performance::PerfTrack,
+        tag::{TagRefresh, TagSet},
+        update::DataUpdate,
+    },
 };
+use anyhow::Result;
 use egui::{Key, Margin, Modifiers, PointerButton, Rect, Sense, SizeHint, Vec2, include_image};
+use egui_video::{AudioDevice, Player};
 use itertools::Itertools as _;
 use log::{info, trace};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum WorkSize {
-    // Thumbnail,
-    Preview,
-    Screen,
-    // Archive
+#[derive(Debug)]
+pub enum DisplayKind<'a> {
+    Image(egui::Image<'a>),
+    MediaPlayer,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -163,13 +165,17 @@ pub enum ScrollRequestKind {
     LeaveSlideshow,
 }
 
+fn init_audio_device() -> AudioDevice {
+    AudioDevice::new().expect("Failed to create audio output")
+}
+
 /// Work caching strategy:
 ///
 /// Works are unbounded, but plan to scale to O(10-100M) works. This is too much for us to just
 /// read everything, so we have to read blocks of the potentially visible set, based on what
 /// is active in the tag set. Changing tag sets triggers a re-read of the database, but it would
 /// be nice if we could just show everything if there are no tags.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct UxWork {
     // Offset into work_filtered.
@@ -211,6 +217,12 @@ pub struct UxWork {
 
     #[serde(skip, default = "LruCache::unbounded")]
     works_lru: LruCache<String, u32>,
+
+    #[serde(skip, default = "init_audio_device")]
+    audio_device: AudioDevice,
+
+    #[serde(skip, default)]
+    video_player: Option<Player>,
 }
 
 impl Default for UxWork {
@@ -230,6 +242,8 @@ impl Default for UxWork {
             work_filtered: Vec::new(),
             data_dir: PathBuf::new(),
             works_lru: LruCache::unbounded(),
+            audio_device: init_audio_device(),
+            video_player: None,
         }
     }
 }
@@ -339,16 +353,19 @@ impl UxWork {
 
     pub fn set_selected(&mut self, selected: usize) {
         self.selected = Some(selected);
+        self.video_player = None;
         self.slide_xform = ZoomPan::default();
     }
 
     pub fn clear_selected(&mut self) {
         self.selected = None;
+        self.video_player = None;
         self.slide_xform = ZoomPan::default();
     }
 
     pub fn on_leave_slideshow(&mut self) {
         self.scroll_to_selected = ScrollRequestKind::LeaveSlideshow;
+        self.video_player = None;
     }
 
     fn ensure_works_up_to_date_with_tag_selection(
@@ -794,7 +811,7 @@ impl UxWork {
                             let is_selected = self.selected == Some(work_offset);
 
                             let img = self
-                                .get_best_image(work, WorkSize::Preview)
+                                .get_preview_image(work)
                                 .alt_text(work.name())
                                 .show_loading_spinner(true)
                                 .maintain_aspect_ratio(true);
@@ -833,9 +850,6 @@ impl UxWork {
                             frm.show(ui, |ui| {
                                 rsz.show(ui, |ui| {
                                     let resp = ui.add(btn);
-                                    // if is_selected {
-                                    //     resp.scroll_to_me(None);
-                                    // }
                                     if resp.clicked() {
                                         self.selected = Some(work_offset);
                                         self.slide_xform = ZoomPan::default();
@@ -869,19 +883,20 @@ impl UxWork {
             for offset in work_offset.saturating_sub(10)
                 ..work_offset
                     .saturating_add(10)
-                    .min(self.work_filtered.len() - 1)
+                    .min(self.work_filtered.len().saturating_sub(1))
             {
                 self.ensure_work_cached(ui.ctx(), offset);
             }
             self.flush_works_lru(ui.ctx());
 
-            // let work = &self.work_matching_tag[self.work_filtered[work_offset]];
-            if let Some(works) = self.work_matching_tag.as_ref() {
-                if let Some(work) = works.get(&self.work_filtered[work_offset]) {
-                    let img = self
-                        .get_best_image(work, WorkSize::Screen)
-                        .show_loading_spinner(false)
-                        .maintain_aspect_ratio(true);
+            // if let Some(work) = self.get_selected_work() {
+            match self.get_screen_image(ui.ctx()) {
+                Err(err) => {
+                    println!("Error: {}", err.backtrace());
+                    ui.label(format!("Error loading media: {err:#?}"));
+                }
+                Ok(DisplayKind::Image(img)) => {
+                    let img = img.show_loading_spinner(false).maintain_aspect_ratio(true);
 
                     let avail = ui.available_size() * self.slide_xform.zoom;
                     if let Some(size) = img.load_and_calc_size(ui, avail) {
@@ -898,12 +913,62 @@ impl UxWork {
                             .translate(self.slide_xform.pan);
                         img.paint_at(ui, rect);
                     }
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{work_offset} of {}", self.work_filtered.len()));
-                        if work.favorite() {
-                            ui.label("✨");
-                        }
-                    });
+                    self.draw_offset_label(ui, work_offset);
+                }
+                Ok(DisplayKind::MediaPlayer) => {
+                    let (src, _elapsed) = if let Some(player) = self.video_player.as_ref() {
+                        (player.size, player.elapsed_ms())
+                    } else {
+                        (ui.available_size(), 0)
+                    };
+
+                    // FIXME: store aside elapsed into a state that will get saved between runs
+                    //        so that when we start up again we'll resume in a podcast where we
+                    //        left off.
+
+                    let dst = ui.available_size();
+                    let scale = (dst.x / src.x).min(dst.y / src.y);
+                    let pad = (dst - src * scale) / 2.;
+                    if pad.x > 0. {
+                        ui.horizontal(|ui| {
+                            let v = Vec2::new(pad.x, dst.y);
+                            egui::Resize::default()
+                                .min_size(v)
+                                .max_size(v)
+                                .default_size(v)
+                                .resizable([false, false])
+                                .show(ui, |ui| {
+                                    // FIXME: figure out how to overlay the work offset label
+                                    ui.label("");
+                                });
+                            if let Some(player) = self.video_player.as_mut() {
+                                player.ui(ui, src * scale);
+                                // player.subtitle_streamer.as_ref().map(|ss| ss.lock())
+                            }
+                        });
+                    } else {
+                        ui.vertical(|ui| {
+                            let v = Vec2::new(dst.x, pad.y);
+                            egui::Resize::default()
+                                .min_size(v)
+                                .max_size(v)
+                                .default_size(v)
+                                .resizable([false, false])
+                                .show(ui, |ui| {
+                                    // self.draw_offset_label(ui, work_offset);
+                                    ui.label(format!(
+                                        "{work_offset} of {} {}",
+                                        self.work_filtered.len(),
+                                        self.get_selected_work()
+                                            .map(|w| w.favorite_annotation())
+                                            .unwrap_or_default()
+                                    ));
+                                });
+                            if let Some(player) = self.video_player.as_mut() {
+                                player.ui(ui, src * scale);
+                            }
+                        });
+                    }
                 }
             }
         });
@@ -929,27 +994,55 @@ impl UxWork {
         }
     }
 
-    fn get_best_image<'b>(&self, work: &'b DbWork, req_sz: WorkSize) -> egui::Image<'b> {
-        if matches!(req_sz, WorkSize::Screen)
-            && let Some(screen_path) = work.screen_path()
-        {
-            let screen_uri = format!("file://{}", self.data_dir.join(screen_path).display());
-            if self.works_lru.contains(&screen_uri) {
-                return egui::Image::new(screen_uri);
-            }
-            // Note: Fall through to try to load the preview image
-        }
+    fn draw_offset_label(&self, ui: &mut egui::Ui, offset: usize) {
+        ui.label(format!(
+            "{offset} of {} {}",
+            self.work_filtered.len(),
+            self.get_selected_work()
+                .map(|w| w.favorite_annotation())
+                .unwrap_or_default()
+        ));
+    }
 
+    fn get_preview_image<'b>(&self, work: &'b DbWork) -> egui::Image<'b> {
         if let Some(preview_path) = work.preview_path() {
             let preview_uri = format!("file://{}", self.data_dir.join(preview_path).display());
             // println!("Would show: {preview_uri}: {}", self.state.works_lru.contains(&preview_uri));
             if self.works_lru.contains(&preview_uri) {
                 return egui::Image::new(preview_uri);
             }
-            // Note: fall through to load a fallback image
+        }
+        egui::Image::new(include_image!("../../assets/loading-preview.png"))
+    }
+
+    fn get_screen_image<'b>(&mut self, ctx: &egui::Context) -> Result<DisplayKind<'b>> {
+        if let Some(work) = self.get_selected_work()
+            && let Some(screen_path) = work.screen_path()
+        {
+            let screen_path = self.data_dir.join(screen_path);
+            let screen_path_str = screen_path.display().to_string();
+            let screen_uri = format!("file://{screen_path_str}");
+            if is_image(&screen_path) {
+                if self.works_lru.contains(&screen_uri) {
+                    return Ok(DisplayKind::Image(egui::Image::new(screen_uri)));
+                }
+            } else if self.video_player.is_none() {
+                self.video_player = Some(
+                    Player::new(ctx, &screen_path_str)?
+                        .with_audio(&mut self.audio_device)?
+                        .with_subtitles()?,
+                );
+                self.video_player.as_mut().expect("created").start();
+                return Ok(DisplayKind::MediaPlayer);
+            } else {
+                return Ok(DisplayKind::MediaPlayer);
+            }
         }
 
-        egui::Image::new(include_image!("../../assets/loading-preview.png"))
+        // Note: Fall through to try to load the preview image so we have something to show.
+        Ok(DisplayKind::Image(egui::Image::new(include_image!(
+            "../../assets/loading-preview.png"
+        ))))
     }
 
     fn ensure_work_cached(
@@ -981,6 +1074,7 @@ impl UxWork {
             .as_ref()
             .expect("no work after check")[&self.work_filtered[work_offset]]
             .screen_path()
+            && is_image(screen_path)
         {
             let screen_uri = format!("file://{}", self.data_dir.join(screen_path).display());
             if !self.works_lru.contains(&screen_uri) {
@@ -995,6 +1089,8 @@ impl UxWork {
             .expect("no work after check")[&self.work_filtered[work_offset]]
             .preview_path()
         {
+            // Note: non-image previews will just show up as an error icon; the thumbnailing
+            //       should already have happened out of line.
             let preview_uri = format!("file://{}", self.data_dir.join(preview_path).display());
             if !self.works_lru.contains(&preview_uri) {
                 ctx.try_load_image(&preview_uri, size_hint).ok();

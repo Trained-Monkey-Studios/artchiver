@@ -16,6 +16,7 @@ dependencies = [
  "extism-pdk",
  "jiff",
  "serde",
+ "serde_json",
  "thiserror",
  "ureq",
  "urlencoding",

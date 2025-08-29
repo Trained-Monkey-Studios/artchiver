@@ -1,6 +1,6 @@
 use crate::{
     db::{
-        model::string_to_rarray,
+        model::{DbCancellation, string_to_rarray},
         models::{plugin::PluginId, tag::TagId, work::WorkId},
     },
     shared::{
@@ -126,6 +126,7 @@ impl DbWriteHandle {
 
 pub struct DbBgWriter {
     pool: r2d2::Pool<SqliteConnectionManager>,
+    db_cancellation: DbCancellation,
     rx_from_app: Receiver<DbWriterRequest>,
     tx_to_app: Sender<DataUpdate>,
 }
@@ -133,11 +134,13 @@ pub struct DbBgWriter {
 impl DbBgWriter {
     pub fn new(
         pool: r2d2::Pool<SqliteConnectionManager>,
+        db_cancellation: DbCancellation,
         rx_from_app: Receiver<DbWriterRequest>,
         tx_to_app: Sender<DataUpdate>,
     ) -> Self {
         Self {
             pool,
+            db_cancellation,
             rx_from_app,
             tx_to_app,
         }
@@ -180,7 +183,13 @@ impl DbBgWriter {
                 for_tag,
                 works,
             } => {
-                upsert_works(self.pool.get()?, &works, &mut log, &mut progress)?;
+                upsert_works(
+                    self.pool.get()?,
+                    &self.db_cancellation,
+                    &works,
+                    &mut log,
+                    &mut progress,
+                )?;
                 host.note_works_were_refreshed(for_tag)?;
             }
             DbWriterRequest::SetWorkDownloadPaths {
@@ -291,6 +300,7 @@ pub fn upsert_tags(
 
 pub fn upsert_works(
     mut conn: PooledConnection<SqliteConnectionManager>,
+    db_cancellation: &DbCancellation,
     works: &[Work],
     log: &mut LogSender,
     progress: &mut ProgressSender,
@@ -300,6 +310,10 @@ pub fn upsert_works(
     log.info(format!("Writing {total_count} works to the database..."));
 
     for chunk in works.chunks(1_000) {
+        if db_cancellation.is_cancelled() {
+            log.warn("Exiting upsert_works early due to cancellation");
+        }
+
         log.trace(format!("db->upsert_works chunk of {}", chunk.len()));
         let xaction = conn.transaction()?;
         {

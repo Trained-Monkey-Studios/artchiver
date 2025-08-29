@@ -29,7 +29,7 @@ pub enum TagRefresh {
     NoneNeeded,
     Favorites,
     NeedRefresh(TagId),
-    NeedReproject
+    NeedReproject,
 }
 
 #[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]

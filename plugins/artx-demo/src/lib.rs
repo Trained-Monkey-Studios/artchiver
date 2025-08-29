@@ -1,6 +1,7 @@
 use artchiver_sdk::*;
 use extism_pdk::*;
 use jiff::civil::Date;
+use std::time::Duration;
 
 // Most of the code required to interface with Artchiver is imported above via artchiver_sdk.
 // Extism does require a macro around our imports, so this macro saves us copying that boilerplate.
@@ -25,10 +26,13 @@ pub fn startup() -> FnResult<Json<PluginMetadata>> {
         // Configure the plugin's HTTP rate limiter to allow a maximum of 10 requests in a
         // 1 second interval. Please follow all rate guidance of any provider queried.
         .with_rate_limit(10, 1.0)
+        // By default, Artchiver will only re-download a link requested by a plugin after a week.
+        // Instead, set a 1 day default cache timeout for this example plugin.
+        .with_cache_timeout(Duration::from_secs(24 * 60 * 60))
         // Plugins can accept configuration parameters from the UX, such as login and password.
         // All parameters are provided to the plugin via `config::get`. See the Extism docs for
         // more information, or consult the example usage below.
-        .with_configuration("Debug"),
+        .with_configuration("Debug", ConfigKind::String),
     ))
 }
 

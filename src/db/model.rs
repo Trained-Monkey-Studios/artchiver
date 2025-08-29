@@ -1,9 +1,11 @@
 use log::{debug, warn};
+use parking_lot::Mutex;
 use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt,
     rc::Rc,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -131,6 +133,25 @@ impl OrderDir {
             1 => Self::Desc,
             _ => panic!("invalid column selected"),
         };
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DbCancellation {
+    cancelled: Arc<Mutex<bool>>,
+}
+
+impl DbCancellation {
+    pub fn is_cancelled(&self) -> bool {
+        *self.cancelled.lock()
+    }
+
+    pub fn cancel(&self) {
+        *self.cancelled.lock() = true;
+    }
+
+    pub fn reset(&self) {
+        *self.cancelled.lock() = false;
     }
 }
 

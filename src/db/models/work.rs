@@ -102,6 +102,10 @@ impl DbWork {
         self.favorite
     }
 
+    pub fn favorite_annotation(&self) -> &'static str {
+        if self.favorite { "✨" } else { "" }
+    }
+
     pub fn set_favorite(&mut self, favorite: bool) {
         self.favorite = favorite;
     }

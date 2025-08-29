@@ -1,5 +1,6 @@
 use crate::{
     db::{
+        model::DbCancellation,
         reader::DbReadHandle,
         sync::{DbSyncHandle, connect_or_create},
         writer::DbWriteHandle,
@@ -28,6 +29,8 @@ pub struct ArtchiverApp {
     db_write: DbWriteHandle,
     #[serde(skip)]
     db_read: DbReadHandle,
+    #[serde(skip)]
+    db_cancel: DbCancellation,
 
     // Rebuild plugins on each run as we don't know where we'll be running from.
     host: PluginHost,
@@ -41,7 +44,7 @@ impl Default for ArtchiverApp {
         let pwd = std::env::current_dir().expect("failed to get working directory");
         let env = Environment::new(&pwd).expect("failed to create environment");
         let progress_mon = ProgressMonitor::default();
-        let (db_sync, db_write, db_read) =
+        let (db_sync, db_write, db_read, db_cancel) =
             connect_or_create(&env, &progress_mon).expect("failed to connect to database");
         let host = PluginHost::default();
         let toplevel = UxToplevel::default();
@@ -52,6 +55,7 @@ impl Default for ArtchiverApp {
             db_sync,
             db_write,
             db_read,
+            db_cancel,
             host,
             toplevel,
         }
@@ -107,6 +111,7 @@ impl eframe::App for ArtchiverApp {
             .expect("failed to cleanup plugins on exit");
 
         // Try to shut down the database cleanly.
+        self.db_cancel.cancel();
         self.db_write.send_exit_request();
         self.db_read.wait_for_exit();
     }
