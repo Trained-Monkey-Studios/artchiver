@@ -136,7 +136,6 @@ pub fn list_works_with_tag(
     let mut total_count = 0;
     let mut last_id = Some(WorkId::wrap(0));
     while let Some(last_work_id) = last_id {
-        println!("last_work_id: {last_work_id:?}");
         let start = Instant::now();
         // If we decide we *have* to apply AND up front, it looks like this.
         // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}

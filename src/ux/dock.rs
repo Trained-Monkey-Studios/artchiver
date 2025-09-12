@@ -160,7 +160,7 @@ impl<'a> SyncViewer<'a> {
             .info_ui(self.state.tag_ux.tags(), self.db_write, self.sync, ui);
     }
 
-    fn render_slideshow(&mut self, ctx: &egui::Context) {
+    fn render_slideshow(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Bail back to the browser if we lose our selection.
         if !self.state.work_ux.has_selection() {
             self.state.mode = UxMode::Browser;
@@ -168,7 +168,7 @@ impl<'a> SyncViewer<'a> {
         }
         self.state
             .work_ux
-            .slideshow_ui(self.state.tag_ux.tags(), self.db_write, ctx);
+            .slideshow_ui(self.state.tag_ux.tags(), self.db_write, ctx, frame);
     }
 }
 
@@ -230,9 +230,17 @@ impl Default for UxToplevel {
 }
 
 impl UxToplevel {
-    pub fn startup(&mut self, data_dir: &Path, db: &DbReadHandle) {
+    pub fn startup(
+        &mut self,
+        data_dir: &Path,
+        db: &DbReadHandle,
+        cc: &eframe::CreationContext<'_>,
+    ) {
         self.state.tag_ux.startup(db);
-        self.state.work_ux.startup(data_dir, db);
+        self.state
+            .work_ux
+            .startup(data_dir, db, cc)
+            .expect("Failed to load works ui");
     }
 
     pub fn handle_updates(&mut self, updates: &[DataUpdate], db: &DbReadHandle) {
@@ -263,6 +271,7 @@ impl UxToplevel {
         db_write: &DbWriteHandle,
         host: &mut PluginHost,
         ctx: &egui::Context,
+        frame: &mut eframe::Frame,
     ) -> Result<()> {
         let frame_start = Instant::now();
 
@@ -301,7 +310,7 @@ impl UxToplevel {
                 self.render_about(ctx);
             }
             UxMode::Slideshow => {
-                SyncViewer::wrap(host, &mut self.state, db, db_write).render_slideshow(ctx);
+                SyncViewer::wrap(host, &mut self.state, db, db_write).render_slideshow(ctx, frame);
             }
         }
 

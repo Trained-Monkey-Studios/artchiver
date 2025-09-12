@@ -79,7 +79,7 @@ impl ArtchiverApp {
             Default::default()
         };
         app.toplevel
-            .startup(&app.environment().data_dir(), &app.db_read);
+            .startup(&app.environment().data_dir(), &app.db_read, cc);
         app
     }
 
@@ -90,13 +90,13 @@ impl ArtchiverApp {
 
 impl eframe::App for ArtchiverApp {
     /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let updates = self.progress_mon.read();
         self.host.handle_updates(&updates);
         self.toplevel.handle_updates(&updates, &self.db_read);
 
         self.toplevel
-            .draw(&self.db_read, &self.db_write, &mut self.host, ctx)
+            .draw(&self.db_read, &self.db_write, &mut self.host, ctx, frame)
             .expect("ux update error");
     }
 

@@ -1,6 +1,9 @@
 use crate::{
     db::writer::DbWriteHandle,
-    plugin::{client::make_temp_path, thumbnail::make_preview_thumbnail},
+    plugin::{
+        client::make_temp_path,
+        thumbnail::{is_image, make_preview_thumbnail},
+    },
     shared::{
         plugin::PluginCancellation,
         progress::{LogSender, ProgressSender},
@@ -16,7 +19,6 @@ use std::{
 };
 use thiserror::Error;
 use ureq::Agent;
-use crate::plugin::thumbnail::is_image;
 
 #[derive(Error, Debug)]
 pub enum DownloadError {

@@ -29,15 +29,17 @@
             trunk
 
             # misc. libraries
+            SDL2.dev
             clang
             cmake
-            libclang
-            pkg-config
-            mold-wrapped
             ffmpeg.dev
-            pipewire.dev
+            gdb
+            libclang
             libffi.dev
-            SDL2.dev
+            mold-wrapped
+            mpv
+            pipewire.dev
+            pkg-config
 
             # GUI libs
             libxkbcommon

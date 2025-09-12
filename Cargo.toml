@@ -52,21 +52,23 @@ eframe = { version = "0.32", default-features = false, features = [
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
-egui = "0.32"
-egui-video = { path = "../egui-video", default-features = false, features = ["from_bytes"] }
+egui = "0.32.2"
 egui_dnd = "0.13"
 egui_dock = { version = "0.17", features = ["serde"] }
-egui_extras = { version = "0.32", features = ["image", "file", "gif", "webp"] } # matching bevy_egui
+egui_extras = { version = "0.32.2", features = ["image", "file", "gif", "webp"] }
+egui_glow = "0.32.2"
 egui_plot = "0.33"
 env_logger = "0.11.8"
 extism = "1.0"
-ffmpeg-the-third = "3.0.2"
+glow = "0.16.0"
 io_tee = "0.1"
 itertools = "0.14"
 jiff = { version ="0.2", features = ["serde"] }
-log = "0.4.27"
+log = "0.4"
 lru = "0.16"
 open = "5.3"
+libmpv = { git = "https://github.com/xenon/libmpv-rs", branch = "update-to-v0.39.0", features = ["render"] }
+libmpv-sys = { git = "https://github.com/xenon/libmpv-rs", branch = "update-to-v0.39.0" }
 parking_lot = "0.12"
 platform-dirs = "0.3"
 r2d2 = "0.8"
@@ -111,7 +113,7 @@ opt-level = 2
 workspace = true
 
 [workspace.lints.rust]
-unsafe_code = "deny"
+#unsafe_code = "deny"
 
 elided_lifetimes_in_paths = "warn"
 future_incompatible = { level = "warn", priority = -1 }

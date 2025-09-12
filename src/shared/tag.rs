@@ -1,9 +1,13 @@
-use crate::db::writer::DbWriteHandle;
-use crate::db::{
-    models::tag::{DbTag, TagId},
-    models::work::DbWork,
+use crate::{
+    db::{
+        models::{
+            tag::{DbTag, TagId},
+            work::DbWork,
+        },
+        writer::DbWriteHandle,
+    },
+    plugin::host::PluginHost,
 };
-use crate::plugin::host::PluginHost;
 use itertools::Itertools as _;
 use log::{trace, warn};
 use serde::{Deserialize, Serialize};
