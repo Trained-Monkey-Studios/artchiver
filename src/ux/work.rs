@@ -1,4 +1,3 @@
-use crate::ux::egui_mpv::MpvPlayerState;
 use crate::{
     db::{
         models::{
@@ -13,8 +12,8 @@ use crate::{
         tag::{TagRefresh, TagSet},
         update::DataUpdate,
     },
-    ux::egui_mpv::MpvPlayer,
 };
+use egui_mpv_glow::MpvPlayer;
 use anyhow::Result;
 use egui::{Key, Margin, Modifiers, PointerButton, Rect, Sense, SizeHint, Vec2, include_image};
 use itertools::Itertools as _;
@@ -220,6 +219,9 @@ pub struct UxWork {
 
     #[serde(skip, default)]
     mpv: MpvPlayer,
+
+    #[serde(skip, default)]
+    has_loaded_media: bool,
 }
 
 impl Default for UxWork {
@@ -240,6 +242,7 @@ impl Default for UxWork {
             data_dir: PathBuf::new(),
             works_lru: LruCache::unbounded(),
             mpv: MpvPlayer::default(),
+            has_loaded_media: false,
         }
     }
 }
@@ -265,7 +268,7 @@ impl UxWork {
             db.get_favorite_works();
         }
 
-        self.mpv.initialize(cc)?;
+        self.mpv.init_with_eframe(cc)?;
 
         Ok(())
     }
@@ -359,18 +362,22 @@ impl UxWork {
     pub fn set_selected(&mut self, selected: usize) {
         self.selected = Some(selected);
         self.slide_xform = ZoomPan::default();
-        self.mpv.stop();
+        self.mpv.pause_async().ok();
+        self.has_loaded_media = false;
     }
 
     pub fn clear_selected(&mut self) {
         self.selected = None;
         self.slide_xform = ZoomPan::default();
-        self.mpv.stop();
+        self.mpv.pause_async().ok();
+        self.has_loaded_media = false;
     }
 
     pub fn on_leave_slideshow(&mut self) {
+        trace!("Leaving slideshow");
         self.scroll_to_selected = ScrollRequestKind::LeaveSlideshow;
-        self.mpv.stop();
+        self.mpv.pause_async().ok();
+        self.has_loaded_media = false;
     }
 
     fn ensure_works_up_to_date_with_tag_selection(
@@ -932,24 +939,23 @@ impl UxWork {
 
                     // Draw controls over the screen area, if the mouse has moved recently
                     ui.horizontal(|ui| {
-                        match self.mpv.state() {
-                            MpvPlayerState::Stopped | MpvPlayerState::Uninitialized => {}
-                            MpvPlayerState::Playing => {
-                                if ui.button("||").clicked() {
-                                    self.mpv.pause();
-                                }
+                        if ui.button("⏮").clicked() {
+                            self.mpv.seek_backward_async(f64::MAX).ok();
+                        }
+                        if ui.button("⏪").clicked() {
+                            self.mpv.seek_absolute_async(0.).ok();
+                        }
+                        if self.mpv.is_paused() {
+                            if ui.button("▶").clicked() {
+                                self.mpv.unpause_async().ok();
                             }
-                            MpvPlayerState::Paused => {
-                                if ui.button("|>").clicked() {
-                                    self.mpv.resume();
-                                }
+                        } else {
+                            if ui.button("⏸").clicked() {
+                                self.mpv.pause_async().ok();
                             }
                         }
-                        if ui.button("<<").clicked() {
-                            self.mpv.seek_backward(5.);
-                        }
-                        if ui.button(">>").clicked() {
-                            self.mpv.seek_forward(5.);
+                        if ui.button("⏩").clicked() {
+                            self.mpv.seek_forward_async(5.).ok();
                         }
                     });
 
@@ -1065,8 +1071,11 @@ impl UxWork {
                 if self.works_lru.contains(&screen_uri) {
                     return DisplayKind::Image(egui::Image::new(screen_uri));
                 }
-            } else if self.mpv.state() == MpvPlayerState::Stopped {
-                self.mpv.play(&screen_path);
+            } else if !self.has_loaded_media {
+                self.mpv.playlist_replace_async(&screen_path, None).ok();
+                self.mpv.seek_frame_async().ok();
+                self.mpv.unpause_async().ok();
+                self.has_loaded_media = true;
                 return DisplayKind::MediaPlayer;
             } else {
                 return DisplayKind::MediaPlayer;

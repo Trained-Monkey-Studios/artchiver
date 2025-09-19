@@ -55,8 +55,8 @@ crossbeam = "0.8"
 egui = "0.32.2"
 egui_dnd = "0.13"
 egui_dock = { version = "0.17", features = ["serde"] }
-egui_extras = { version = "0.32.2", features = ["image", "file", "gif", "webp"] }
-egui_glow = "0.32.2"
+egui_extras = { version = "0.32.3", features = ["image", "file", "gif", "webp"] }
+egui_glow = "0.32.3"
 egui_plot = "0.33"
 env_logger = "0.11.8"
 extism = "1.0"
@@ -67,8 +67,7 @@ jiff = { version ="0.2", features = ["serde"] }
 log = "0.4"
 lru = "0.16"
 open = "5.3"
-libmpv = { git = "https://github.com/xenon/libmpv-rs", branch = "update-to-v0.39.0", features = ["render"] }
-libmpv-sys = { git = "https://github.com/xenon/libmpv-rs", branch = "update-to-v0.39.0" }
+egui-mpv-glow = { git = "https://github.com/Trained-Monkey-Studios/egui-mpv-glow", rev = "7229029e253316997e2ced05e82b5c52804a20ac" }
 parking_lot = "0.12"
 platform-dirs = "0.3"
 r2d2 = "0.8"
