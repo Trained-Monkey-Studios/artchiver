@@ -70,10 +70,10 @@ impl TagSourceFilter {
         let mut options = host.plugins().map(|p| p.name()).collect::<Vec<_>>();
         options.insert(0, "All".to_owned());
         options.push("Hidden".to_owned());
-        if let Some(source) = self.source.as_deref() {
-            if let Some((offset, _)) = options.iter().find_position(|v| v == &source) {
-                selected = offset;
-            }
+        if let Some(source) = self.source.as_deref()
+            && let Some((offset, _)) = options.iter().find_position(|v| v == &source)
+        {
+            selected = offset;
         }
         let prior = selected;
         egui::ComboBox::new("tag_filter_sources", "Source")
@@ -206,19 +206,19 @@ impl UxTag {
                     db.get_tag_local_counts();
                 }
                 DataUpdate::TagFavoriteStatusChanged { tag_id, favorite } => {
-                    if let Some(tags) = &mut self.tag_all {
-                        if let Some(tag) = tags.get_mut(tag_id) {
-                            tag.set_favorite(*favorite);
-                            self.reproject_tags();
-                        }
+                    if let Some(tags) = &mut self.tag_all
+                        && let Some(tag) = tags.get_mut(tag_id)
+                    {
+                        tag.set_favorite(*favorite);
+                        self.reproject_tags();
                     }
                 }
                 DataUpdate::TagHiddenStatusChanged { tag_id, hidden } => {
-                    if let Some(tags) = &mut self.tag_all {
-                        if let Some(tag) = tags.get_mut(tag_id) {
-                            tag.set_hidden(*hidden);
-                            self.reproject_tags();
-                        }
+                    if let Some(tags) = &mut self.tag_all
+                        && let Some(tag) = tags.get_mut(tag_id)
+                    {
+                        tag.set_hidden(*hidden);
+                        self.reproject_tags();
                     }
                 }
                 _ => {}

@@ -324,15 +324,15 @@ impl UxWork {
                     screen_path,
                     archive_path,
                 } => {
-                    if let Some(works) = self.work_matching_tag.as_mut() {
-                        if let Some(work) = works.get_mut(id) {
-                            let preview_path = self.data_dir.join(preview_path);
-                            let screen_path = self.data_dir.join(screen_path);
-                            let archive_path = archive_path.as_ref().map(|a| self.data_dir.join(a));
-                            work.set_paths(preview_path, screen_path, archive_path);
-                            if self.work_reproject_timer.is_none() {
-                                self.work_reproject_timer = Some(Instant::now());
-                            }
+                    if let Some(works) = self.work_matching_tag.as_mut()
+                        && let Some(work) = works.get_mut(id)
+                    {
+                        let preview_path = self.data_dir.join(preview_path);
+                        let screen_path = self.data_dir.join(screen_path);
+                        let archive_path = archive_path.as_ref().map(|a| self.data_dir.join(a));
+                        work.set_paths(preview_path, screen_path, archive_path);
+                        if self.work_reproject_timer.is_none() {
+                            self.work_reproject_timer = Some(Instant::now());
                         }
                     }
                 }
@@ -425,10 +425,10 @@ impl UxWork {
                 .filter(|work| {
                     if let Some(tags) = tags {
                         for tag_id in work.tags() {
-                            if let Some(tag) = tags.get(&tag_id) {
-                                if tag.hidden() {
-                                    return false;
-                                }
+                            if let Some(tag) = tags.get(&tag_id)
+                                && tag.hidden()
+                            {
+                                return false;
                             }
                         }
                     }
@@ -568,10 +568,10 @@ impl UxWork {
         }
 
         ui.ctx().input_mut(|input| {
-            if input.pointer.button_down(PointerButton::Primary) {
-                if let Some(motion) = input.pointer.motion() {
-                    self.slide_xform.pan(motion);
-                }
+            if input.pointer.button_down(PointerButton::Primary)
+                && let Some(motion) = input.pointer.motion()
+            {
+                self.slide_xform.pan(motion);
             }
             if input.raw_scroll_delta.y > 0. {
                 self.slide_xform

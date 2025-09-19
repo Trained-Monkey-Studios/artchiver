@@ -373,16 +373,16 @@ impl PluginHandle {
                 _ => {}
             }
         }
-        if self.active_task.is_none() {
-            if let Some(task) = self.task_queue.pop_front() {
-                self.active_task = Some(task.clone());
-                self.remote
-                    .as_ref()
-                    .expect("uninit")
-                    .tx_to_plugin
-                    .send(task)
-                    .expect("sent to stopped plugin");
-            }
+        if self.active_task.is_none()
+            && let Some(task) = self.task_queue.pop_front()
+        {
+            self.active_task = Some(task.clone());
+            self.remote
+                .as_ref()
+                .expect("uninit")
+                .tx_to_plugin
+                .send(task)
+                .expect("sent to stopped plugin");
         }
     }
 }

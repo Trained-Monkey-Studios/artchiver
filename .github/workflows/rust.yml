@@ -49,6 +49,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+      - run: rustc -vV
       - run: sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libmpv-dev
       - uses: actions-rs/cargo@v1
         with:
@@ -65,6 +66,7 @@ jobs:
           toolchain: stable
           override: true
           components: rustfmt
+      - run: rustc -vV
       - uses: actions-rs/cargo@v1
         with:
           command: fmt
@@ -81,10 +83,11 @@ jobs:
           toolchain: stable
           override: true
           components: clippy
+      - run: rustc -vV
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: -- -D warnings
+          args: --workspace --all-targets -- -D warnings
 
   #trunk:
   #  name: trunk
@@ -138,9 +141,9 @@ jobs:
         toolchain: stable
         target: ${{ matrix.TARGET }}
         override: true
-
+    - run: rustc -vV
     - uses: actions-rs/cargo@v1
       with:
         use-cross: true
         command: build
-        args: --verbose --release --target=${{ matrix.TARGET }}
+        args: --release --target=${{ matrix.TARGET }}

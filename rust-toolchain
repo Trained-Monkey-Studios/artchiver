@@ -5,7 +5,7 @@
 # to the user in the error, instead of "error: invalid channel name '[toolchain]'".
 
 [toolchain]
-channel = "1.88"  # Avoid specifying a patch version here; see https://github.com/emilk/eframe_template/issues/145
+channel = "1.90"  # Avoid specifying a patch version here; see https://github.com/emilk/eframe_template/issues/145
 components = [ "rust-std", "rustfmt", "clippy", "rust-src", "rust-analyzer" ]
 targets = [ "wasm32-unknown-unknown" ]
 

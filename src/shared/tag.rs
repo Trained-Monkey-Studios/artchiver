@@ -189,10 +189,10 @@ impl TagSet {
                 }
             }
         }
-        if let Some(remove) = remove {
-            if let Some(tag) = tags.get(&remove) {
-                self.unselect(tag);
-            }
+        if let Some(remove) = remove
+            && let Some(tag) = tags.get(&remove)
+        {
+            self.unselect(tag);
         }
 
         let mut unselect = None;
@@ -209,10 +209,10 @@ impl TagSet {
                 }
             }
         }
-        if let Some(unselect) = unselect {
-            if let Some(tag) = tags.get(&unselect) {
-                self.unselect(tag);
-            }
+        if let Some(unselect) = unselect
+            && let Some(tag) = tags.get(&unselect)
+        {
+            self.unselect(tag);
         }
 
         if !self.is_empty() {
