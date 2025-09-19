@@ -13,9 +13,9 @@ use crate::{
         update::DataUpdate,
     },
 };
-use egui_mpv_glow::MpvPlayer;
 use anyhow::Result;
 use egui::{Key, Margin, Modifiers, PointerButton, Rect, Sense, SizeHint, Vec2, include_image};
+use egui_mpv_glow::MpvPlayer;
 use itertools::Itertools as _;
 use log::{info, trace};
 use lru::LruCache;
@@ -949,11 +949,10 @@ impl UxWork {
                             if ui.button("▶").clicked() {
                                 self.mpv.unpause_async().ok();
                             }
-                        } else {
-                            if ui.button("⏸").clicked() {
-                                self.mpv.pause_async().ok();
-                            }
+                        } else if ui.button("⏸").clicked() {
+                            self.mpv.pause_async().ok();
                         }
+
                         if ui.button("⏩").clicked() {
                             self.mpv.seek_forward_async(5.).ok();
                         }

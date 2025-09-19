@@ -326,7 +326,6 @@ dependencies = [
  "egui_dnd",
  "egui_dock",
  "egui_extras",
- "egui_glow",
  "egui_plot",
  "env_logger",
  "extism",
