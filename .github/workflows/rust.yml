@@ -12,8 +12,8 @@ env:
   RUSTDOCFLAGS: -D warnings
 
 jobs:
-  fmt:
-    name: Rustfmt
+  fmt_main:
+    name: Check fmt (artchiver)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,8 +29,36 @@ jobs:
           command: fmt
           args: --all -- --check
 
-  clippy:
-    name: Clippy
+  fmt_plugins:
+    name: Check fmt (plugins/${{matrix.crate}})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: artchiver_sdk
+          - crate: artx-demo
+          - crate: artx-met
+          - crate: artx-nga
+          - crate: artx-podcast
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt
+      - run: rustc -vV
+      - working-directory: plugins/${{ matrix.crate }}
+        run: cargo fmt --all -- --check
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+  clippy_main:
+    name: Clippy (artchiver)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +73,32 @@ jobs:
         with:
           command: clippy
           args: --workspace --all-targets -- -D warnings
+
+  clippy_plugins:
+    name: Clippy (plugins/${{matrix.crate}})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: artchiver_sdk
+          - crate: artx-demo
+          - crate: artx-met
+          - crate: artx-nga
+          - crate: artx-podcast
+    steps:
+      - run: echo "Clippy ${{ matrix.crate }}"
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+          target: wasm32-unknown-unknown
+      - run: rustc -vV
+      - working-directory: plugins/${{ matrix.crate }}
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
 
   test_nix:
     name: Test Suite (Unix/Mac)
