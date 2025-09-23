@@ -464,10 +464,14 @@ impl UxWork {
     }
 
     fn get_pressed_keys(ui: &egui::Ui, keys: &[Key]) -> HashSet<Key> {
+        Self::get_pressed_keys_with_mods(ui, Modifiers::NONE, keys)
+    }
+
+    fn get_pressed_keys_with_mods(ui: &egui::Ui, mods: Modifiers, keys: &[Key]) -> HashSet<Key> {
         let mut pressed = HashSet::new();
         ui.ctx().input_mut(|input| {
             for key in keys {
-                if input.consume_key(Modifiers::NONE, *key) {
+                if input.consume_key(mods, *key) {
                     pressed.insert(*key);
                 }
             }
@@ -556,7 +560,8 @@ impl UxWork {
     }
 
     fn check_slideshow_key_binds(&mut self, ui: &egui::Ui) {
-        let pressed = Self::get_pressed_keys(ui, &[Key::Equals, Key::Plus, Key::Minus, Key::Num0]);
+        let pressed = Self::get_pressed_keys(ui, &[Key::Equals, Key::Plus, Key::Minus, Key::Num0, Key::Comma, Key::Period]);
+        let ctrl_pressed = Self::get_pressed_keys_with_mods(ui, Modifiers::CTRL, &[Key::ArrowLeft, Key::ArrowRight]);
         if pressed.contains(&Key::Plus) || pressed.contains(&Key::Equals) {
             self.slide_xform.zoom_in(ui.available_size() / 2.);
         }
@@ -565,6 +570,18 @@ impl UxWork {
         }
         if pressed.contains(&Key::Num0) {
             self.slide_xform.reset();
+        }
+        if pressed.contains(&Key::Comma) {
+            self.mpv.seek_frame_backward_async().ok();
+        }
+        if pressed.contains(&Key::Period) {
+            self.mpv.seek_frame_async().ok();
+        }
+        if ctrl_pressed.contains(&Key::ArrowLeft) {
+            self.mpv.seek_backward_async(5.0).ok();
+        }
+        if ctrl_pressed.contains(&Key::ArrowRight) {
+            self.mpv.seek_forward_async(5.0).ok();
         }
 
         ui.ctx().input_mut(|input| {
@@ -680,6 +697,8 @@ impl UxWork {
         perf: &mut PerfTrack,
         ui: &mut egui::Ui,
     ) {
+        self.mpv.monitor_events();
+
         ui.horizontal_wrapped(|ui| {
             if let Some(tags) = tags {
                 self.tag_selection.ui(tags, ui);
@@ -923,6 +942,7 @@ impl UxWork {
                             .translate(self.slide_xform.pan);
                         img.paint_at(ui, rect);
                     }
+
                     self.draw_offset_label(ui, work_offset);
                 }
                 DisplayKind::MediaPlayer => {
@@ -931,88 +951,37 @@ impl UxWork {
                     if let Some(img) = self.mpv.image(&rect, ui.painter(), frame) {
                         img.paint_at(ui, rect);
                     }
-                    // egui::Frame::canvas(ui.style()).show(ui, |ui| {
-                    //     self.mpv.show(ui);
-                    // });
 
-                    // Blit the texture to our screen (see above)
+                    self.draw_offset_label(ui, work_offset);
 
-                    // Draw controls over the screen area, if the mouse has moved recently
-                    ui.horizontal(|ui| {
-                        if ui.button("⏮").clicked() {
-                            self.mpv.seek_backward_async(f64::MAX).ok();
-                        }
-                        if ui.button("⏪").clicked() {
-                            self.mpv.seek_absolute_async(0.).ok();
-                        }
-                        if self.mpv.is_paused() {
-                            if ui.button("▶").clicked() {
-                                self.mpv.unpause_async().ok();
-                            }
-                        } else if ui.button("⏸").clicked() {
-                            self.mpv.pause_async().ok();
-                        }
-
-                        if ui.button("⏩").clicked() {
-                            self.mpv.seek_forward_async(5.).ok();
-                        }
-                    });
-
-                    /*
-                    let (src, _elapsed) = if let Some(player) = self.video_player.as_ref() {
-                        (player.size, player.elapsed_ms())
-                    } else {
-                        (ui.available_size(), 0)
-                    };
-
-                    // FIXME: store aside elapsed into a state that will get saved between runs
-                    //        so that when we start up again we'll resume in a podcast where we
-                    //        left off.
-
-                    let dst = ui.available_size();
-                    let scale = (dst.x / src.x).min(dst.y / src.y);
-                    let pad = (dst - src * scale) / 2.;
-                    if pad.x > 0. {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
                         ui.horizontal(|ui| {
-                            let v = Vec2::new(pad.x, dst.y);
-                            egui::Resize::default()
-                                .min_size(v)
-                                .max_size(v)
-                                .default_size(v)
-                                .resizable([false, false])
-                                .show(ui, |ui| {
-                                    // FIXME: figure out how to overlay the work offset label
-                                    ui.label("");
-                                });
-                            if let Some(player) = self.video_player.as_mut() {
-                                player.ui(ui, src * scale);
-                                // player.subtitle_streamer.as_ref().map(|ss| ss.lock())
+                            if self.mpv.is_paused() && ui.button("▶").clicked() {
+                                self.mpv.unpause_async().ok();
+                            } else if ui.button("⏸").clicked() {
+                                self.mpv.pause_async().ok();
+                            }
+                            let time_pos = self.mpv.time_pos();
+                            ui.label(format!("{:02.0}:{:02.0}", time_pos / 60.0, time_pos % 60.0));
+                            let mut percent_pos = self.mpv.percent_pos();
+                            let slider = egui::Slider::new(&mut percent_pos, 0f64..=100f64)
+                                .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.25 })
+                                .show_value(false);
+                            if ui.add(slider).changed() {
+                                self.mpv
+                                    .seek_percent_absolute_async(percent_pos as usize)
+                                    .ok();
+                            }
+                            let duration = self.mpv.duration();
+                            ui.label(format!("{:02.0}:{:02.0}", duration / 60.0, duration % 60.0));
+                            if ui.button("⏪").clicked() {
+                                self.mpv.seek_absolute_async(0.).ok();
+                            }
+                            if ui.button("⏩").clicked() {
+                                self.mpv.seek_forward_async(5.).ok();
                             }
                         });
-                    } else {
-                        ui.vertical(|ui| {
-                            let v = Vec2::new(dst.x, pad.y);
-                            egui::Resize::default()
-                                .min_size(v)
-                                .max_size(v)
-                                .default_size(v)
-                                .resizable([false, false])
-                                .show(ui, |ui| {
-                                    // self.draw_offset_label(ui, work_offset);
-                                    ui.label(format!(
-                                        "{work_offset} of {} {}",
-                                        self.work_filtered.len(),
-                                        self.get_selected_work()
-                                            .map(|w| w.favorite_annotation())
-                                            .unwrap_or_default()
-                                    ));
-                                });
-                            if let Some(player) = self.video_player.as_mut() {
-                                player.ui(ui, src * scale);
-                            }
-                        });
-                    }
-                     */
+                    });
                 }
             }
         });
@@ -1072,7 +1041,6 @@ impl UxWork {
                 }
             } else if !self.has_loaded_media {
                 self.mpv.playlist_replace_async(&screen_path, None).ok();
-                self.mpv.seek_frame_async().ok();
                 self.mpv.unpause_async().ok();
                 self.has_loaded_media = true;
                 return DisplayKind::MediaPlayer;

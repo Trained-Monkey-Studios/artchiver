@@ -49,6 +49,7 @@ o Only scroll to selection on a move event or leaving slideshow
 * make a preview_url optional and generate thumbnails on our side if none provided
 * Give authors the same support as tags
 * Expand work with ALL THE DATA
+* Highlight the tag that is actually queried somehow
 * podcasts? feed reader?
 * Find more open-access galleries
 * Build a local-directory importer
