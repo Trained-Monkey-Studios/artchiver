@@ -560,8 +560,22 @@ impl UxWork {
     }
 
     fn check_slideshow_key_binds(&mut self, ui: &egui::Ui) {
-        let pressed = Self::get_pressed_keys(ui, &[Key::Equals, Key::Plus, Key::Minus, Key::Num0, Key::Comma, Key::Period]);
-        let ctrl_pressed = Self::get_pressed_keys_with_mods(ui, Modifiers::CTRL, &[Key::ArrowLeft, Key::ArrowRight]);
+        let pressed = Self::get_pressed_keys(
+            ui,
+            &[
+                Key::Equals,
+                Key::Plus,
+                Key::Minus,
+                Key::Num0,
+                Key::Comma,
+                Key::Period,
+            ],
+        );
+        let ctrl_pressed = Self::get_pressed_keys_with_mods(
+            ui,
+            Modifiers::CTRL,
+            &[Key::ArrowLeft, Key::ArrowRight],
+        );
         if pressed.contains(&Key::Plus) || pressed.contains(&Key::Equals) {
             self.slide_xform.zoom_in(ui.available_size() / 2.);
         }
