@@ -202,7 +202,7 @@ jobs:
           target: wasm32-unknown-unknown
       - run: rustc -vV
       - working-directory: plugins/${{ matrix.crate }}
-        run: cargo build --release --target wasm32-unknown-unknown -- -D warnings
+        run: cargo build --release --target wasm32-unknown-unknown
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.crate }}.wasm
