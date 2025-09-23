@@ -185,11 +185,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - crate: artchiver_sdk
-          - crate: artx-demo
           - crate: artx-met
+            wasm:  artx_met.wasm
           - crate: artx-nga
+            wasm:  artx_nga.wasm
           - crate: artx-podcast
+            wasm:  artx_podcast.wasm
     steps:
       - run: echo "Build WASM ${{ matrix.crate }}"
       - uses: actions/checkout@v4
@@ -203,10 +204,12 @@ jobs:
       - run: rustc -vV
       - working-directory: plugins/${{ matrix.crate }}
         run: cargo build --release --target wasm32-unknown-unknown
+      - working-directory: plugins/${{ matrix.crate }}
+        run: dir 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.crate }}.wasm
-          path: plugins/${{ matrix.crate }}/target/wasm32-unknown-unknown/release/${{ matrix.crate }}.wasm
+          name: ${{ matrix.wasm }}
+          path: plugins\${{ matrix.crate }}\target\wasm32-unknown-unknown\release\${{ matrix.wasm }}
           if-no-files-found: error
 
   release_win:
