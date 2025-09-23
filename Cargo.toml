@@ -56,6 +56,7 @@ egui = "0.32.3"
 egui_dnd = "0.13"
 egui_dock = { version = "0.17", features = ["serde"] }
 egui_extras = { version = "0.32.3", features = ["image", "file", "gif", "webp"] }
+egui-mpv-glow = { git = "https://github.com/Trained-Monkey-Studios/egui-mpv-glow", rev = "97e26e063de51f778560794ab0868bfdeec7fe62" }
 egui_plot = "0.33"
 env_logger = "0.11.8"
 extism = "1.0"
@@ -66,7 +67,6 @@ jiff = { version ="0.2", features = ["serde"] }
 log = "0.4"
 lru = "0.16"
 open = "5.3"
-egui-mpv-glow = { git = "https://github.com/Trained-Monkey-Studios/egui-mpv-glow", rev = "7229029e253316997e2ced05e82b5c52804a20ac" }
 parking_lot = "0.12"
 platform-dirs = "0.3"
 r2d2 = "0.8"
@@ -101,8 +101,6 @@ opt-level = 2
 # If you fork https://github.com/emilk/egui you can test with:
 # egui = { path = "../egui/crates/egui" }
 # eframe = { path = "../egui/crates/eframe" }
-
-
 
 # ----------------------------------------------------------------------------------------
 # Lints:

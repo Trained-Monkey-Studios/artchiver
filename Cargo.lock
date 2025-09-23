@@ -1600,7 +1600,7 @@ dependencies = [
 [[package]]
 name = "egui-mpv-glow"
 version = "0.32.3"
-source = "git+https://github.com/Trained-Monkey-Studios/egui-mpv-glow?rev=7229029e253316997e2ced05e82b5c52804a20ac#7229029e253316997e2ced05e82b5c52804a20ac"
+source = "git+https://github.com/Trained-Monkey-Studios/egui-mpv-glow?rev=97e26e063de51f778560794ab0868bfdeec7fe62#97e26e063de51f778560794ab0868bfdeec7fe62"
 dependencies = [
  "anyhow",
  "bitbag",
