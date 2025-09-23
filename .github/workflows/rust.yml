@@ -52,10 +52,6 @@ jobs:
       - run: rustc -vV
       - working-directory: plugins/${{ matrix.crate }}
         run: cargo fmt --all -- --check
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
 
   clippy_main:
     name: Clippy (artchiver)
@@ -182,21 +178,94 @@ jobs:
           command: test
           args: --workspace
 
-  #test:
-  #  name: Test Suite
-  #  runs-on: ubuntu-latest
-  #  steps:
-  #    - uses: actions/checkout@v4
-  #    - uses: actions-rs/toolchain@v1
-  #      with:
-  #        profile: minimal
-  #        toolchain: stable
-  #        override: true
-  #    - run: rustc -vV
-  #    - run: sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libmpv-dev
-  #    - uses: actions-rs/cargo@v1
-  #      with:
-  #        command: test
+  build_plugins:
+    name: Build WASM (plugins/${{matrix.crate}})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: artchiver_sdk
+          - crate: artx-demo
+          - crate: artx-met
+          - crate: artx-nga
+          - crate: artx-podcast
+    steps:
+      - run: echo "Build WASM ${{ matrix.crate }}"
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+          target: wasm32-unknown-unknown
+      - run: rustc -vV
+      - working-directory: plugins/${{ matrix.crate }}
+        run: cargo build --release --target wasm32-unknown-unknown -- -D warnings
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.crate }}.wasm
+          path: plugins/${{ matrix.crate }}/target/wasm32-unknown-unknown/release/${{ matrix.crate }}.wasm
+          if-no-files-found: error
+
+  release_win:
+    name: Build Installer (Windows)
+    needs: [build_plugins]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            ARCH: x86_64
+            TARGET: x86_64-pc-windows-msvc
+            EXTENSION: .exe
+
+    steps:
+      - name: Build Installer ${{ matrix.TARGET }}
+        run: echo "${{ matrix.TARGET }}"
+
+      - uses: milliewalky/setup-7-zip@v2
+
+      - uses: actions/checkout@v4
+
+      - run: mkdir vendor\mpv-dev-${{ matrix.ARCH }}
+      - run: 7z x -y -ovendor\mpv-dev-${{ matrix.ARCH }} vendor\mpv-dev-${{ matrix.ARCH }}-20250923-git-ee0f701.7z
+      - run: mv vendor\mpv-dev-${{ matrix.ARCH }}\libmpv.dll.a vendor\mpv-dev-${{ matrix.ARCH }}\mpv.lib
+      - run: dir vendor\mpv-dev-${{ matrix.ARCH }}\
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.TARGET }}
+          override: true
+      - run: rustc -vV
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+
+      - run: mkdir package
+      - run: mkdir package\plugins
+      - run: cp target\release\artchiver.exe package\
+      - run: cp vendor\mpv-dev-${{ matrix.ARCH }}\libmpv-2.dll package\
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: "*.wasm"
+          path: package\plugins\
+          merge-multiple: true
+
+      - run: dir package\
+      - run: dir package\plugins\
+
+      - run: 7z a -tzip artchiver-win-installer-${{ github.sha }}.zip package\
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artchiver-win-installer-${{ github.sha }}.zip
+          path: artchiver-win-installer-${{ github.sha }}.zip
+          if-no-files-found: error
+
 
   #build:
   #  runs-on: ${{ matrix.os }}
