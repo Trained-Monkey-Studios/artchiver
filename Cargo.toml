@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Terrence D Cole <terrence.d.cole@gmail.com>"]
 edition = "2024"
 include = ["LICENSE", "**/*.rs", "Cargo.toml"]
-rust-version = "1.90"
+rust-version = "1.88"
 license = "GPL-3.0"
 
 [package.metadata.docs.rs]
@@ -51,14 +51,17 @@ eframe = { version = "0.32", default-features = false, features = [
 ] }
 
 anyhow = "1.0"
+catppuccin-egui = { version = "5.6.0", default-features = false, features = ["egui32"] }
 clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
 egui = "0.32.3"
+egui-aesthetix = { git = "https://github.com/thebashpotato/egui-aesthetix/", branch = "dependabot/cargo/egui-0.32", features = ["nord", "standard", "tokyo_night"] }
+egui-mpv-glow = { git = "https://github.com/Trained-Monkey-Studios/egui-mpv-glow", rev = "97e26e063de51f778560794ab0868bfdeec7fe62" }
 egui_dnd = "0.13"
 egui_dock = { version = "0.17", features = ["serde"] }
 egui_extras = { version = "0.32.3", features = ["image", "file", "gif", "webp"] }
-egui-mpv-glow = { git = "https://github.com/Trained-Monkey-Studios/egui-mpv-glow", rev = "97e26e063de51f778560794ab0868bfdeec7fe62" }
 egui_plot = "0.33"
+egui_solarized = "0.3"
 env_logger = "0.11.8"
 extism = "1.0"
 glow = "0.16.0"

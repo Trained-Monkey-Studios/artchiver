@@ -1,3 +1,4 @@
+use crate::ux::tutorial::{Tutorial, TutorialStep};
 use crate::{
     db::{
         model::OrderDir,
@@ -286,12 +287,45 @@ impl UxTag {
         &mut self,
         tag_set: &mut TagSet,
         host: &mut PluginHost,
+        mut tutorial: Tutorial<'_>,
         db_write: &DbWriteHandle,
         ui: &mut egui::Ui,
     ) {
-        if self.tag_all.is_none() {
-            ui.spinner();
+        if self.tags().is_none() || self.tags().unwrap().is_empty() {
+            // Show an apologetic message while the plugin does its work.
+            if tutorial.step() == TutorialStep::TagsIntro {
+                tutorial.frame(ui, |ui, _tutorial| {
+                    ui.heading("About Tags").scroll_to_me(None);
+                    ui.separator();
+                    ui.label("Please be patient while the tags load; it may take a few seconds, depending on your network speed. The progress bar next to the plugin will tell you when its almost done.");
+                    ui.label("");
+                    ui.label("In Artchiver, tags are how we find and browse artworks.");
+                    ui.label("");
+                    ui.label("The tags list can be quite long, so the tools at the top of this panel will allow us to filter and sort tags in various ways, once they show up.");
+                    ui.label("");
+                    ui.label("Below that, there will be a long list of tags, each of which has various controls to download and view artworks.");
+                });
+            }
             return;
+        }
+
+        // We have the tags now, so explain what to do next.
+        if tutorial.step() == TutorialStep::TagsIntro {
+            tutorial.frame(ui, |ui, tutorial| {
+                ui.heading("About Tags").scroll_to_me(None);
+                ui.separator();
+                ui.label("In Artchiver, tags are how we find and browse artworks.");
+                ui.label("");
+                ui.label("The tags list can be quite long, so the tools at the top of this panel allow us to filter and sort tags in various ways.");
+                ui.label("");
+                ui.label("Below that, there should be a long list of tags, each of which has various controls to download and view artworks.");
+                ui.label("");
+                ui.label("Click the next button and we will go over some of those controls. We will be using the `` tag, but the same tools will work on any tag in this list.");
+                ui.separator();
+                if ui.button("Next").clicked() {
+                    tutorial.next();
+                }
+            });
         }
 
         // Main textual filter bar
@@ -331,7 +365,7 @@ impl UxTag {
             .show_rows(ui, row_height, self.tag_filtered.len(), |ui, row_range| {
                 egui::Grid::new("tag_grid")
                     .num_columns(1)
-                    .spacing([0., 0.])
+                    .spacing([2., 2.])
                     .min_col_width(0.)
                     .show(ui, |ui| {
                         for tag_id in &self.tag_filtered[row_range] {

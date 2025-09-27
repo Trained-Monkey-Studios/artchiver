@@ -78,8 +78,13 @@ impl ArtchiverApp {
         } else {
             Default::default()
         };
-        app.toplevel
-            .startup(&app.environment().data_dir(), &app.db_read, cc);
+
+        app.toplevel.startup(
+            &cc.egui_ctx,
+            &app.environment().data_dir(),
+            &app.db_read,
+            cc,
+        );
         app
     }
 

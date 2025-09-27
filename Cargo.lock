@@ -318,15 +318,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "artchiver_sdk",
+ "catppuccin-egui",
  "clap",
  "crossbeam",
  "eframe",
  "egui",
+ "egui-aesthetix",
  "egui-mpv-glow",
  "egui_dnd",
  "egui_dock",
  "egui_extras",
  "egui_plot",
+ "egui_solarized",
  "env_logger",
  "extism",
  "glow",
@@ -871,6 +874,15 @@ dependencies = [
  "once_cell",
  "rustix 1.1.2",
  "winx",
+]
+
+[[package]]
+name = "catppuccin-egui"
+version = "5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62cca484c0a36096745da413bacbd290322fd194eb1ed2d9910deec392649f2a"
+dependencies = [
+ "egui",
 ]
 
 [[package]]
@@ -1598,6 +1610,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-aesthetix"
+version = "0.2.4"
+source = "git+https://github.com/thebashpotato/egui-aesthetix/?branch=dependabot%2Fcargo%2Fegui-0.32#3b57231d417b0d24e43b53b043698be3dde4db75"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "egui-mpv-glow"
 version = "0.32.3"
 source = "git+https://github.com/Trained-Monkey-Studios/egui-mpv-glow?rev=97e26e063de51f778560794ab0868bfdeec7fe62#97e26e063de51f778560794ab0868bfdeec7fe62"
@@ -1733,6 +1753,15 @@ dependencies = [
  "ahash",
  "egui",
  "emath",
+]
+
+[[package]]
+name = "egui_solarized"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4eead0bb188ecd5468ebc36e54cfa8183f8361e0a92d2f5e5e60d601680beb2"
+dependencies = [
+ "egui",
 ]
 
 [[package]]

@@ -736,8 +736,8 @@ impl UxWork {
 
             ui.label("Size");
             ui.add(
-                egui::Slider::new(&mut self.thumb_size, 128f32..=512f32)
-                    .step_by(1.)
+                egui::Slider::new(&mut self.thumb_size, 200f32..=500f32)
+                    .step_by(10.)
                     .fixed_decimals(0)
                     .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 })
                     .show_value(true)
