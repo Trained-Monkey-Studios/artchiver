@@ -291,7 +291,7 @@ impl UxTag {
         db_write: &DbWriteHandle,
         ui: &mut egui::Ui,
     ) {
-        if self.tags().is_none() || self.tags().unwrap().is_empty() {
+        if self.tags().is_none() || self.tags().expect("checked").is_empty() {
             // Show an apologetic message while the plugin does its work.
             if tutorial.step() == TutorialStep::TagsIntro {
                 tutorial.frame(ui, |ui, _tutorial| {

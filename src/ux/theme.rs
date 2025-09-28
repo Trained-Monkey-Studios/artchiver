@@ -1,5 +1,5 @@
 use eframe::epaint::Color32;
-use egui_aesthetix::Aesthetix;
+use egui_aesthetix::Aesthetix as _;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -117,21 +117,19 @@ impl ColorTheme {
                 Self::tweak_catppuccin(&mut style);
                 style
             }
-            Self::SolarizedLight => {
-                let mut style = egui::style::Style::default();
-                style.visuals = egui_solarized::Theme::solarized_light().into();
-                style
-            }
-            Self::SolarizedDark => {
-                let mut style = egui::style::Style::default();
-                style.visuals = egui_solarized::Theme::solarized_dark().into();
-                style
-            }
+            Self::SolarizedLight => egui::style::Style {
+                visuals: egui_solarized::Theme::solarized_light().into(),
+                ..Default::default()
+            },
+            Self::SolarizedDark => egui::style::Style {
+                visuals: egui_solarized::Theme::solarized_dark().into(),
+                ..Default::default()
+            },
         }
     }
 
     pub fn apply(&self, ctx: &egui::Context) {
-        ctx.set_style(self.style())
+        ctx.set_style(self.style());
     }
 
     fn tweak_aesthetix(mut style: egui::style::Style) -> egui::style::Style {
@@ -276,7 +274,7 @@ impl Theme {
 }
 
 pub fn rgb(v: u32) -> Color32 {
-    assert!(v <= 0xFFFFFF);
+    assert!(v <= 0xFFFFFF, "too big for rgb value");
     Color32::from_rgba_unmultiplied(
         ((v >> 16) & 0xFF) as u8,
         ((v >> 8) & 0xFF) as u8,
