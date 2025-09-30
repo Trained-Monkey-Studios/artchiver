@@ -213,7 +213,8 @@ jobs:
           if-no-files-found: error
 
   release_win:
-    name: Build Installer (Windows)
+    # if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    name: Build and Release an Installer (Windows)
     needs: [build_plugins]
     runs-on: ${{ matrix.os }}
     strategy:
@@ -229,26 +230,45 @@ jobs:
       - name: Build Installer ${{ matrix.TARGET }}
         run: echo "${{ matrix.TARGET }}"
 
-      - uses: milliewalky/setup-7-zip@v2
-
       - uses: actions/checkout@v4
 
+      # Get a libmpv into the path (note: paths need to match what is in build.rs)
+      - uses: milliewalky/setup-7-zip@v2
       - run: mkdir vendor\mpv-dev-${{ matrix.ARCH }}
       - run: 7z x -y -ovendor\mpv-dev-${{ matrix.ARCH }} vendor\mpv-dev-${{ matrix.ARCH }}-20250923-git-ee0f701.7z
       - run: mv vendor\mpv-dev-${{ matrix.ARCH }}\libmpv.dll.a vendor\mpv-dev-${{ matrix.ARCH }}\mpv.lib
       - run: dir vendor\mpv-dev-${{ matrix.ARCH }}\
 
+      # Make rust available
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: ${{ matrix.TARGET }}
           override: true
       - run: rustc -vV
+
+      # Install cargo-wix (TODO: we need wix too?)
+      - uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: cargo-wix
+
+      # Build the executable
       - uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release
 
+      # Extract info from Cargo.toml so we can inject the version into the filenames
+      - name: Get cargo package info
+        id: info
+        uses: rabbitson87/get-cargo-package-info@v1
+        with:
+          package: |
+            version
+            description
+
+      # Pull everything we need together into a single directory
       - run: mkdir package
       - run: mkdir package\plugins
       - run: cp target\release\artchiver.exe package\
@@ -258,57 +278,37 @@ jobs:
           pattern: "*.wasm"
           path: package\plugins\
           merge-multiple: true
-
       - run: dir package\
       - run: dir package\plugins\
 
-      - run: 7z a -tzip artchiver-win-installer-${{ github.sha }}.zip package\
-      - uses: actions/upload-artifact@v4
-        with:
-          name: artchiver-win-installer-${{ github.sha }}.zip
-          path: artchiver-win-installer-${{ github.sha }}.zip
-          if-no-files-found: error
+      # Build the release zip for anyone that doesn't want an installer
+      - run: 7z a -tzip artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.zip package\
+      - run: dir
+      #- uses: actions/upload-artifact@v4
+      #  with:
+      #    name: artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.zip
+      #    path: artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.zip
+      #    if-no-files-found: error
 
+      # Build an installer using wix
+      - run: cargo wix
+      - run: dir target\
+      - run: dir target\release\
+      #- uses: actions/upload-artifact@v4
+      #  with:
+      #    name: artchiver-win-installer-${{ fromJson(steps.info.outputs.object).package.version }}.msi
+      #    path: target\release\artchiver.msi
+      #    if-no-files-found: error
 
-  #build:
-  #  runs-on: ${{ matrix.os }}
-  #  strategy:
-  #    fail-fast: false
-  #    matrix:
-  #      include:
-  #      - os: macos-latest
-  #        TARGET: aarch64-apple-darwin
-
-  #      - os: macos-latest
-  #        TARGET: x86_64-apple-darwin
-
-  #      # WasmTime appears to lack support for armv6
-  #      #- os: ubuntu-latest
-  #      #  TARGET: arm-unknown-linux-musleabihf
-
-  #      - os: ubuntu-latest
-  #        TARGET: armv7-unknown-linux-musleabihf
-
-  #      - os: ubuntu-latest
-  #        TARGET: x86_64-unknown-linux-musl
-
-  #      - os: windows-latest
-  #        TARGET: x86_64-pc-windows-msvc
-  #        EXTENSION: .exe
-
-  #  steps:
-  #  - name: Building ${{ matrix.TARGET }}
-  #    run: echo "${{ matrix.TARGET }}"
-
-  #  - uses: actions/checkout@master
-  #  - uses: actions-rs/toolchain@v1.0.1
-  #    with:
-  #      toolchain: stable
-  #      target: wasm32-unknown-unknown, ${{ matrix.TARGET }}
-  #      override: true
-  #  - run: rustc -vV
-  #  - uses: actions-rs/cargo@v1
-  #    with:
-  #      use-cross: true
-  #      command: build
-  #      args: --release --target=${{ matrix.TARGET }}
+#      # NOTE: DEPRECATED: switch this to a maintained release action
+#      - name: Create Release
+#        id: create_release
+#        uses: actions/create-release@v1
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
+#        with:
+#          tag_name: ${{ fromJson(steps.info.outputs.object).package.version }}
+#          release_name: Release ${{ fromJson(steps.info.outputs.object).package.version }}
+#          body: ${{ fromJson(steps.info.outputs.object).package.description }}
+#          draft: false
+#          prerelease: false
