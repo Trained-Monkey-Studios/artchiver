@@ -1095,7 +1095,10 @@ impl UxWork {
             height: size,
             maintain_aspect_ratio: true,
         };
-        let works = self.work_matching_tag.as_ref().expect("no work after check");
+        let works = self
+            .work_matching_tag
+            .as_ref()
+            .expect("no work after check");
         if let Some(work_id) = self.work_filtered.get(work_offset)
             && let Some(work) = works.get(work_id)
             && let Some(screen_path) = work.screen_path()
