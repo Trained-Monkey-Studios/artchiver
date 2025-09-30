@@ -1,4 +1,3 @@
-use crate::ux::tutorial::{Tutorial, TutorialStep};
 use crate::{
     db::{
         model::OrderDir,
@@ -8,6 +7,7 @@ use crate::{
     },
     plugin::host::PluginHost,
     shared::{tag::TagSet, update::DataUpdate},
+    ux::tutorial::{NextButton, Tutorial, TutorialStep},
 };
 use artchiver_sdk::TagKind;
 use itertools::Itertools as _;
@@ -294,7 +294,7 @@ impl UxTag {
         if self.tags().is_none() || self.tags().expect("checked").is_empty() {
             // Show an apologetic message while the plugin does its work.
             if tutorial.step() == TutorialStep::TagsIntro {
-                tutorial.frame(ui, |ui, _tutorial| {
+                tutorial.frame(ui, |ui, tutorial| {
                     ui.heading("About Tags").scroll_to_me(None);
                     ui.separator();
                     ui.label("Please be patient while the tags load; it may take a few seconds, depending on your network speed. The progress bar next to the plugin will tell you when its almost done.");
@@ -304,6 +304,7 @@ impl UxTag {
                     ui.label("The tags list can be quite long, so the tools at the top of this panel will allow us to filter and sort tags in various ways, once they show up.");
                     ui.label("");
                     ui.label("Below that, there will be a long list of tags, each of which has various controls to download and view artworks.");
+                    tutorial.button_area(NextButton::None, ui);
                 });
             }
             return;
@@ -319,12 +320,7 @@ impl UxTag {
                 ui.label("The tags list can be quite long, so the tools at the top of this panel allow us to filter and sort tags in various ways.");
                 ui.label("");
                 ui.label("Below that, there should be a long list of tags, each of which has various controls to download and view artworks.");
-                ui.label("");
-                ui.label("Click the next button and we will go over some of those controls. We will be using the `` tag, but the same tools will work on any tag in this list.");
-                ui.separator();
-                if ui.button("Next").clicked() {
-                    tutorial.next();
-                }
+                tutorial.button_area(NextButton::Next, ui);
             });
         }
 
@@ -357,6 +353,7 @@ impl UxTag {
             }
         });
 
+        let mut show_tutorial = tutorial.step() == TutorialStep::TagsRefresh;
         let all_tags = self.tag_all.as_ref().expect("no tags after check");
         let text_style = egui::TextStyle::Body;
         let row_height = ui.text_style_height(&text_style);
@@ -368,6 +365,13 @@ impl UxTag {
                     .spacing([2., 2.])
                     .min_col_width(0.)
                     .show(ui, |ui| {
+                        if show_tutorial {
+                            tutorial.frame(ui, |ui, tutorial| {
+                                ui.label("Just as with tags, Artchiver will not download any works until you ask it. Pick a tag that you would like to see works for and press the ⟳ (refresh) button.");
+                                tutorial.button_area(NextButton::Skip, ui);
+                            });
+                            show_tutorial = false;
+                        }
                         for tag_id in &self.tag_filtered[row_range] {
                             let tag = all_tags.get(tag_id).expect("missing tag");
                             // Note: change is captured internally

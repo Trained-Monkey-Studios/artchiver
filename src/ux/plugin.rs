@@ -1,6 +1,6 @@
 use crate::{
     plugin::host::{PluginHandle, PluginHost},
-    ux::tutorial::{Tutorial, TutorialStep},
+    ux::tutorial::{NextButton, Tutorial, TutorialStep},
 };
 use artchiver_sdk::ConfigValue;
 use egui::{Margin, TextWrapMode};
@@ -32,20 +32,18 @@ impl UxPlugin {
                         ui.label("You can add new data sources by dropping a plugin for that data source into the plugins directory and restarting.");
                         ui.label("");
                         ui.label("New plugins are easy to build if a collection you want to access is not already supported. See the documentation to get started.");
-                        ui.separator();
-                        if ui.button("Next").clicked() {
-                            tutorial.next();
-                        }
+                        tutorial.button_area(NextButton::Next, ui);
                     });
                 }
 
                 for plugin in sync.plugins_mut() {
                     let name = plugin.name();
                     if tutorial.is_plugin_refresh_step(&name) {
-                        tutorial.frame(ui, |ui, _tutorial| {
+                        tutorial.frame(ui, |ui, tutorial| {
                             ui.heading("Fetching Tags").scroll_to_me(None);
                             ui.separator();
                             ui.label("First Step: Click on a plugin's \"⟳ Tags\" button to fetch or refresh the tags that plugin knows about. Do so now for the National Gallery of Art.");
+                            tutorial.button_area(NextButton::Skip, ui);
                         });
                     }
                     ui.horizontal(|ui| {

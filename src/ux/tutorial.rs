@@ -30,6 +30,13 @@ impl TutorialStep {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NextButton {
+    Next,
+    Skip,
+    None,
+}
+
 pub struct Tutorial<'a> {
     step: &'a mut TutorialStep,
     theme: &'a Theme,
@@ -72,6 +79,28 @@ impl<'a> Tutorial<'a> {
 
     pub fn next(&mut self) {
         *self.step = self.step.next();
+    }
+
+    pub fn button_area(&mut self, next: NextButton, ui: &mut egui::Ui) {
+        ui.separator();
+        ui.horizontal(|ui| {
+            let text = match next {
+                NextButton::Next => "Next",
+                NextButton::Skip => "Skip",
+                NextButton::None => "",
+            };
+            match next {
+                NextButton::Next | NextButton::Skip => {
+                    if ui.button(text).clicked() {
+                        self.next();
+                    }
+                }
+                NextButton::None => {}
+            }
+            if ui.button("Exit Tutorial").clicked() {
+                *self.step = TutorialStep::Finished;
+            }
+        });
     }
 
     pub fn frame<R>(

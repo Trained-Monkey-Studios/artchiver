@@ -56,7 +56,7 @@ clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
 egui = "0.32.3"
 egui-aesthetix = { git = "https://github.com/thebashpotato/egui-aesthetix/", branch = "dependabot/cargo/egui-0.32", features = ["nord", "standard", "tokyo_night"] }
-egui-mpv-glow = { git = "https://github.com/Trained-Monkey-Studios/egui-mpv-glow", rev = "97e26e063de51f778560794ab0868bfdeec7fe62" }
+egui-mpv-glow = { git = "https://github.com/Trained-Monkey-Studios/egui-mpv-glow", rev = "134a0cac92a7ce3d4941be2da2826662adc7fbc7" }
 egui_dnd = "0.13"
 egui_dock = { version = "0.17", features = ["serde"] }
 egui_extras = { version = "0.32.3", features = ["image", "file", "gif", "webp"] }
