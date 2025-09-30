@@ -752,9 +752,11 @@ impl UxWork {
         let size = self.thumb_size;
         let width = ui.available_width();
         let n_wide = (width / size).floor().max(1.) as usize;
-        let n_rows = self.work_filtered.len().div_ceil(n_wide);
 
         self.check_common_key_binds(tags, db_write, n_wide, ui);
+
+        // Note: if we deleted by keypress, the number of rows may have changed.
+        let n_rows = self.work_filtered.len().div_ceil(n_wide);
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -1093,11 +1095,10 @@ impl UxWork {
             height: size,
             maintain_aspect_ratio: true,
         };
-        if let Some(screen_path) = self
-            .work_matching_tag
-            .as_ref()
-            .expect("no work after check")[&self.work_filtered[work_offset]]
-            .screen_path()
+        let works = self.work_matching_tag.as_ref().expect("no work after check");
+        if let Some(work_id) = self.work_filtered.get(work_offset)
+            && let Some(work) = works.get(work_id)
+            && let Some(screen_path) = work.screen_path()
             && is_image(screen_path)
         {
             let screen_uri = format!("file://{}", self.data_dir.join(screen_path).display());
@@ -1107,11 +1108,9 @@ impl UxWork {
                 self.works_lru.get_or_insert(screen_uri, || 0);
             }
         }
-        if let Some(preview_path) = self
-            .work_matching_tag
-            .as_ref()
-            .expect("no work after check")[&self.work_filtered[work_offset]]
-            .preview_path()
+        if let Some(work_id) = self.work_filtered.get(work_offset)
+            && let Some(work) = works.get(work_id)
+            && let Some(preview_path) = work.preview_path()
         {
             // Note: non-image previews will just show up as an error icon; the thumbnailing
             //       should already have happened out of line.
@@ -1119,7 +1118,7 @@ impl UxWork {
             if !self.works_lru.contains(&preview_uri) {
                 ctx.try_load_image(&preview_uri, size_hint).ok();
                 self.per_frame_work_upload_count += 1;
-                self.works_lru.get_or_insert(preview_uri.clone(), || 0);
+                self.works_lru.get_or_insert(preview_uri, || 0);
             }
         }
     }
