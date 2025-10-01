@@ -65,8 +65,9 @@ impl Default for ArtchiverApp {
 impl ArtchiverApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+        // Note: we have to set a theme preference here or our style choices get overridden
+        //       between here and the first update somehow.
+        cc.egui_ctx.set_theme(egui::Theme::from_dark_mode(false));
 
         // Load or create a new app.
         let mut app: Self = if let Some(storage) = cc.storage {

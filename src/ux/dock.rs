@@ -349,8 +349,6 @@ impl UxToplevel {
 
         self.handle_shortcuts(ctx);
 
-        // ctx.request_repaint_after(Duration::from_micros(1_000_000 / 60));
-
         self.state.perf.sample("Total", frame_start.elapsed());
         Ok(())
     }
@@ -477,7 +475,7 @@ impl UxToplevel {
         if self.state.tutorial_step == TutorialStep::Beginning {
             egui::Window::new("Welcome to Artchiver")
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .auto_sized()
+                .default_size([400.0, 400.0])
                 .show(ctx, |ui| {
                     ui.heading("Welcome to Artchiver");
                     ui.separator();
