@@ -48,7 +48,7 @@ Source: "package\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion sign s
 Source: "package\libmpv-2.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "package\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "package\ReadMe.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "package\release-notes-{#MyAppVersion}.md"; DestDir: "{app}"; Flags: ignoreversion
+;Source: "package\release-notes-{#MyAppVersion}.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "package\plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
