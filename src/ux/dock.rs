@@ -3,7 +3,14 @@ use crate::{
     db::reader::DbReadHandle,
     plugin::host::PluginHost,
     shared::{performance::PerfTrack, progress::UpdateSource, update::DataUpdate},
-    ux::{db::UxDb, plugin::UxPlugin, tag::UxTag, work::UxWork},
+    ux::{
+        db::UxDb,
+        plugin::UxPlugin,
+        tag::UxTag,
+        theme::Theme,
+        tutorial::{Tutorial, TutorialStep},
+        work::UxWork,
+    },
 };
 use anyhow::Result;
 use egui::{self, Key, Modifiers};
@@ -31,8 +38,6 @@ pub enum WorkSelection {
     None,
     Work {
         offset: usize,
-        // zoom: f32,
-        // pan: (f32, f32),
     },
 }
 
@@ -81,6 +86,10 @@ pub struct UxState {
     show_preferences: bool,
     show_performance: bool,
     show_about: bool,
+    tutorial_step: TutorialStep,
+
+    // Preferences
+    theme: Theme,
 
     // Sub-UX
     db_ux: UxDb,
@@ -101,8 +110,13 @@ impl UxState {
         db_write: &DbWriteHandle,
         ui: &mut egui::Ui,
     ) {
-        self.tag_ux
-            .ui(self.work_ux.tag_selection_mut(), host, db_write, ui);
+        self.tag_ux.ui(
+            self.work_ux.tag_selection_mut(),
+            host,
+            Tutorial::new(&mut self.tutorial_step, &self.theme, ui.style().clone()),
+            db_write,
+            ui,
+        );
     }
 }
 
@@ -130,7 +144,15 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_plugins(&mut self, ui: &mut egui::Ui) {
-        self.state.plugin_ux.ui(self.sync, ui);
+        self.state.plugin_ux.ui(
+            self.sync,
+            Tutorial::new(
+                &mut self.state.tutorial_step,
+                &self.state.theme,
+                ui.style().clone(),
+            ),
+            ui,
+        );
     }
 
     fn show_database(&self, ui: &mut egui::Ui) {
@@ -160,7 +182,7 @@ impl<'a> SyncViewer<'a> {
             .info_ui(self.state.tag_ux.tags(), self.db_write, self.sync, ui);
     }
 
-    fn render_slideshow(&mut self, ctx: &egui::Context) {
+    fn render_slideshow(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Bail back to the browser if we lose our selection.
         if !self.state.work_ux.has_selection() {
             self.state.mode = UxMode::Browser;
@@ -168,7 +190,7 @@ impl<'a> SyncViewer<'a> {
         }
         self.state
             .work_ux
-            .slideshow_ui(self.state.tag_ux.tags(), self.db_write, ctx);
+            .slideshow_ui(self.state.tag_ux.tags(), self.db_write, ctx, frame);
     }
 }
 
@@ -186,8 +208,16 @@ impl TabViewer for SyncViewer<'_> {
             "Tags" => self.show_tags(ui),
             "Works" => self.show_works(ui),
             "Work Info" => self.show_info(ui),
+            "Artists" => {
+                // TODO: implement artists too!
+                ui.label("TODO");
+            }
             name => panic!("Unknown tab: {name}"),
         }
+    }
+
+    fn is_closeable(&self, _tab: &Self::Tab) -> bool {
+        true
     }
 }
 
@@ -218,7 +248,7 @@ impl Default for UxToplevel {
             surface.split_right(right_node, 0.8, vec![TabMetadata::new("Work Info")]);
         surface.split_below(
             galleries_node,
-            0.2,
+            0.4,
             vec![TabMetadata::new("Tags"), TabMetadata::new("Artists")],
         );
         Self {
@@ -230,9 +260,19 @@ impl Default for UxToplevel {
 }
 
 impl UxToplevel {
-    pub fn startup(&mut self, data_dir: &Path, db: &DbReadHandle) {
+    pub fn startup(
+        &mut self,
+        ctx: &egui::Context,
+        data_dir: &Path,
+        db: &DbReadHandle,
+        cc: &eframe::CreationContext<'_>,
+    ) {
+        self.state.theme.apply(ctx);
         self.state.tag_ux.startup(db);
-        self.state.work_ux.startup(data_dir, db);
+        self.state
+            .work_ux
+            .startup(data_dir, db, cc)
+            .expect("Failed to load works ui");
     }
 
     pub fn handle_updates(&mut self, updates: &[DataUpdate], db: &DbReadHandle) {
@@ -263,6 +303,7 @@ impl UxToplevel {
         db_write: &DbWriteHandle,
         host: &mut PluginHost,
         ctx: &egui::Context,
+        frame: &mut eframe::Frame,
     ) -> Result<()> {
         let frame_start = Instant::now();
 
@@ -296,18 +337,17 @@ impl UxToplevel {
                     });
 
                 // Show any windows that are open
+                self.render_tutorial(ctx);
                 self.render_preferences(ctx);
                 self.render_performance(ctx);
                 self.render_about(ctx);
             }
             UxMode::Slideshow => {
-                SyncViewer::wrap(host, &mut self.state, db, db_write).render_slideshow(ctx);
+                SyncViewer::wrap(host, &mut self.state, db, db_write).render_slideshow(ctx, frame);
             }
         }
 
         self.handle_shortcuts(ctx);
-
-        // ctx.request_repaint_after(Duration::from_micros(1_000_000 / 60));
 
         self.state.perf.sample("Total", frame_start.elapsed());
         Ok(())
@@ -384,17 +424,43 @@ impl UxToplevel {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("Preferences...").clicked() {
-                        self.state.show_preferences = true;
-                    }
-                    ui.separator();
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
-                ui.menu_button("Help", |ui| {
-                    if ui.button("Performance...").clicked() {
+                ui.menu_button("Edit", |ui| {
+                    if ui.button("Preferences...").clicked() {
+                        self.state.show_preferences = true;
+                    }
+                });
+                ui.menu_button("View", |ui| {
+                    const TABS: [&str; 6] =
+                        ["Plugins", "Tags", "Works", "Work Info", "Artists", "Data"];
+                    let mut have_section = false;
+                    for name in &TABS {
+                        let closed = self
+                            .dock_state
+                            .find_tab_from(|tab| &tab.title == name)
+                            .is_none();
+                        if closed {
+                            have_section = true;
+                            if ui.button("Plugins").clicked() {
+                                self.dock_state.push_to_focused_leaf(TabMetadata::new(name));
+                            }
+                        }
+                    }
+                    if have_section {
+                        ui.separator();
+                    }
+                    if ui.button("Performance Monitor...").clicked() {
                         self.state.show_performance = true;
+                    }
+                });
+                ui.menu_button("Help", |ui| {
+                    if self.state.tutorial_step != TutorialStep::Beginning
+                        && ui.button("Restart Tutorial...").clicked()
+                    {
+                        self.state.tutorial_step = TutorialStep::Beginning;
                     }
                     ui.separator();
                     if ui.button("About...").clicked() {
@@ -405,11 +471,39 @@ impl UxToplevel {
         });
     }
 
+    fn render_tutorial(&mut self, ctx: &egui::Context) {
+        if self.state.tutorial_step == TutorialStep::Beginning {
+            egui::Window::new("Welcome to Artchiver")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .default_size([400.0, 400.0])
+                .show(ctx, |ui| {
+                    ui.heading("Welcome to Artchiver");
+                    ui.separator();
+                    ui.label("Artchiver will help you download, browse, and enjoy the world's art, from classical paintings to podcasts.");
+                    ui.label("");
+                    ui.label("Artchiver is streamlined for efficient search and browsing rather than discoverability, so it can be a bit intimidating at first.");
+                    ui.label("");
+                    ui.label("This tutorial will show you the ropes and get you up to speed fast.");
+                    ui.label("");
+                    self.state.theme.ui(ui);
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Learn More").clicked() {
+                            self.state.tutorial_step = TutorialStep::PluginsIntro;
+                        }
+                        if ui.button("Skip Tutorial").clicked() {
+                            self.state.tutorial_step = TutorialStep::Finished;
+                        }
+                    })
+                });
+        }
+    }
+
     fn render_preferences(&mut self, ctx: &egui::Context) {
         egui::Window::new("Preferences")
             .open(&mut self.state.show_preferences)
             .show(ctx, |ui| {
-                egui::widgets::global_theme_preference_buttons(ui);
+                self.state.theme.ui(ui);
             });
     }
 

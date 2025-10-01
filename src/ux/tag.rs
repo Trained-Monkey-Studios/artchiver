@@ -7,6 +7,7 @@ use crate::{
     },
     plugin::host::PluginHost,
     shared::{tag::TagSet, update::DataUpdate},
+    ux::tutorial::{NextButton, Tutorial, TutorialStep},
 };
 use artchiver_sdk::TagKind;
 use itertools::Itertools as _;
@@ -70,10 +71,10 @@ impl TagSourceFilter {
         let mut options = host.plugins().map(|p| p.name()).collect::<Vec<_>>();
         options.insert(0, "All".to_owned());
         options.push("Hidden".to_owned());
-        if let Some(source) = self.source.as_deref() {
-            if let Some((offset, _)) = options.iter().find_position(|v| v == &source) {
-                selected = offset;
-            }
+        if let Some(source) = self.source.as_deref()
+            && let Some((offset, _)) = options.iter().find_position(|v| v == &source)
+        {
+            selected = offset;
         }
         let prior = selected;
         egui::ComboBox::new("tag_filter_sources", "Source")
@@ -206,19 +207,19 @@ impl UxTag {
                     db.get_tag_local_counts();
                 }
                 DataUpdate::TagFavoriteStatusChanged { tag_id, favorite } => {
-                    if let Some(tags) = &mut self.tag_all {
-                        if let Some(tag) = tags.get_mut(tag_id) {
-                            tag.set_favorite(*favorite);
-                            self.reproject_tags();
-                        }
+                    if let Some(tags) = &mut self.tag_all
+                        && let Some(tag) = tags.get_mut(tag_id)
+                    {
+                        tag.set_favorite(*favorite);
+                        self.reproject_tags();
                     }
                 }
                 DataUpdate::TagHiddenStatusChanged { tag_id, hidden } => {
-                    if let Some(tags) = &mut self.tag_all {
-                        if let Some(tag) = tags.get_mut(tag_id) {
-                            tag.set_hidden(*hidden);
-                            self.reproject_tags();
-                        }
+                    if let Some(tags) = &mut self.tag_all
+                        && let Some(tag) = tags.get_mut(tag_id)
+                    {
+                        tag.set_hidden(*hidden);
+                        self.reproject_tags();
                     }
                 }
                 _ => {}
@@ -286,12 +287,41 @@ impl UxTag {
         &mut self,
         tag_set: &mut TagSet,
         host: &mut PluginHost,
+        mut tutorial: Tutorial<'_>,
         db_write: &DbWriteHandle,
         ui: &mut egui::Ui,
     ) {
-        if self.tag_all.is_none() {
-            ui.spinner();
+        if self.tags().is_none() || self.tags().expect("checked").is_empty() {
+            // Show an apologetic message while the plugin does its work.
+            if tutorial.step() == TutorialStep::TagsIntro {
+                tutorial.frame(ui, |ui, tutorial| {
+                    ui.heading("About Tags").scroll_to_me(None);
+                    ui.separator();
+                    ui.label("Please be patient while the tags load; it may take a few seconds, depending on your network speed. The progress bar next to the plugin will tell you when its almost done.");
+                    ui.label("");
+                    ui.label("In Artchiver, tags are how we find and browse artworks.");
+                    ui.label("");
+                    ui.label("The tags list can be quite long, so the tools at the top of this panel will allow us to filter and sort tags in various ways, once they show up.");
+                    ui.label("");
+                    ui.label("Below that, there will be a long list of tags, each of which has various controls to download and view artworks.");
+                    tutorial.button_area(NextButton::None, ui);
+                });
+            }
             return;
+        }
+
+        // We have the tags now, so explain what to do next.
+        if tutorial.step() == TutorialStep::TagsIntro {
+            tutorial.frame(ui, |ui, tutorial| {
+                ui.heading("About Tags").scroll_to_me(None);
+                ui.separator();
+                ui.label("In Artchiver, tags are how we find and browse artworks.");
+                ui.label("");
+                ui.label("The tags list can be quite long, so the tools at the top of this panel allow us to filter and sort tags in various ways.");
+                ui.label("");
+                ui.label("Below that, there should be a long list of tags, each of which has various controls to download and view artworks.");
+                tutorial.button_area(NextButton::Next, ui);
+            });
         }
 
         // Main textual filter bar
@@ -323,6 +353,7 @@ impl UxTag {
             }
         });
 
+        let mut show_tutorial = tutorial.step() == TutorialStep::TagsRefresh;
         let all_tags = self.tag_all.as_ref().expect("no tags after check");
         let text_style = egui::TextStyle::Body;
         let row_height = ui.text_style_height(&text_style);
@@ -331,9 +362,16 @@ impl UxTag {
             .show_rows(ui, row_height, self.tag_filtered.len(), |ui, row_range| {
                 egui::Grid::new("tag_grid")
                     .num_columns(1)
-                    .spacing([0., 0.])
+                    .spacing([2., 2.])
                     .min_col_width(0.)
                     .show(ui, |ui| {
+                        if show_tutorial {
+                            tutorial.frame(ui, |ui, tutorial| {
+                                ui.label("Just as with tags, Artchiver will not download any works until you ask it. Pick a tag that you would like to see works for and press the ⟳ (refresh) button.");
+                                tutorial.button_area(NextButton::Skip, ui);
+                            });
+                            show_tutorial = false;
+                        }
                         for tag_id in &self.tag_filtered[row_range] {
                             let tag = all_tags.get(tag_id).expect("missing tag");
                             // Note: change is captured internally

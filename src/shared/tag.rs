@@ -1,9 +1,13 @@
-use crate::db::writer::DbWriteHandle;
-use crate::db::{
-    models::tag::{DbTag, TagId},
-    models::work::DbWork,
+use crate::{
+    db::{
+        models::{
+            tag::{DbTag, TagId},
+            work::DbWork,
+        },
+        writer::DbWriteHandle,
+    },
+    plugin::host::PluginHost,
 };
-use crate::plugin::host::PluginHost;
 use itertools::Itertools as _;
 use log::{trace, warn};
 use serde::{Deserialize, Serialize};
@@ -185,10 +189,10 @@ impl TagSet {
                 }
             }
         }
-        if let Some(remove) = remove {
-            if let Some(tag) = tags.get(&remove) {
-                self.unselect(tag);
-            }
+        if let Some(remove) = remove
+            && let Some(tag) = tags.get(&remove)
+        {
+            self.unselect(tag);
         }
 
         let mut unselect = None;
@@ -205,10 +209,10 @@ impl TagSet {
                 }
             }
         }
-        if let Some(unselect) = unselect {
-            if let Some(tag) = tags.get(&unselect) {
-                self.unselect(tag);
-            }
+        if let Some(unselect) = unselect
+            && let Some(tag) = tags.get(&unselect)
+        {
+            self.unselect(tag);
         }
 
         if !self.is_empty() {

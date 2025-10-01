@@ -39,10 +39,13 @@ o Fix concurrent download of images from multiple plugins
 o Rate-limit the refresh rate when receiving heavy requests
 o Return works incrementally
 o Only scroll to selection on a move event or leaving slideshow
-* make font size configurable via preferences menu
+o make font size configurable via preferences menu
 * show fetch state as in progress for incremental fetch (spinner next to count)
+* kill in progress reads if we no longer need them
+* Highlight the tag that is actually queried somehow
+* Multiple works panels, each with different query context
 * cache control: actually obey timeouts and give ways to reset it in certain scopes
-* add a back button to return to previous states
+* show unique images if same md5sum is in multiple open-access collections
 * add a refresh-all-*visible*-tags button
 * unify display of works with the same MD5sum on their data
 * make more long-running DB operations incremental and cancelable
@@ -51,3 +54,5 @@ o Only scroll to selection on a move event or leaving slideshow
 * Expand work with ALL THE DATA
 * podcasts? feed reader?
 * Find more open-access galleries
+* Build a local-directory importer
+* Build a peer-to-peer importer

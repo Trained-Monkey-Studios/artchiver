@@ -1,4 +1,11 @@
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*.*.*"
+  pull_request:
+  workflow_dispatch:
 
 name: CI
 
@@ -7,55 +14,8 @@ env:
   RUSTDOCFLAGS: -D warnings
 
 jobs:
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --all-features
-
-   # Artchiver makes no sense to run as a web-app.
-   # check_wasm:
-   #   name: Check wasm32
-   #   runs-on: ubuntu-latest
-   #   steps:
-   #     - uses: actions/checkout@v4
-   #     - uses: actions-rs/toolchain@v1
-   #       with:
-   #         profile: minimal
-   #         toolchain: stable
-   #         target: wasm32-unknown-unknown
-   #         override: true
-   #     - uses: actions-rs/cargo@v1
-   #       with:
-   #         command: check
-   #         args: --all-features --lib --target wasm32-unknown-unknown
-
-  test:
-    name: Test Suite
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - run: sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-
-  fmt:
-    name: Rustfmt
+  fmt_main:
+    name: Check fmt (artchiver)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,13 +25,38 @@ jobs:
           toolchain: stable
           override: true
           components: rustfmt
+      - run: rustc -vV
       - uses: actions-rs/cargo@v1
         with:
           command: fmt
           args: --all -- --check
 
-  clippy:
-    name: Clippy
+  fmt_plugins:
+    name: Check fmt (plugins/${{matrix.crate}})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: artchiver_sdk
+          - crate: artx-demo
+          - crate: artx-met
+          - crate: artx-nga
+          - crate: artx-podcast
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt
+      - run: rustc -vV
+      - working-directory: plugins/${{ matrix.crate }}
+        run: cargo fmt --all -- --check
+
+  clippy_main:
+    name: Clippy (artchiver)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,66 +66,282 @@ jobs:
           toolchain: stable
           override: true
           components: clippy
+      - run: rustc -vV
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: -- -D warnings
+          args: --workspace --all-targets -- -D warnings
 
-  #trunk:
-  #  name: trunk
-  #  runs-on: ubuntu-latest
-  #  steps:
-  #    - uses: actions/checkout@v4
-  #    - uses: actions-rs/toolchain@v1
-  #      with:
-  #        profile: minimal
-  #        toolchain: 1.85.0
-  #        target: wasm32-unknown-unknown
-  #        override: true
-  #    - name: Download and install Trunk binary
-  #      run: wget -qO- https://github.com/thedodd/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
-  #    - name: Build
-  #      run: ./trunk build
+  clippy_plugins:
+    name: Clippy (plugins/${{matrix.crate}})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: artchiver_sdk
+          - crate: artx-demo
+          - crate: artx-met
+          - crate: artx-nga
+          - crate: artx-podcast
+    steps:
+      - run: echo "Clippy ${{ matrix.crate }}"
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+          target: wasm32-unknown-unknown
+      - run: rustc -vV
+      - working-directory: plugins/${{ matrix.crate }}
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
 
-  build:
+  test_nix:
+    name: Test Suite (Unix/Mac)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-        - os: macos-latest
-          TARGET: aarch64-apple-darwin
+          - os: ubuntu-latest
+            TARGET: arm-unknown-linux-musleabihf
 
-        - os: macos-latest
-          TARGET: x86_64-apple-darwin
+          - os: ubuntu-latest
+            TARGET: armv7-unknown-linux-musleabihf
 
-        # WasmTime appears to lack support for armv6
-        #- os: ubuntu-latest
-        #  TARGET: arm-unknown-linux-musleabihf
+          - os: ubuntu-latest
+            TARGET: x86_64-unknown-linux-musl
 
-        - os: ubuntu-latest
-          TARGET: armv7-unknown-linux-musleabihf
+          - os: macos-15
+            TARGET: aarch64-apple-darwin
 
-        - os: ubuntu-latest
-          TARGET: x86_64-unknown-linux-musl
-
-        - os: windows-latest
-          TARGET: x86_64-pc-windows-msvc
-          EXTENSION: .exe
+          - os: macos-15-intel
+            TARGET: x86_64-apple-darwin
 
     steps:
-    - name: Building ${{ matrix.TARGET }}
-      run: echo "${{ matrix.TARGET }}"
+      - name: Testing ${{ matrix.TARGET }}
+        run: echo "${{ matrix.TARGET }}"
 
-    - uses: actions/checkout@master
-    - uses: actions-rs/toolchain@v1.0.1
-      with:
-        toolchain: stable
-        target: ${{ matrix.TARGET }}
-        override: true
+      - uses: amitie10g/install-package@v1
+        with:
+          brew: mpv
+          apt: libmpv-dev
 
-    - uses: actions-rs/cargo@v1
-      with:
-        use-cross: true
-        command: build
-        args: --verbose --release --target=${{ matrix.TARGET }}
+      - uses: actions/checkout@v4
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.TARGET }}
+          override: true
+      - run: rustc -vV
+
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --workspace
+
+  test_win:
+    name: Test Suite (Windows)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            ARCH: x86_64
+            TARGET: x86_64-pc-windows-msvc
+            EXTENSION: .exe
+
+    steps:
+      - name: Testing ${{ matrix.TARGET }}
+        run: echo "${{ matrix.TARGET }}"
+
+      - uses: milliewalky/setup-7-zip@v2
+
+      - uses: actions/checkout@v4
+
+      - run: mkdir vendor\mpv-dev-${{ matrix.ARCH }}
+      - run: 7z x -y -ovendor\mpv-dev-${{ matrix.ARCH }} vendor\mpv-dev-${{ matrix.ARCH }}-20250923-git-ee0f701.7z
+      - run: mv vendor\mpv-dev-${{ matrix.ARCH }}\libmpv.dll.a vendor\mpv-dev-${{ matrix.ARCH }}\mpv.lib
+      - run: dir vendor\mpv-dev-${{ matrix.ARCH }}\
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.TARGET }}
+          override: true
+      - run: rustc -vV
+
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --workspace
+
+  build_plugins:
+    name: Build WASM (plugins/${{matrix.crate}})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: artx-met
+            wasm:  artx_met.wasm
+          - crate: artx-nga
+            wasm:  artx_nga.wasm
+          - crate: artx-podcast
+            wasm:  artx_podcast.wasm
+    steps:
+      - run: echo "Build WASM ${{ matrix.crate }}"
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+          target: wasm32-unknown-unknown
+      - run: rustc -vV
+      - working-directory: plugins/${{ matrix.crate }}
+        run: cargo build --release --target wasm32-unknown-unknown
+      - working-directory: plugins/${{ matrix.crate }}
+        run: ls -lR
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.wasm }}
+          path: plugins/${{ matrix.crate }}/target/wasm32-unknown-unknown/release/${{ matrix.wasm }}
+          if-no-files-found: error
+
+  build_release_win:
+    # if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    name: Build and Release an Installer (Windows)
+    needs: [build_plugins]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            ARCH: x86_64
+            TARGET: x86_64-pc-windows-msvc
+            EXTENSION: .exe
+
+    steps:
+      - name: Build Installer ${{ matrix.TARGET }}
+        run: echo "${{ matrix.TARGET }}"
+
+      - uses: actions/checkout@v4
+
+      # Get a libmpv into the path (note: paths need to match what is in build.rs)
+      - uses: milliewalky/setup-7-zip@v2
+      - run: mkdir vendor\mpv-dev-${{ matrix.ARCH }}
+      - run: 7z x -y -ovendor\mpv-dev-${{ matrix.ARCH }} vendor\mpv-dev-${{ matrix.ARCH }}-20250923-git-ee0f701.7z
+      - run: mv vendor\mpv-dev-${{ matrix.ARCH }}\libmpv.dll.a vendor\mpv-dev-${{ matrix.ARCH }}\mpv.lib
+      - run: dir vendor\mpv-dev-${{ matrix.ARCH }}\
+
+      # Make rust available
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.TARGET }}
+          override: true
+      - run: rustc -vV
+
+      # Build the executable
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+
+      # Extract info from Cargo.toml so we can inject the version into the filenames
+      - name: Get cargo package info
+        id: info
+        uses: rabbitson87/get-cargo-package-info@v1
+        with:
+          package: |
+            version
+            description
+
+      # Pull everything we need together into a single directory
+      - run: mkdir package
+      - run: mkdir package\plugins
+      - run: cp target\release\artchiver.exe package\
+      - run: cp vendor\mpv-dev-${{ matrix.ARCH }}\libmpv-2.dll package\
+      - run: cp LICENSE package\
+      - run: cp doc\ReadMe.md package\
+      - run: cp doc\release-notes-${{ fromJson(steps.info.outputs.object).package.version }}.md package\
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: "*.wasm"
+          path: package\plugins\
+          merge-multiple: true
+      - run: dir package\
+      - run: dir package\plugins\
+
+      # Build the release zip for anyone that doesn't want an installer
+      - run: 7z a -t7z artchiver-windows-x86_64-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z package\
+      - run: dir
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artchiver-windows-x86_64-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
+          path: artchiver-windows-x86_64-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
+
+      # Build an installer using Inno Setup
+      - name: Install InnoSetup
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://jrsoftware.org/download.php/is.exe -OutFile D:\\is.exe
+          Start-Process -FilePath D:\\is.exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait
+      - name: Run ISCC
+        shell: pwsh
+        run: Start-Process -FilePath "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" -ArgumentList "/O+", "/O.", "/DMyAppVersion=${{ fromJson(steps.info.outputs.object).package.version }}", "installer.iss" -Wait
+      #- name: Compile .ISS to .EXE Installer
+      #  uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+      #  with:
+      #    path: installer.iss
+      #    options: /O+ /O. /DMyAppVersion=${{ fromJson(steps.info.outputs.object).package.version }}
+      - run: dir
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artchiver-windows-x86_64-installer-${{ fromJson(steps.info.outputs.object).package.version }}.exe
+          path: artchiver-windows-x86_64-installer-${{ fromJson(steps.info.outputs.object).package.version }}.exe
+          if-no-files-found: error
+
+  # Collect all of our built release items and publish them, if we are pushing to main
+  publish_release:
+    if: github.ref_type == 'tag'
+    #if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    name: Release the new version
+    needs: [build_release_win]
+    runs-on: ubuntu-latest
+    steps:
+      # Get access to version number
+      - uses: actions/checkout@v4
+      - name: Get cargo package info
+        id: info
+        uses: rabbitson87/get-cargo-package-info@v1
+        with:
+          package: |
+            version
+            description
+
+      # Download our release artifacts to local, so we can re-upload them
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: artchiver-*
+          merge-multiple: true
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Artchiver Release ${{ fromJson(steps.info.outputs.object).package.version }}
+          body_path: "doc/release-notes-${{ fromJson(steps.info.outputs.object).package.version }}.md"
+          preserve_order: true
+          fail_on_unmatched_files: true
+          make_latest: true
+          files: |
+            artchiver-windows-x86_64-installer-${{ fromJson(steps.info.outputs.object).package.version }}.exe
+            artchiver-windows-x86_64-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
+

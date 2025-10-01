@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::Result;
 use egui::{Key, Margin, Modifiers, PointerButton, Rect, Sense, SizeHint, Vec2, include_image};
-use egui_video::{AudioDevice, Player};
+use egui_mpv_glow::MpvPlayer;
 use itertools::Itertools as _;
 use log::{info, trace};
 use lru::LruCache;
@@ -73,26 +73,29 @@ impl WorkOrder {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum WorkVisibility {
     #[default]
-    All,
+    Normal,
     Favorites,
-    Hidden,
+    RecycleBin,
+    All,
 }
 
 impl WorkVisibility {
     pub fn ui(&mut self, ui: &mut egui::Ui) -> bool {
         let mut selected = match self {
-            Self::All => 0,
+            Self::Normal => 0,
             Self::Favorites => 1,
-            Self::Hidden => 2,
+            Self::RecycleBin => 2,
+            Self::All => 3,
         };
-        let labels = ["All", "Favorites", "Hidden"];
+        let labels = ["Normal", "Favorites", "Recycle Bin", "All"];
         egui::ComboBox::new("work_visibility", "")
             .wrap_mode(egui::TextWrapMode::Truncate)
             .show_index(ui, &mut selected, labels.len(), |i| labels[i]);
         let next = match selected {
-            0 => Self::All,
+            0 => Self::Normal,
             1 => Self::Favorites,
-            2 => Self::Hidden,
+            2 => Self::RecycleBin,
+            3 => Self::All,
             _ => panic!("invalid column selected"),
         };
         let changed = *self != next;
@@ -165,10 +168,6 @@ pub enum ScrollRequestKind {
     LeaveSlideshow,
 }
 
-fn init_audio_device() -> AudioDevice {
-    AudioDevice::new().expect("Failed to create audio output")
-}
-
 /// Work caching strategy:
 ///
 /// Works are unbounded, but plan to scale to O(10-100M) works. This is too much for us to just
@@ -218,11 +217,11 @@ pub struct UxWork {
     #[serde(skip, default = "LruCache::unbounded")]
     works_lru: LruCache<String, u32>,
 
-    #[serde(skip, default = "init_audio_device")]
-    audio_device: AudioDevice,
+    #[serde(skip, default)]
+    mpv: MpvPlayer,
 
     #[serde(skip, default)]
-    video_player: Option<Player>,
+    has_loaded_media: bool,
 }
 
 impl Default for UxWork {
@@ -242,8 +241,8 @@ impl Default for UxWork {
             work_filtered: Vec::new(),
             data_dir: PathBuf::new(),
             works_lru: LruCache::unbounded(),
-            audio_device: init_audio_device(),
-            video_player: None,
+            mpv: MpvPlayer::default(),
+            has_loaded_media: false,
         }
     }
 }
@@ -252,7 +251,12 @@ impl UxWork {
     const LRU_CACHE_SIZE: usize = 500;
     const MAX_PER_FRAME_UPLOADS: usize = 3;
 
-    pub fn startup(&mut self, data_dir: &Path, db: &DbReadHandle) {
+    pub fn startup(
+        &mut self,
+        data_dir: &Path,
+        db: &DbReadHandle,
+        cc: &eframe::CreationContext<'_>,
+    ) -> Result<()> {
         trace!("Starting up work UX");
 
         self.data_dir = data_dir.to_owned();
@@ -263,6 +267,10 @@ impl UxWork {
         } else if self.tag_selection.is_empty() {
             db.get_favorite_works();
         }
+
+        self.mpv.init_with_eframe(cc)?;
+
+        Ok(())
     }
 
     pub fn handle_updates(
@@ -316,15 +324,15 @@ impl UxWork {
                     screen_path,
                     archive_path,
                 } => {
-                    if let Some(works) = self.work_matching_tag.as_mut() {
-                        if let Some(work) = works.get_mut(id) {
-                            let preview_path = self.data_dir.join(preview_path);
-                            let screen_path = self.data_dir.join(screen_path);
-                            let archive_path = archive_path.as_ref().map(|a| self.data_dir.join(a));
-                            work.set_paths(preview_path, screen_path, archive_path);
-                            if self.work_reproject_timer.is_none() {
-                                self.work_reproject_timer = Some(Instant::now());
-                            }
+                    if let Some(works) = self.work_matching_tag.as_mut()
+                        && let Some(work) = works.get_mut(id)
+                    {
+                        let preview_path = self.data_dir.join(preview_path);
+                        let screen_path = self.data_dir.join(screen_path);
+                        let archive_path = archive_path.as_ref().map(|a| self.data_dir.join(a));
+                        work.set_paths(preview_path, screen_path, archive_path);
+                        if self.work_reproject_timer.is_none() {
+                            self.work_reproject_timer = Some(Instant::now());
                         }
                     }
                 }
@@ -353,19 +361,23 @@ impl UxWork {
 
     pub fn set_selected(&mut self, selected: usize) {
         self.selected = Some(selected);
-        self.video_player = None;
         self.slide_xform = ZoomPan::default();
+        self.mpv.pause_async().ok();
+        self.has_loaded_media = false;
     }
 
     pub fn clear_selected(&mut self) {
         self.selected = None;
-        self.video_player = None;
         self.slide_xform = ZoomPan::default();
+        self.mpv.pause_async().ok();
+        self.has_loaded_media = false;
     }
 
     pub fn on_leave_slideshow(&mut self) {
+        trace!("Leaving slideshow");
         self.scroll_to_selected = ScrollRequestKind::LeaveSlideshow;
-        self.video_player = None;
+        self.mpv.pause_async().ok();
+        self.has_loaded_media = false;
     }
 
     fn ensure_works_up_to_date_with_tag_selection(
@@ -402,9 +414,10 @@ impl UxWork {
                 .filter(|work| work.screen_path().is_some())
                 // Filter out hidden or favorite works if we're not showing them.
                 .filter(|work| {
-                    (self.showing == WorkVisibility::All && !work.hidden())
+                    (self.showing == WorkVisibility::Normal && !work.hidden())
                         || (self.showing == WorkVisibility::Favorites && work.favorite())
-                        || (self.showing == WorkVisibility::Hidden && work.hidden())
+                        || (self.showing == WorkVisibility::RecycleBin && work.hidden())
+                        || self.showing == WorkVisibility::All
                 })
                 // Only show works that match the current tag selection.
                 .filter(|work| self.tag_selection.matches(work))
@@ -412,10 +425,10 @@ impl UxWork {
                 .filter(|work| {
                     if let Some(tags) = tags {
                         for tag_id in work.tags() {
-                            if let Some(tag) = tags.get(&tag_id) {
-                                if tag.hidden() {
-                                    return false;
-                                }
+                            if let Some(tag) = tags.get(&tag_id)
+                                && tag.hidden()
+                            {
+                                return false;
                             }
                         }
                     }
@@ -451,10 +464,14 @@ impl UxWork {
     }
 
     fn get_pressed_keys(ui: &egui::Ui, keys: &[Key]) -> HashSet<Key> {
+        Self::get_pressed_keys_with_mods(ui, Modifiers::NONE, keys)
+    }
+
+    fn get_pressed_keys_with_mods(ui: &egui::Ui, mods: Modifiers, keys: &[Key]) -> HashSet<Key> {
         let mut pressed = HashSet::new();
         ui.ctx().input_mut(|input| {
             for key in keys {
-                if input.consume_key(Modifiers::NONE, *key) {
+                if input.consume_key(mods, *key) {
                     pressed.insert(*key);
                 }
             }
@@ -543,7 +560,22 @@ impl UxWork {
     }
 
     fn check_slideshow_key_binds(&mut self, ui: &egui::Ui) {
-        let pressed = Self::get_pressed_keys(ui, &[Key::Equals, Key::Plus, Key::Minus, Key::Num0]);
+        let pressed = Self::get_pressed_keys(
+            ui,
+            &[
+                Key::Equals,
+                Key::Plus,
+                Key::Minus,
+                Key::Num0,
+                Key::Comma,
+                Key::Period,
+            ],
+        );
+        let ctrl_pressed = Self::get_pressed_keys_with_mods(
+            ui,
+            Modifiers::CTRL,
+            &[Key::ArrowLeft, Key::ArrowRight],
+        );
         if pressed.contains(&Key::Plus) || pressed.contains(&Key::Equals) {
             self.slide_xform.zoom_in(ui.available_size() / 2.);
         }
@@ -553,12 +585,24 @@ impl UxWork {
         if pressed.contains(&Key::Num0) {
             self.slide_xform.reset();
         }
+        if pressed.contains(&Key::Comma) {
+            self.mpv.seek_frame_backward_async().ok();
+        }
+        if pressed.contains(&Key::Period) {
+            self.mpv.seek_frame_async().ok();
+        }
+        if ctrl_pressed.contains(&Key::ArrowLeft) {
+            self.mpv.seek_backward_async(5.0).ok();
+        }
+        if ctrl_pressed.contains(&Key::ArrowRight) {
+            self.mpv.seek_forward_async(5.0).ok();
+        }
 
         ui.ctx().input_mut(|input| {
-            if input.pointer.button_down(PointerButton::Primary) {
-                if let Some(motion) = input.pointer.motion() {
-                    self.slide_xform.pan(motion);
-                }
+            if input.pointer.button_down(PointerButton::Primary)
+                && let Some(motion) = input.pointer.motion()
+            {
+                self.slide_xform.pan(motion);
             }
             if input.raw_scroll_delta.y > 0. {
                 self.slide_xform
@@ -667,6 +711,8 @@ impl UxWork {
         perf: &mut PerfTrack,
         ui: &mut egui::Ui,
     ) {
+        self.mpv.monitor_events();
+
         ui.horizontal_wrapped(|ui| {
             if let Some(tags) = tags {
                 self.tag_selection.ui(tags, ui);
@@ -690,8 +736,8 @@ impl UxWork {
 
             ui.label("Size");
             ui.add(
-                egui::Slider::new(&mut self.thumb_size, 128f32..=512f32)
-                    .step_by(1.)
+                egui::Slider::new(&mut self.thumb_size, 200f32..=500f32)
+                    .step_by(10.)
                     .fixed_decimals(0)
                     .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 })
                     .show_value(true)
@@ -706,9 +752,11 @@ impl UxWork {
         let size = self.thumb_size;
         let width = ui.available_width();
         let n_wide = (width / size).floor().max(1.) as usize;
-        let n_rows = self.work_filtered.len().div_ceil(n_wide);
 
         self.check_common_key_binds(tags, db_write, n_wide, ui);
+
+        // Note: if we deleted by keypress, the number of rows may have changed.
+        let n_rows = self.work_filtered.len().div_ceil(n_wide);
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -868,6 +916,7 @@ impl UxWork {
         tags: Option<&HashMap<TagId, DbTag>>,
         db_write: &DbWriteHandle,
         ctx: &egui::Context,
+        frame: &mut eframe::Frame,
     ) {
         let work_offset = self
             .selected
@@ -890,12 +939,8 @@ impl UxWork {
             self.flush_works_lru(ui.ctx());
 
             // if let Some(work) = self.get_selected_work() {
-            match self.get_screen_image(ui.ctx()) {
-                Err(err) => {
-                    println!("Error: {}", err.backtrace());
-                    ui.label(format!("Error loading media: {err:#?}"));
-                }
-                Ok(DisplayKind::Image(img)) => {
+            match self.get_screen_image() {
+                DisplayKind::Image(img) => {
                     let img = img.show_loading_spinner(false).maintain_aspect_ratio(true);
 
                     let avail = ui.available_size() * self.slide_xform.zoom;
@@ -913,62 +958,46 @@ impl UxWork {
                             .translate(self.slide_xform.pan);
                         img.paint_at(ui, rect);
                     }
+
                     self.draw_offset_label(ui, work_offset);
                 }
-                Ok(DisplayKind::MediaPlayer) => {
-                    let (src, _elapsed) = if let Some(player) = self.video_player.as_ref() {
-                        (player.size, player.elapsed_ms())
-                    } else {
-                        (ui.available_size(), 0)
-                    };
-
-                    // FIXME: store aside elapsed into a state that will get saved between runs
-                    //        so that when we start up again we'll resume in a podcast where we
-                    //        left off.
-
-                    let dst = ui.available_size();
-                    let scale = (dst.x / src.x).min(dst.y / src.y);
-                    let pad = (dst - src * scale) / 2.;
-                    if pad.x > 0. {
-                        ui.horizontal(|ui| {
-                            let v = Vec2::new(pad.x, dst.y);
-                            egui::Resize::default()
-                                .min_size(v)
-                                .max_size(v)
-                                .default_size(v)
-                                .resizable([false, false])
-                                .show(ui, |ui| {
-                                    // FIXME: figure out how to overlay the work offset label
-                                    ui.label("");
-                                });
-                            if let Some(player) = self.video_player.as_mut() {
-                                player.ui(ui, src * scale);
-                                // player.subtitle_streamer.as_ref().map(|ss| ss.lock())
-                            }
-                        });
-                    } else {
-                        ui.vertical(|ui| {
-                            let v = Vec2::new(dst.x, pad.y);
-                            egui::Resize::default()
-                                .min_size(v)
-                                .max_size(v)
-                                .default_size(v)
-                                .resizable([false, false])
-                                .show(ui, |ui| {
-                                    // self.draw_offset_label(ui, work_offset);
-                                    ui.label(format!(
-                                        "{work_offset} of {} {}",
-                                        self.work_filtered.len(),
-                                        self.get_selected_work()
-                                            .map(|w| w.favorite_annotation())
-                                            .unwrap_or_default()
-                                    ));
-                                });
-                            if let Some(player) = self.video_player.as_mut() {
-                                player.ui(ui, src * scale);
-                            }
-                        });
+                DisplayKind::MediaPlayer => {
+                    // Cause mpv to render to our backing texture
+                    let rect = ui.available_rect_before_wrap();
+                    if let Some(img) = self.mpv.image(&rect, ui.painter(), frame) {
+                        img.paint_at(ui, rect);
                     }
+
+                    self.draw_offset_label(ui, work_offset);
+
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
+                        ui.horizontal(|ui| {
+                            if self.mpv.is_paused() && ui.button("▶").clicked() {
+                                self.mpv.unpause_async().ok();
+                            } else if ui.button("⏸").clicked() {
+                                self.mpv.pause_async().ok();
+                            }
+                            let time_pos = self.mpv.time_pos();
+                            ui.label(format!("{:02.0}:{:02.0}", time_pos / 60.0, time_pos % 60.0));
+                            let mut percent_pos = self.mpv.percent_pos();
+                            let slider = egui::Slider::new(&mut percent_pos, 0f64..=100f64)
+                                .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.25 })
+                                .show_value(false);
+                            if ui.add(slider).changed() {
+                                self.mpv
+                                    .seek_percent_absolute_async(percent_pos as usize)
+                                    .ok();
+                            }
+                            let duration = self.mpv.duration();
+                            ui.label(format!("{:02.0}:{:02.0}", duration / 60.0, duration % 60.0));
+                            if ui.button("⏪").clicked() {
+                                self.mpv.seek_absolute_async(0.).ok();
+                            }
+                            if ui.button("⏩").clicked() {
+                                self.mpv.seek_forward_async(5.).ok();
+                            }
+                        });
+                    });
                 }
             }
         });
@@ -1015,7 +1044,7 @@ impl UxWork {
         egui::Image::new(include_image!("../../assets/loading-preview.png"))
     }
 
-    fn get_screen_image<'b>(&mut self, ctx: &egui::Context) -> Result<DisplayKind<'b>> {
+    fn get_screen_image<'b>(&mut self) -> DisplayKind<'b> {
         if let Some(work) = self.get_selected_work()
             && let Some(screen_path) = work.screen_path()
         {
@@ -1024,25 +1053,22 @@ impl UxWork {
             let screen_uri = format!("file://{screen_path_str}");
             if is_image(&screen_path) {
                 if self.works_lru.contains(&screen_uri) {
-                    return Ok(DisplayKind::Image(egui::Image::new(screen_uri)));
+                    return DisplayKind::Image(egui::Image::new(screen_uri));
                 }
-            } else if self.video_player.is_none() {
-                self.video_player = Some(
-                    Player::new(ctx, &screen_path_str)?
-                        .with_audio(&mut self.audio_device)?
-                        .with_subtitles()?,
-                );
-                self.video_player.as_mut().expect("created").start();
-                return Ok(DisplayKind::MediaPlayer);
+            } else if !self.has_loaded_media {
+                self.mpv.playlist_replace_async(&screen_path, None).ok();
+                self.mpv.unpause_async().ok();
+                self.has_loaded_media = true;
+                return DisplayKind::MediaPlayer;
             } else {
-                return Ok(DisplayKind::MediaPlayer);
+                return DisplayKind::MediaPlayer;
             }
         }
 
         // Note: Fall through to try to load the preview image so we have something to show.
-        Ok(DisplayKind::Image(egui::Image::new(include_image!(
+        DisplayKind::Image(egui::Image::new(include_image!(
             "../../assets/loading-preview.png"
-        ))))
+        )))
     }
 
     fn ensure_work_cached(
@@ -1069,11 +1095,13 @@ impl UxWork {
             height: size,
             maintain_aspect_ratio: true,
         };
-        if let Some(screen_path) = self
+        let works = self
             .work_matching_tag
             .as_ref()
-            .expect("no work after check")[&self.work_filtered[work_offset]]
-            .screen_path()
+            .expect("no work after check");
+        if let Some(work_id) = self.work_filtered.get(work_offset)
+            && let Some(work) = works.get(work_id)
+            && let Some(screen_path) = work.screen_path()
             && is_image(screen_path)
         {
             let screen_uri = format!("file://{}", self.data_dir.join(screen_path).display());
@@ -1083,11 +1111,9 @@ impl UxWork {
                 self.works_lru.get_or_insert(screen_uri, || 0);
             }
         }
-        if let Some(preview_path) = self
-            .work_matching_tag
-            .as_ref()
-            .expect("no work after check")[&self.work_filtered[work_offset]]
-            .preview_path()
+        if let Some(work_id) = self.work_filtered.get(work_offset)
+            && let Some(work) = works.get(work_id)
+            && let Some(preview_path) = work.preview_path()
         {
             // Note: non-image previews will just show up as an error icon; the thumbnailing
             //       should already have happened out of line.
@@ -1095,7 +1121,7 @@ impl UxWork {
             if !self.works_lru.contains(&preview_uri) {
                 ctx.try_load_image(&preview_uri, size_hint).ok();
                 self.per_frame_work_upload_count += 1;
-                self.works_lru.get_or_insert(preview_uri.clone(), || 0);
+                self.works_lru.get_or_insert(preview_uri, || 0);
             }
         }
     }

@@ -65,8 +65,9 @@ impl Default for ArtchiverApp {
 impl ArtchiverApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+        // Note: we have to set a theme preference here or our style choices get overridden
+        //       between here and the first update somehow.
+        cc.egui_ctx.set_theme(egui::Theme::from_dark_mode(false));
 
         // Load or create a new app.
         let mut app: Self = if let Some(storage) = cc.storage {
@@ -78,8 +79,13 @@ impl ArtchiverApp {
         } else {
             Default::default()
         };
-        app.toplevel
-            .startup(&app.environment().data_dir(), &app.db_read);
+
+        app.toplevel.startup(
+            &cc.egui_ctx,
+            &app.environment().data_dir(),
+            &app.db_read,
+            cc,
+        );
         app
     }
 
@@ -90,13 +96,13 @@ impl ArtchiverApp {
 
 impl eframe::App for ArtchiverApp {
     /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let updates = self.progress_mon.read();
         self.host.handle_updates(&updates);
         self.toplevel.handle_updates(&updates, &self.db_read);
 
         self.toplevel
-            .draw(&self.db_read, &self.db_write, &mut self.host, ctx)
+            .draw(&self.db_read, &self.db_write, &mut self.host, ctx, frame)
             .expect("ux update error");
     }
 

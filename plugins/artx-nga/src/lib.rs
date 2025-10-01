@@ -1,12 +1,13 @@
 use artchiver_sdk::*;
 use extism_pdk::*;
-use jiff::{Timestamp, Zoned, civil::Date};
+use jiff::{Timestamp, civil::Date};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 import_section!();
 
+#[expect(unused)]
 #[derive(Clone, Debug, Deserialize)]
 pub struct NgaObject {
     // [
@@ -88,6 +89,7 @@ pub struct NgaTerm {
 }
 const TERMS_URL: &str = "https://raw.githubusercontent.com/NationalGalleryOfArt/opendata/refs/heads/main/data/objects_terms.csv";
 
+#[expect(unused)]
 #[derive(Clone, Debug, Deserialize)]
 pub struct NgaPublishedImage {
     uuid: Uuid,

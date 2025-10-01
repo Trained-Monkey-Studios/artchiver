@@ -42,7 +42,7 @@ pub fn is_pdf(path: &Path) -> bool {
 
 // If the plugin gives us back a preview path that is not an image -- e.g. a downsampled full video,
 // or an audio podcast sample -- try to get a preview image somehow. The input here is the url and
-// the storge path components. The output needs to be a new path prefix relative to the data dir.
+// the storage path components. The output needs to be a new path prefix relative to the data dir.
 // Typically, this will be obtained by adding something to the preview_url and calling back into
 // get_data_path_for_url to hash the new URL. The DbWork will store the new path we return so that
 // subsequent usage will see the file we generated instead of the plugin's preview file, but that

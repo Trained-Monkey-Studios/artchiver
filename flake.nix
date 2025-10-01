@@ -10,7 +10,7 @@
   outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        rustVersion = "1.88.0";
+        rustVersion = "1.90.0";
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs { inherit system overlays; };
       in with pkgs; {
@@ -29,15 +29,17 @@
             trunk
 
             # misc. libraries
+            SDL2.dev
             clang
             cmake
-            libclang
-            pkg-config
-            mold-wrapped
             ffmpeg.dev
-            pipewire.dev
+            gdb
+            libclang
             libffi.dev
-            SDL2.dev
+            mold-wrapped
+            mpv
+            pipewire.dev
+            pkg-config
 
             # GUI libs
             libxkbcommon

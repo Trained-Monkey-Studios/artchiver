@@ -1,4 +1,7 @@
-use crate::plugin::host::{PluginHandle, PluginHost};
+use crate::{
+    plugin::host::{PluginHandle, PluginHost},
+    ux::tutorial::{NextButton, Tutorial, TutorialStep},
+};
 use artchiver_sdk::ConfigValue;
 use egui::{Margin, TextWrapMode};
 use egui_dnd::{DragUpdate, dnd};
@@ -16,16 +19,44 @@ fn indented(px: i8) -> Margin {
 pub struct UxPlugin {}
 
 impl UxPlugin {
-    pub fn ui(&self, sync: &mut PluginHost, ui: &mut egui::Ui) {
+    pub fn ui(&self, sync: &mut PluginHost, mut tutorial: Tutorial<'_>, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                if tutorial.step() == TutorialStep::PluginsIntro {
+                    tutorial.frame(ui, |ui, tutorial| {
+                        ui.heading("About Plugins").scroll_to_me(None);
+                        ui.separator();
+                        ui.label("Plugins provide access to data sources, like the National Gallery of Art or the Met's open-access collections.");
+                        ui.label("");
+                        ui.label("You can add new data sources by dropping a plugin for that data source into the plugins directory and restarting.");
+                        ui.label("");
+                        ui.label("New plugins are easy to build if a collection you want to access is not already supported. See the documentation to get started.");
+                        tutorial.button_area(NextButton::Next, ui);
+                    });
+                }
+
                 for plugin in sync.plugins_mut() {
+                    let name = plugin.name();
+                    if tutorial.is_plugin_refresh_step(&name) {
+                        tutorial.frame(ui, |ui, tutorial| {
+                            ui.heading("Fetching Tags").scroll_to_me(None);
+                            ui.separator();
+                            ui.label("First Step: Click on a plugin's \"⟳ Tags\" button to fetch or refresh the tags that plugin knows about. Do so now for the National Gallery of Art.");
+                            tutorial.button_area(NextButton::Skip, ui);
+                        });
+                    }
                     ui.horizontal(|ui| {
-                        ui.heading(plugin.name());
+                        ui.heading(&name);
+
+                        tutorial.set_style(tutorial.is_plugin_refresh_step(&name), ui);
                         if ui.button("⟳ Tags").clicked() {
+                            if tutorial.is_plugin_refresh_step(&name) {
+                                tutorial.next();
+                            }
                             plugin.refresh_tags();
                         }
+
                         plugin.progress().ui(ui);
                     });
                     egui::Frame::new()

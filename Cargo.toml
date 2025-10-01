@@ -1,10 +1,12 @@
 [package]
 name = "artchiver"
+description = "Artchiver helps you preserve and enjoy art history and digital media on your own terms."
 version = "0.1.0"
 authors = ["Terrence D Cole <terrence.d.cole@gmail.com>"]
 edition = "2024"
 include = ["LICENSE", "**/*.rs", "Cargo.toml"]
 rust-version = "1.88"
+license = "GPL-3.0"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -50,21 +52,24 @@ eframe = { version = "0.32", default-features = false, features = [
 ] }
 
 anyhow = "1.0"
+catppuccin-egui = { version = "5.6.0", default-features = false, features = ["egui32"] }
 clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8"
-egui = "0.32"
-egui-video = { path = "../egui-video", default-features = false, features = ["from_bytes"] }
+egui = "0.32.3"
+egui-aesthetix = { git = "https://github.com/thebashpotato/egui-aesthetix/", branch = "dependabot/cargo/egui-0.32", features = ["nord", "standard", "tokyo_night"] }
+egui-mpv-glow = { git = "https://github.com/Trained-Monkey-Studios/egui-mpv-glow", rev = "134a0cac92a7ce3d4941be2da2826662adc7fbc7" }
 egui_dnd = "0.13"
 egui_dock = { version = "0.17", features = ["serde"] }
-egui_extras = { version = "0.32", features = ["image", "file", "gif", "webp"] } # matching bevy_egui
+egui_extras = { version = "0.32.3", features = ["image", "file", "gif", "webp"] }
 egui_plot = "0.33"
+egui_solarized = "0.3"
 env_logger = "0.11.8"
 extism = "1.0"
-ffmpeg-the-third = "3.0.2"
+glow = "0.16.0"
 io_tee = "0.1"
 itertools = "0.14"
 jiff = { version ="0.2", features = ["serde"] }
-log = "0.4.27"
+log = "0.4"
 lru = "0.16"
 open = "5.3"
 parking_lot = "0.12"
@@ -101,8 +106,6 @@ opt-level = 2
 # If you fork https://github.com/emilk/egui you can test with:
 # egui = { path = "../egui/crates/egui" }
 # eframe = { path = "../egui/crates/eframe" }
-
-
 
 # ----------------------------------------------------------------------------------------
 # Lints:
