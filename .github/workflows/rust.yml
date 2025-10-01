@@ -289,11 +289,19 @@ jobs:
           path: artchiver-windows-x86_64-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
 
       # Build an installer using Inno Setup
-      - name: Compile .ISS to .EXE Installer
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
-        with:
-          path: installer.iss
-          options: /O+ /O. /DMyAppVersion=${{ fromJson(steps.info.outputs.object).package.version }}
+      - name: Install InnoSetup
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://jrsoftware.org/download.php/is.exe -OutFile D:\\is.exe
+          Start-Process -FilePath D:\\is.exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait
+      - name: Run ISCC
+        shell: pwsh
+        run: Start-Process -FilePath "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" -ArgumentList "/O+", "/O.", "/DMyAppVersion=${{ fromJson(steps.info.outputs.object).package.version }}", "installer.iss" -Wait
+      #- name: Compile .ISS to .EXE Installer
+      #  uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+      #  with:
+      #    path: installer.iss
+      #    options: /O+ /O. /DMyAppVersion=${{ fromJson(steps.info.outputs.object).package.version }}
       - run: dir
       - uses: actions/upload-artifact@v4
         with:

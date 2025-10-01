@@ -50,7 +50,6 @@ Source: "package\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "package\ReadMe.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "package\release-notes-{#MyAppVersion}.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "package\plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion
-; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
