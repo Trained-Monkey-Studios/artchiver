@@ -273,6 +273,9 @@ jobs:
       - run: mkdir package\plugins
       - run: cp target\release\artchiver.exe package\
       - run: cp vendor\mpv-dev-${{ matrix.ARCH }}\libmpv-2.dll package\
+      - run: cp LICENSE package\
+      - run: cp doc\ReadMe.md package\
+      - run: cp doc\release-notes-${{ fromJson(steps.info.outputs.object).package.version }}.md package\
       - uses: actions/download-artifact@v5
         with:
           pattern: "*.wasm"
@@ -282,12 +285,12 @@ jobs:
       - run: dir package\plugins\
 
       # Build the release zip for anyone that doesn't want an installer
-      - run: 7z a -tzip artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.zip package\
+      - run: 7z a -t7z artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z package\
       - run: dir
       #- uses: actions/upload-artifact@v4
       #  with:
-      #    name: artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.zip
-      #    path: artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.zip
+      #    name: artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
+      #    path: artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
       #    if-no-files-found: error
 
       # Build an installer using wix

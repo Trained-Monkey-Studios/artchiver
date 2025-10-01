@@ -1,6 +1,6 @@
 [package]
 name = "artchiver"
-description = "Artchiver helps you preserve and enjoy art history and digial media on your own terms."
+description = "Artchiver helps you preserve and enjoy art history and digital media on your own terms."
 version = "0.1.0"
 authors = ["Terrence D Cole <terrence.d.cole@gmail.com>"]
 edition = "2024"
