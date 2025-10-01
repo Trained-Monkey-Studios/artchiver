@@ -2,6 +2,8 @@ on:
   push:
     branches:
       - master
+    tags:
+      - "v*.*.*"
   pull_request:
   workflow_dispatch:
 
@@ -212,7 +214,7 @@ jobs:
           path: plugins/${{ matrix.crate }}/target/wasm32-unknown-unknown/release/${{ matrix.wasm }}
           if-no-files-found: error
 
-  release_win:
+  build_release_win:
     # if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
     name: Build and Release an Installer (Windows)
     needs: [build_plugins]
@@ -247,12 +249,6 @@ jobs:
           override: true
       - run: rustc -vV
 
-      # Install cargo-wix (TODO: we need wix too?)
-      - uses: actions-rs/cargo@v1
-        with:
-          command: install
-          args: cargo-wix
-
       # Build the executable
       - uses: actions-rs/cargo@v1
         with:
@@ -285,33 +281,59 @@ jobs:
       - run: dir package\plugins\
 
       # Build the release zip for anyone that doesn't want an installer
-      - run: 7z a -t7z artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z package\
+      - run: 7z a -t7z artchiver-windows-x86_64-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z package\
       - run: dir
-      #- uses: actions/upload-artifact@v4
-      #  with:
-      #    name: artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
-      #    path: artchiver-win-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
-      #    if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artchiver-windows-x86_64-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
+          path: artchiver-windows-x86_64-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
 
-      # Build an installer using wix
-      - run: cargo wix
-      - run: dir target\
-      - run: dir target\release\
-      #- uses: actions/upload-artifact@v4
-      #  with:
-      #    name: artchiver-win-installer-${{ fromJson(steps.info.outputs.object).package.version }}.msi
-      #    path: target\release\artchiver.msi
-      #    if-no-files-found: error
+      # Build an installer using Inno Setup
+      - name: Compile .ISS to .EXE Installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+        with:
+          path: installer.iss
+          options: /O+ /O. /DMyAppVersion=${{ fromJson(steps.info.outputs.object).package.version }}
+      - run: dir
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artchiver-windows-x86_64-installer-${{ fromJson(steps.info.outputs.object).package.version }}.exe
+          path: artchiver-windows-x86_64-installer-${{ fromJson(steps.info.outputs.object).package.version }}.exe
+          if-no-files-found: error
 
-#      # NOTE: DEPRECATED: switch this to a maintained release action
-#      - name: Create Release
-#        id: create_release
-#        uses: actions/create-release@v1
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
-#        with:
-#          tag_name: ${{ fromJson(steps.info.outputs.object).package.version }}
-#          release_name: Release ${{ fromJson(steps.info.outputs.object).package.version }}
-#          body: ${{ fromJson(steps.info.outputs.object).package.description }}
-#          draft: false
-#          prerelease: false
+  # Collect all of our built release items and publish them, if we are pushing to main
+  publish_release:
+    if: github.ref_type == 'tag'
+    #if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    name: Release the new version
+    needs: [build_release_win]
+    runs-on: ubuntu-latest
+    steps:
+      # Get access to version number
+      - uses: actions/checkout@v4
+      - name: Get cargo package info
+        id: info
+        uses: rabbitson87/get-cargo-package-info@v1
+        with:
+          package: |
+            version
+            description
+
+      # Download our release artifacts to local, so we can re-upload them
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: artchiver-*
+          merge-multiple: true
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Artchiver Release ${{ fromJson(steps.info.outputs.object).package.version }}
+          body_path: "doc/release-notes-${{ fromJson(steps.info.outputs.object).package.version }}.md"
+          preserve_order: true
+          fail_on_unmatched_files: true
+          make_latest: true
+          files: |
+            artchiver-windows-x86_64-installer-${{ fromJson(steps.info.outputs.object).package.version }}.exe
+            artchiver-windows-x86_64-release-${{ fromJson(steps.info.outputs.object).package.version }}.7z
+
