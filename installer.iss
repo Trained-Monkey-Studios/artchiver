@@ -44,11 +44,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "package\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion sign signcheck
+Source: "package\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion sign
 Source: "package\libmpv-2.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "package\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "package\ReadMe.md"; DestDir: "{app}"; Flags: ignoreversion
-;Source: "package\release-notes-{#MyAppVersion}.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "package\release-notes-{#MyAppVersion}.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "package\plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
