@@ -371,6 +371,44 @@ impl UxTag {
                 ui.label("Click on any of the ⟳ (refresh) buttons below to start downloading works and learn how to show tags.");
                 tutorial.button_area(NextButton::Skip, ui);
             });
+        } else if tutorial.step() == TutorialStep::TagsViewGeneral {
+            highlight = TagAction::ReplaceTag;
+            tutorial.frame(ui, |ui, tutorial| {
+                ui.heading("Viewing Tags");
+                ui.separator();
+                ui.label("Use the toggle buttons to the left of each tag to change what is being shown in the \"Works\" pane to the right.");
+                ui.label("");
+                ui.label("Clicking the highlighted '✔' (replace) button will show artworks that contain that tag, replacing the current view.");
+                ui.label("");
+                ui.label("Find a tag that you have refreshed that has some works downloaded and click it. Note that it may take a second after an artwork is downloaded for it to be indexed and that not all artworks in the open collections contain an image.");
+                tutorial.button_area(NextButton::Skip, ui);
+            });
+        } else if tutorial.step() == TutorialStep::TagsViewAdd {
+            highlight = TagAction::AddTag;
+            tutorial.frame(ui, |ui, tutorial| {
+                ui.heading("Matching Multiple Tags");
+                ui.separator();
+                ui.label("Some tags contain thousands of artworks. To make browsing easier, Artchiver can filter for works that contain multiple tags.");
+                ui.label("");
+                ui.label("Clicking the highlighted '+' (add tag) button will add a filtered tag to the currently visible set, allowing you to refine the collection you are looking at.");
+                ui.label("");
+                ui.label("Note that if there are not works that have all of the selected tags, the \"Works\" pane will just be empty. Click the + (add tag) button a second time to stop filtering by that tag.");
+                tutorial.button_area(NextButton::Skip, ui);
+            });
+        } else if tutorial.step() == TutorialStep::TagsViewSubtract {
+            highlight = TagAction::SubtractTag;
+            tutorial.frame(ui, |ui, tutorial| {
+                ui.heading("Viewing Works WITHOUT a Tag");
+                ui.separator();
+                ui.label("To further refine a search, it is possible to filter for artwork that DOES NOT contain a specific tag.");
+                ui.label("");
+                ui.label("Clicking the highlighted '-' (add negative tag) button hide works that contain that tag from the currently visible set, allowing for fine-grained refinement of the image collection.");
+                ui.label("");
+                ui.label("Note that if all the works that are selected have any of the negative tags, then the \"Works\" pane will just be empty. Click the - (add negative tag) button a second time to stop hiding works with that tag.");
+                ui.label("");
+                ui.label("A subtle point here is that negative tags will only hide works from the positively selected set. E.g. you cannot hide 'Taffy' in order to show all of the millions of artworks without it because that would be way too slow and not very useful.");
+                tutorial.button_area(NextButton::Skip, ui);
+            });
         }
         let text_style = egui::TextStyle::Body;
         let row_height = ui.text_style_height(&text_style);

@@ -10,6 +10,9 @@ pub enum TutorialStep {
     PluginsRefresh,
     TagsIntro,
     TagsRefresh,
+    TagsViewGeneral,
+    TagsViewAdd,
+    TagsViewSubtract,
     WorksIntro,
     WorksSlideshow,
     Finished,
@@ -22,7 +25,10 @@ impl TutorialStep {
             Self::PluginsIntro => Self::PluginsRefresh,
             Self::PluginsRefresh => Self::TagsIntro,
             Self::TagsIntro => Self::TagsRefresh,
-            Self::TagsRefresh => Self::WorksIntro,
+            Self::TagsRefresh => Self::TagsViewGeneral,
+            Self::TagsViewGeneral => Self::TagsViewAdd,
+            Self::TagsViewAdd => Self::TagsViewSubtract,
+            Self::TagsViewSubtract => Self::WorksIntro,
             Self::WorksIntro => Self::WorksSlideshow,
             Self::WorksSlideshow => Self::Finished,
             Self::Finished => panic!("Tutorial already finished!"),
@@ -90,7 +96,7 @@ impl<'a> Tutorial<'a> {
         self.set_style(active, ui);
         let resp = ui.add(widget);
         self.reset_style(active, ui);
-        if resp.clicked() {
+        if active && resp.clicked() {
             self.next();
         }
         resp

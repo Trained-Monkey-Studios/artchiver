@@ -41,9 +41,10 @@ pub enum TagRefresh {
 pub enum TagAction {
     None,
     Refresh,
-    // ReplaceTag,
-    // AddTag,
-    // SubtractTag,
+    TagVisibility,
+    ReplaceTag,
+    AddTag,
+    SubtractTag,
 }
 
 impl TagAction {
@@ -53,6 +54,18 @@ impl TagAction {
 
     pub fn is_refresh(&self) -> bool {
         matches!(self, Self::Refresh)
+    }
+
+    pub fn is_replace_tag(&self) -> bool {
+        matches!(self, Self::TagVisibility | Self::ReplaceTag)
+    }
+
+    pub fn is_add_tag(&self) -> bool {
+        matches!(self, Self::TagVisibility | Self::AddTag)
+    }
+
+    pub fn is_subtract_tag(&self) -> bool {
+        matches!(self, Self::TagVisibility | Self::SubtractTag)
     }
 }
 
@@ -258,8 +271,10 @@ impl TagSet {
 
             let prior_spacing = ui.style().spacing.item_spacing.x;
             ui.style_mut().spacing.item_spacing.x = 0.0;
-            if ui
+            if tutorial
                 .add(
+                    highlight.is_replace_tag(),
+                    ui,
                     egui::Button::new("✔")
                         .small()
                         .selected(is_eq)
@@ -276,8 +291,10 @@ impl TagSet {
                 self.clear();
                 self.enable(tag);
             }
-            if ui
+            if tutorial
                 .add(
+                    highlight.is_add_tag(),
+                    ui,
                     egui::Button::new("+")
                         .small()
                         .selected(status.enabled())
@@ -292,8 +309,10 @@ impl TagSet {
                     self.enable(tag);
                 }
             }
-            if ui
+            if tutorial
                 .add(
+                    highlight.is_subtract_tag(),
+                    ui,
                     egui::Button::new("-")
                         .small()
                         .selected(status.disabled())
@@ -352,7 +371,6 @@ impl TagSet {
             {
                 host.refresh_works_for_tag(tag).ok();
             }
-
             if ui
                 .add_enabled(tag.wiki_url().is_some(), egui::Button::new("🔗").small())
                 .on_hover_text("go to wiki")
