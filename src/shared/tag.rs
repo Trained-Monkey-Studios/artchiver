@@ -7,7 +7,7 @@ use crate::{
         writer::DbWriteHandle,
     },
     plugin::host::PluginHost,
-    ux::tutorial::Tutorial,
+    ux::tutorial::{Tutorial, TutorialStep},
 };
 use itertools::Itertools as _;
 use log::{trace, warn};
@@ -35,38 +35,6 @@ pub enum TagRefresh {
     Favorites,
     NeedRefresh(TagId),
     NeedReproject,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TagAction {
-    None,
-    Refresh,
-    TagVisibility,
-    ReplaceTag,
-    AddTag,
-    SubtractTag,
-}
-
-impl TagAction {
-    pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
-    }
-
-    pub fn is_refresh(&self) -> bool {
-        matches!(self, Self::Refresh)
-    }
-
-    pub fn is_replace_tag(&self) -> bool {
-        matches!(self, Self::TagVisibility | Self::ReplaceTag)
-    }
-
-    pub fn is_add_tag(&self) -> bool {
-        matches!(self, Self::TagVisibility | Self::AddTag)
-    }
-
-    pub fn is_subtract_tag(&self) -> bool {
-        matches!(self, Self::TagVisibility | Self::SubtractTag)
-    }
 }
 
 #[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -263,7 +231,7 @@ impl TagSet {
         host: &mut PluginHost,
         db_write: &DbWriteHandle,
         ui: &mut egui::Ui,
-        (tutorial, highlight): (&mut Tutorial<'_>, TagAction),
+        tutorial: &mut Tutorial<'_>,
     ) {
         ui.horizontal(|ui| {
             let status = self.status(tag);
@@ -272,8 +240,8 @@ impl TagSet {
             let prior_spacing = ui.style().spacing.item_spacing.x;
             ui.style_mut().spacing.item_spacing.x = 0.0;
             if tutorial
-                .add(
-                    highlight.is_replace_tag(),
+                .add_step(
+                    TutorialStep::TagsViewGeneral,
                     ui,
                     egui::Button::new("✔")
                         .small()
@@ -292,8 +260,8 @@ impl TagSet {
                 self.enable(tag);
             }
             if tutorial
-                .add(
-                    highlight.is_add_tag(),
+                .add_step(
+                    TutorialStep::TagsViewAdd,
                     ui,
                     egui::Button::new("+")
                         .small()
@@ -310,8 +278,8 @@ impl TagSet {
                 }
             }
             if tutorial
-                .add(
-                    highlight.is_subtract_tag(),
+                .add_step(
+                    TutorialStep::TagsViewSubtract,
                     ui,
                     egui::Button::new("-")
                         .small()
@@ -365,7 +333,11 @@ impl TagSet {
             ui.label("  ");
 
             if tutorial
-                .add(highlight.is_refresh(), ui, egui::Button::new("⟳").small())
+                .add_step(
+                    TutorialStep::TagsRefresh,
+                    ui,
+                    egui::Button::new("⟳").small(),
+                )
                 .on_hover_text("refresh works")
                 .clicked()
             {

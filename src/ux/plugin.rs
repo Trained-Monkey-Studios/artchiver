@@ -49,11 +49,7 @@ impl UxPlugin {
                     ui.horizontal(|ui| {
                         ui.heading(&name);
 
-                        tutorial.set_style(tutorial.is_plugin_refresh_step(&name), ui);
-                        if ui.button("⟳ Tags").clicked() {
-                            if tutorial.is_plugin_refresh_step(&name) {
-                                tutorial.next();
-                            }
+                        if tutorial.add(tutorial.is_plugin_refresh_step(&name), ui, egui::Button::new("⟳ Tags")).clicked() {
                             plugin.refresh_tags();
                         }
 

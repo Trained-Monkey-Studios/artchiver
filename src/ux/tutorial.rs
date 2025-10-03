@@ -1,4 +1,5 @@
-use crate::ux::theme::{ColorTheme, Theme};
+use crate::ux::theme::Theme;
+use egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -75,16 +76,29 @@ impl<'a> Tutorial<'a> {
         self.style.as_ref()
     }
 
-    pub fn set_style(&mut self, active: bool, ui: &mut egui::Ui) {
+    pub fn with_style<R>(
+        &self,
+        active: bool,
+        ui: &mut egui::Ui,
+        add_contents: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> R {
+        let prior = ui.style().as_ref().clone();
         if active {
-            ui.set_style(Theme::new(ColorTheme::SolarizedDark, self.theme.text_scale()).style());
+            let mut style = self.theme.style_for_tutorial();
+            let mixin = Color32::from_rgb(0x00, 0x61, 0xCF).gamma_multiply(1.5);
+            style.visuals.widgets.inactive.weak_bg_fill =
+                style.visuals.widgets.inactive.weak_bg_fill.blend(mixin);
+            style.visuals.override_text_color = Some(Color32::from_rgb(0xFF, 0xFF, 0xFF));
+            ui.set_style(style);
         }
-    }
 
-    pub fn reset_style(&mut self, active: bool, ui: &mut egui::Ui) {
+        let resp = add_contents(ui);
+
         if active {
-            ui.set_style(self.theme.style());
+            ui.set_style(prior);
         }
+
+        resp
     }
 
     pub fn add(
@@ -93,9 +107,33 @@ impl<'a> Tutorial<'a> {
         ui: &mut egui::Ui,
         widget: impl egui::Widget,
     ) -> egui::Response {
-        self.set_style(active, ui);
-        let resp = ui.add(widget);
-        self.reset_style(active, ui);
+        let resp = self.with_style(active, ui, |ui| ui.add(widget));
+        if active && resp.clicked() {
+            self.next();
+        }
+        resp
+    }
+
+    pub fn add_step(
+        &mut self,
+        active_in_step: TutorialStep,
+        ui: &mut egui::Ui,
+        widget: impl egui::Widget,
+    ) -> egui::Response {
+        let fix_spacing = matches!(
+            active_in_step,
+            TutorialStep::TagsRefresh
+                | TutorialStep::TagsViewGeneral
+                | TutorialStep::TagsViewAdd
+                | TutorialStep::TagsViewSubtract
+        );
+        let active = *self.step == active_in_step;
+        let resp = self.with_style(active, ui, |ui| {
+            if fix_spacing {
+                ui.style_mut().spacing.item_spacing.x = 0.0;
+            }
+            ui.add(widget)
+        });
         if active && resp.clicked() {
             self.next();
         }
@@ -133,20 +171,23 @@ impl<'a> Tutorial<'a> {
         ui: &mut egui::Ui,
         add_contents: impl FnOnce(&mut egui::Ui, &mut Self) -> R,
     ) -> egui::InnerResponse<R> {
-        let highlight = ColorTheme::SolarizedDark.style();
+        let highlight = self.theme.style_for_tutorial();
         egui::Frame::canvas(&highlight)
             .shadow(egui::Shadow {
                 offset: [4, 4],
                 spread: 4,
                 blur: 25,
-                color: egui::Color32::from_rgb(0, 0, 0),
+                color: Color32::from_rgb(0, 0, 0),
             })
             .outer_margin(12)
             .inner_margin(8)
             .corner_radius(12.0)
             .show(ui, |ui| {
-                ui.style_mut().visuals = highlight.visuals;
-                add_contents(ui, self)
+                let prior = ui.style().as_ref().clone();
+                ui.set_style(highlight);
+                let resp = add_contents(ui, self);
+                ui.set_style(prior);
+                resp
             })
     }
 }

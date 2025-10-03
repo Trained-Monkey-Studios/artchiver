@@ -9,7 +9,7 @@ use crate::{
     plugin::{host::PluginHost, thumbnail::is_image},
     shared::{
         performance::PerfTrack,
-        tag::{TagAction, TagRefresh, TagSet},
+        tag::{TagRefresh, TagSet},
         update::DataUpdate,
     },
     ux::tutorial::Tutorial,
@@ -701,13 +701,8 @@ impl UxWork {
                 .filter_map(|tag_id| tags.get(&tag_id))
                 .sorted_by_key(|tag| tag.name())
                 .for_each(|tag| {
-                    self.tag_selection.tag_row_ui(
-                        tag,
-                        host,
-                        db_write,
-                        ui,
-                        (&mut tutorial, TagAction::None),
-                    );
+                    self.tag_selection
+                        .tag_row_ui(tag, host, db_write, ui, &mut tutorial);
                 });
         }
     }

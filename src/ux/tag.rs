@@ -6,10 +6,7 @@ use crate::{
         writer::DbWriteHandle,
     },
     plugin::host::PluginHost,
-    shared::{
-        tag::{TagAction, TagSet},
-        update::DataUpdate,
-    },
+    shared::{tag::TagSet, update::DataUpdate},
     ux::tutorial::{NextButton, Tutorial, TutorialStep},
 };
 use artchiver_sdk::TagKind;
@@ -356,9 +353,7 @@ impl UxTag {
             }
         });
 
-        let mut highlight = TagAction::None;
         if tutorial.step() == TutorialStep::TagsRefresh {
-            highlight = TagAction::Refresh;
             tutorial.frame(ui, |ui, tutorial| {
                 ui.heading("Finding Tags");
                 ui.separator();
@@ -372,7 +367,6 @@ impl UxTag {
                 tutorial.button_area(NextButton::Skip, ui);
             });
         } else if tutorial.step() == TutorialStep::TagsViewGeneral {
-            highlight = TagAction::ReplaceTag;
             tutorial.frame(ui, |ui, tutorial| {
                 ui.heading("Viewing Tags");
                 ui.separator();
@@ -384,7 +378,6 @@ impl UxTag {
                 tutorial.button_area(NextButton::Skip, ui);
             });
         } else if tutorial.step() == TutorialStep::TagsViewAdd {
-            highlight = TagAction::AddTag;
             tutorial.frame(ui, |ui, tutorial| {
                 ui.heading("Matching Multiple Tags");
                 ui.separator();
@@ -396,7 +389,6 @@ impl UxTag {
                 tutorial.button_area(NextButton::Skip, ui);
             });
         } else if tutorial.step() == TutorialStep::TagsViewSubtract {
-            highlight = TagAction::SubtractTag;
             tutorial.frame(ui, |ui, tutorial| {
                 ui.heading("Viewing Works WITHOUT a Tag");
                 ui.separator();
@@ -422,7 +414,7 @@ impl UxTag {
                     .show(ui, move |ui| -> Option<()> {
                         for tag_id in &self.tag_filtered[row_range] {
                             let tag = self.tag_all.as_ref()?.get(tag_id)?;
-                            tag_set.tag_row_ui(tag, host, db_write, ui, (&mut tutorial, highlight));
+                            tag_set.tag_row_ui(tag, host, db_write, ui, &mut tutorial);
                             ui.end_row();
                         }
                         None
