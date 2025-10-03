@@ -71,10 +71,29 @@ impl<'a> Tutorial<'a> {
 
     pub fn set_style(&mut self, active: bool, ui: &mut egui::Ui) {
         if active {
-            ui.set_style(
-                Theme::new(ColorTheme::SolarizedDark, self.theme.text_scale() + 50.).style(),
-            );
+            ui.set_style(Theme::new(ColorTheme::SolarizedDark, self.theme.text_scale()).style());
         }
+    }
+
+    pub fn reset_style(&mut self, active: bool, ui: &mut egui::Ui) {
+        if active {
+            ui.set_style(self.theme.style());
+        }
+    }
+
+    pub fn add(
+        &mut self,
+        active: bool,
+        ui: &mut egui::Ui,
+        widget: impl egui::Widget,
+    ) -> egui::Response {
+        self.set_style(active, ui);
+        let resp = ui.add(widget);
+        self.reset_style(active, ui);
+        if resp.clicked() {
+            self.next();
+        }
+        resp
     }
 
     pub fn next(&mut self) {

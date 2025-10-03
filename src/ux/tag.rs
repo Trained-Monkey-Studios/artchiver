@@ -6,7 +6,10 @@ use crate::{
         writer::DbWriteHandle,
     },
     plugin::host::PluginHost,
-    shared::{tag::TagSet, update::DataUpdate},
+    shared::{
+        tag::{TagAction, TagSet},
+        update::DataUpdate,
+    },
     ux::tutorial::{NextButton, Tutorial, TutorialStep},
 };
 use artchiver_sdk::TagKind;
@@ -303,7 +306,7 @@ impl UxTag {
                     ui.label("");
                     ui.label("The tags list can be quite long, so the tools at the top of this panel will allow us to filter and sort tags in various ways, once they show up.");
                     ui.label("");
-                    ui.label("Below that, there will be a long list of tags, each of which has various controls to download and view artworks.");
+                    ui.label("Below that, there will be a long list of tags, each of which has various controls to download and view artworks associated with that tag.");
                     tutorial.button_area(NextButton::None, ui);
                 });
             }
@@ -319,7 +322,7 @@ impl UxTag {
                 ui.label("");
                 ui.label("The tags list can be quite long, so the tools at the top of this panel allow us to filter and sort tags in various ways.");
                 ui.label("");
-                ui.label("Below that, there should be a long list of tags, each of which has various controls to download and view artworks.");
+                ui.label("Below that, there should be a long list of tags, each of which has various controls to download and view artworks associated with that tag.");
                 tutorial.button_area(NextButton::Next, ui);
             });
         }
@@ -353,31 +356,38 @@ impl UxTag {
             }
         });
 
-        let mut show_tutorial = tutorial.step() == TutorialStep::TagsRefresh;
-        let all_tags = self.tag_all.as_ref().expect("no tags after check");
+        let mut highlight = TagAction::None;
+        if tutorial.step() == TutorialStep::TagsRefresh {
+            highlight = TagAction::Refresh;
+            tutorial.frame(ui, |ui, tutorial| {
+                ui.heading("Finding Tags");
+                ui.separator();
+                ui.label("Use the filters just above to find a tag you care about, for example \"Protest\" or \"French Paintings of the Fifteenth through Eighteenth Century\".");
+                ui.label("");
+                ui.label("Just as with tags, Artchiver will not download anything until you ask it to. Pick a tag that you would like to see works for and press the ⟳ (refresh) button for that tag.");
+                ui.label("");
+                ui.label("Another progress bar will show on the plugin and artwork will start downloading. You won't see anything yet, for that you also need to view some tags.");
+                ui.label("");
+                ui.label("Click on any of the ⟳ (refresh) buttons below to start downloading works and learn how to show tags.");
+                tutorial.button_area(NextButton::Skip, ui);
+            });
+        }
         let text_style = egui::TextStyle::Body;
         let row_height = ui.text_style_height(&text_style);
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show_rows(ui, row_height, self.tag_filtered.len(), |ui, row_range| {
+                let width = ui.available_width();
                 egui::Grid::new("tag_grid")
                     .num_columns(1)
-                    .spacing([2., 2.])
-                    .min_col_width(0.)
-                    .show(ui, |ui| {
-                        if show_tutorial {
-                            tutorial.frame(ui, |ui, tutorial| {
-                                ui.label("Just as with tags, Artchiver will not download any works until you ask it. Pick a tag that you would like to see works for and press the ⟳ (refresh) button.");
-                                tutorial.button_area(NextButton::Skip, ui);
-                            });
-                            show_tutorial = false;
-                        }
+                    .min_col_width(width)
+                    .show(ui, move |ui| -> Option<()> {
                         for tag_id in &self.tag_filtered[row_range] {
-                            let tag = all_tags.get(tag_id).expect("missing tag");
-                            // Note: change is captured internally
-                            tag_set.tag_row_ui(tag, host, db_write, ui);
+                            let tag = self.tag_all.as_ref()?.get(tag_id)?;
+                            tag_set.tag_row_ui(tag, host, db_write, ui, (&mut tutorial, highlight));
                             ui.end_row();
                         }
+                        None
                     });
             });
     }

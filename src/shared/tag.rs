@@ -7,6 +7,7 @@ use crate::{
         writer::DbWriteHandle,
     },
     plugin::host::PluginHost,
+    ux::tutorial::Tutorial,
 };
 use itertools::Itertools as _;
 use log::{trace, warn};
@@ -34,6 +35,25 @@ pub enum TagRefresh {
     Favorites,
     NeedRefresh(TagId),
     NeedReproject,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TagAction {
+    None,
+    Refresh,
+    // ReplaceTag,
+    // AddTag,
+    // SubtractTag,
+}
+
+impl TagAction {
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    pub fn is_refresh(&self) -> bool {
+        matches!(self, Self::Refresh)
+    }
 }
 
 #[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -230,6 +250,7 @@ impl TagSet {
         host: &mut PluginHost,
         db_write: &DbWriteHandle,
         ui: &mut egui::Ui,
+        (tutorial, highlight): (&mut Tutorial<'_>, TagAction),
     ) {
         ui.horizontal(|ui| {
             let status = self.status(tag);
@@ -238,7 +259,17 @@ impl TagSet {
             let prior_spacing = ui.style().spacing.item_spacing.x;
             ui.style_mut().spacing.item_spacing.x = 0.0;
             if ui
-                .add(egui::Button::new("✔").small().selected(is_eq))
+                .add(
+                    egui::Button::new("✔")
+                        .small()
+                        .selected(is_eq)
+                        .corner_radius(egui::CornerRadius {
+                            nw: 6,
+                            sw: 6,
+                            ne: 0,
+                            se: 0,
+                        }),
+                )
                 .on_hover_text("replace filter")
                 .clicked()
             {
@@ -246,7 +277,12 @@ impl TagSet {
                 self.enable(tag);
             }
             if ui
-                .add(egui::Button::new("+").small().selected(status.enabled()))
+                .add(
+                    egui::Button::new("+")
+                        .small()
+                        .selected(status.enabled())
+                        .corner_radius(egui::CornerRadius::same(0)),
+                )
                 .on_hover_text("add filter")
                 .clicked()
             {
@@ -257,7 +293,12 @@ impl TagSet {
                 }
             }
             if ui
-                .add(egui::Button::new("-").small().selected(status.disabled()))
+                .add(
+                    egui::Button::new("-")
+                        .small()
+                        .selected(status.disabled())
+                        .corner_radius(egui::CornerRadius::same(0)),
+                )
                 .on_hover_text("filter on negation")
                 .clicked()
             {
@@ -269,7 +310,11 @@ impl TagSet {
             }
             let fav_text = if tag.favorite() { "★" } else { "☆" };
             if ui
-                .small_button(fav_text)
+                .add(
+                    egui::Button::new(fav_text)
+                        .small()
+                        .corner_radius(egui::CornerRadius::same(0)),
+                )
                 .on_hover_text("toggle favorite status")
                 .clicked()
             {
@@ -300,13 +345,14 @@ impl TagSet {
 
             ui.label("  ");
 
-            if ui
-                .small_button("⟳")
+            if tutorial
+                .add(highlight.is_refresh(), ui, egui::Button::new("⟳").small())
                 .on_hover_text("refresh works")
                 .clicked()
             {
                 host.refresh_works_for_tag(tag).ok();
             }
+
             if ui
                 .add_enabled(tag.wiki_url().is_some(), egui::Button::new("🔗").small())
                 .on_hover_text("go to wiki")

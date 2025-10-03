@@ -9,9 +9,10 @@ use crate::{
     plugin::{host::PluginHost, thumbnail::is_image},
     shared::{
         performance::PerfTrack,
-        tag::{TagRefresh, TagSet},
+        tag::{TagAction, TagRefresh, TagSet},
         update::DataUpdate,
     },
+    ux::tutorial::Tutorial,
 };
 use anyhow::Result;
 use egui::{Key, Margin, Modifiers, PointerButton, Rect, Sense, SizeHint, Vec2, include_image};
@@ -633,6 +634,7 @@ impl UxWork {
     pub fn info_ui(
         &mut self,
         tags: Option<&HashMap<TagId, DbTag>>,
+        mut tutorial: Tutorial<'_>,
         db_write: &DbWriteHandle,
         host: &mut PluginHost,
         ui: &mut egui::Ui,
@@ -699,7 +701,13 @@ impl UxWork {
                 .filter_map(|tag_id| tags.get(&tag_id))
                 .sorted_by_key(|tag| tag.name())
                 .for_each(|tag| {
-                    self.tag_selection.tag_row_ui(tag, host, db_write, ui);
+                    self.tag_selection.tag_row_ui(
+                        tag,
+                        host,
+                        db_write,
+                        ui,
+                        (&mut tutorial, TagAction::None),
+                    );
                 });
         }
     }

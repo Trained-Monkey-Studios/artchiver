@@ -177,9 +177,17 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
-        self.state
-            .work_ux
-            .info_ui(self.state.tag_ux.tags(), self.db_write, self.sync, ui);
+        self.state.work_ux.info_ui(
+            self.state.tag_ux.tags(),
+            Tutorial::new(
+                &mut self.state.tutorial_step,
+                &self.state.theme,
+                ui.style().clone(),
+            ),
+            self.db_write,
+            self.sync,
+            ui,
+        );
     }
 
     fn render_slideshow(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
