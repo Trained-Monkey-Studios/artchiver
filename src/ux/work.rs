@@ -993,7 +993,7 @@ impl UxWork {
                     //       downsample the source. Instead we should be getting images at the
                     //       source scale and using opengl to up/down scale things. This leaves
                     //       out some of the nice filtering we get with mpv, but at the cost of
-                    //       loosing detail when zooming on videos larger than the window size.
+                    //       losing detail when zooming on videos larger than the window size.
                     //       The complex part is that the size from the video is only available
                     //       when loaded. We already have the machinery in place to update the
                     //       texture, so it's mostly a matter of figuring out when we have an
