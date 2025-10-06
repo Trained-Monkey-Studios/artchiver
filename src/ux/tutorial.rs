@@ -15,7 +15,9 @@ pub enum TutorialStep {
     TagsViewAdd,
     TagsViewSubtract,
     WorksIntro,
+    WorkInfo,
     WorksSlideshow,
+    Ending,
     Finished,
 }
 
@@ -30,8 +32,10 @@ impl TutorialStep {
             Self::TagsViewGeneral => Self::TagsViewAdd,
             Self::TagsViewAdd => Self::TagsViewSubtract,
             Self::TagsViewSubtract => Self::WorksIntro,
-            Self::WorksIntro => Self::WorksSlideshow,
-            Self::WorksSlideshow => Self::Finished,
+            Self::WorksIntro => Self::WorkInfo,
+            Self::WorkInfo => Self::WorksSlideshow,
+            Self::WorksSlideshow => Self::Ending,
+            Self::Ending => Self::Finished,
             Self::Finished => panic!("Tutorial already finished!"),
         }
     }
