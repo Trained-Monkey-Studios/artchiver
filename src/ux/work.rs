@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    iter::once,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -971,7 +972,7 @@ impl UxWork {
             // Follow this by the image in front of us, then behind us, spiraling outwards.
             let forward = work_offset.saturating_add(1)..work_offset.saturating_add(n_wide).min(self.work_filtered.len());
             let backward = (work_offset.saturating_sub(n_wide)..work_offset).rev();
-            for offset in [work_offset].into_iter().chain(forward.interleave(backward)) {
+            for offset in once(work_offset).chain(forward.interleave(backward)) {
                 self.ensure_work_cached(ui.ctx(), offset, ctx.screen_rect().size());
             }
             self.flush_works_lru(ui.ctx());
