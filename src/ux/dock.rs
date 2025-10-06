@@ -169,6 +169,11 @@ impl<'a> SyncViewer<'a> {
         let start = Instant::now();
         self.state.work_ux.gallery_ui(
             self.state.tag_ux.tags(),
+            Tutorial::new(
+                &mut self.state.tutorial_step,
+                &self.state.theme,
+                ui.style().clone(),
+            ),
             self.db_write,
             &mut self.state.perf,
             ui,
@@ -177,9 +182,17 @@ impl<'a> SyncViewer<'a> {
     }
 
     fn show_info(&mut self, ui: &mut egui::Ui) {
-        self.state
-            .work_ux
-            .info_ui(self.state.tag_ux.tags(), self.db_write, self.sync, ui);
+        self.state.work_ux.info_ui(
+            self.state.tag_ux.tags(),
+            Tutorial::new(
+                &mut self.state.tutorial_step,
+                &self.state.theme,
+                ui.style().clone(),
+            ),
+            self.db_write,
+            self.sync,
+            ui,
+        );
     }
 
     fn render_slideshow(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -188,9 +201,17 @@ impl<'a> SyncViewer<'a> {
             self.state.mode = UxMode::Browser;
             return;
         }
-        self.state
-            .work_ux
-            .slideshow_ui(self.state.tag_ux.tags(), self.db_write, ctx, frame);
+        self.state.work_ux.slideshow_ui(
+            self.state.tag_ux.tags(),
+            Tutorial::new(
+                &mut self.state.tutorial_step,
+                &self.state.theme,
+                ctx.style().clone(),
+            ),
+            self.db_write,
+            ctx,
+            frame,
+        );
     }
 }
 
@@ -394,6 +415,9 @@ impl UxToplevel {
                 if pressed.contains(&Key::F11) || pressed.contains(&Key::Space) {
                     if self.state.work_ux.has_selection() {
                         self.state.mode = UxMode::Slideshow;
+                        if self.state.tutorial_step == TutorialStep::WorkInfo {
+                            self.state.tutorial_step = self.state.tutorial_step.next();
+                        }
                         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
                     }
                 } else if pressed.contains(&Key::Escape) {
@@ -411,9 +435,15 @@ impl UxToplevel {
                 }
             }
             UxMode::Slideshow => {
-                if pressed.contains(&Key::Escape) || pressed.contains(&Key::Space) {
+                if pressed.contains(&Key::Escape)
+                    || pressed.contains(&Key::F11)
+                    || pressed.contains(&Key::Space)
+                {
                     self.state.work_ux.on_leave_slideshow();
                     self.state.mode = UxMode::Browser;
+                    if self.state.tutorial_step == TutorialStep::WorksSlideshow {
+                        self.state.tutorial_step = self.state.tutorial_step.next();
+                    }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
                 }
             }
@@ -492,6 +522,28 @@ impl UxToplevel {
                             self.state.tutorial_step = TutorialStep::PluginsIntro;
                         }
                         if ui.button("Skip Tutorial").clicked() {
+                            self.state.tutorial_step = TutorialStep::Finished;
+                        }
+                    })
+                });
+        } else if self.state.tutorial_step == TutorialStep::Ending {
+            egui::Window::new("Welcome to Artchiver")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .default_size([400.0, 400.0])
+                .show(ctx, |ui| {
+                    ui.heading("In Summary");
+                    ui.separator();
+                    ui.label("Load tags from the plugins tab. Load works from the tags tab. Interact with works in the works tab.");
+                    ui.label("");
+                    ui.label("This tutorial covered the basics of how to use Artchiver. There is lots more to discover, good luck on your journey.");
+                    ui.label("");
+                    ui.label("You can find further help and documentation at <TODO: make a website>");
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Restart Tutorial").clicked() {
+                            self.state.tutorial_step = TutorialStep::Beginning;
+                        }
+                        if ui.button("Close Tutorial").clicked() {
                             self.state.tutorial_step = TutorialStep::Finished;
                         }
                     })

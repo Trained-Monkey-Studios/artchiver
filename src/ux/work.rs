@@ -12,6 +12,7 @@ use crate::{
         tag::{TagRefresh, TagSet},
         update::DataUpdate,
     },
+    ux::tutorial::{NextButton, Tutorial, TutorialStep},
 };
 use anyhow::Result;
 use egui::{Key, Margin, Modifiers, PointerButton, Rect, Sense, SizeHint, Vec2, include_image};
@@ -23,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    iter::once,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -633,6 +635,7 @@ impl UxWork {
     pub fn info_ui(
         &mut self,
         tags: Option<&HashMap<TagId, DbTag>>,
+        mut tutorial: Tutorial<'_>,
         db_write: &DbWriteHandle,
         host: &mut PluginHost,
         ui: &mut egui::Ui,
@@ -647,6 +650,19 @@ impl UxWork {
         let Some(work_id) = self.work_filtered.get(offset) else {
             return;
         };
+
+        if tutorial.step() == TutorialStep::WorkInfo {
+            tutorial.frame(ui, |ui, tutorial| {
+                ui.heading("Work Info");
+                ui.separator();
+                ui.label("This panel shows information about the currently selected work.");
+                ui.label("");
+                ui.label("Importantly, the list of tags on the work allows you to add and remove tags, just like the tags bar. This is a fast way to narrow in on a style or subject matter.");
+                ui.label("");
+                ui.label("To continue, press the Spacebar key to enter the slideshow.");
+                tutorial.button_area(NextButton::Skip, ui);
+            });
+        }
 
         let work = &works[work_id];
         egui::Grid::new("work_info_grid").show(ui, |ui| {
@@ -699,7 +715,8 @@ impl UxWork {
                 .filter_map(|tag_id| tags.get(&tag_id))
                 .sorted_by_key(|tag| tag.name())
                 .for_each(|tag| {
-                    self.tag_selection.tag_row_ui(tag, host, db_write, ui);
+                    self.tag_selection
+                        .tag_row_ui(tag, host, db_write, ui, &mut tutorial);
                 });
         }
     }
@@ -707,11 +724,25 @@ impl UxWork {
     pub fn gallery_ui(
         &mut self,
         tags: Option<&HashMap<TagId, DbTag>>,
+        mut tutorial: Tutorial<'_>,
         db_write: &DbWriteHandle,
         perf: &mut PerfTrack,
         ui: &mut egui::Ui,
     ) {
         self.mpv.monitor_events();
+
+        if tutorial.step() == TutorialStep::WorksIntro {
+            tutorial.frame(ui, |ui, tutorial| {
+                ui.heading("Works Gallery");
+                ui.separator();
+                ui.label("This is the works gallery. It shows works matching the selected tags.");
+                ui.label("");
+                ui.label("From here you can select works by clicking on them, using the arrow keys, view a work in fullscreen (Spacebar), delete works (Delete), or Favorite and Unfavorite works (F6 and F7).");
+                ui.label("");
+                ui.label("Once works show up (it may take time to download them), click on one to select it.");
+                tutorial.button_area(NextButton::Skip, ui);
+            });
+        }
 
         ui.horizontal_wrapped(|ui| {
             if let Some(tags) = tags {
@@ -838,7 +869,7 @@ impl UxWork {
                 // to make scrolling faster).
                 let cache_start = Instant::now();
                 for work_offset in query_slice {
-                    self.ensure_work_cached(ui.ctx(), work_offset);
+                    self.ensure_work_cached(ui.ctx(), work_offset, ui.available_size());
                 }
                 self.flush_works_lru(ui.ctx());
                 perf.sample("Cache Images", cache_start.elapsed());
@@ -850,16 +881,20 @@ impl UxWork {
                 for row_work_offsets in &visible_slice.chunks(n_wide) {
                     ui.horizontal(|ui| {
                         for work_offset in row_work_offsets {
+                            // Selection uses the selection color for the background
+                            let is_selected = self.selected == Some(work_offset);
+
+                            // Borrow work off self
                             let work = &self
                                 .work_matching_tag
                                 .as_ref()
                                 .expect("no work after check")[&self.work_filtered[work_offset]];
 
-                            // Selection uses the selection color for the background
-                            let is_selected = self.selected == Some(work_offset);
-
+                            // Image is a thin wrapper around a TextureSource, which is a Cow to
+                            // the URI. This doesn't actually borrow anything off work because we
+                            // format! to create the URI off of the path in the DbWork.
                             let img = self
-                                .get_preview_image(work)
+                                .get_preview_image(self.preview_uri(work))
                                 .alt_text(work.name())
                                 .show_loading_spinner(true)
                                 .maintain_aspect_ratio(true);
@@ -899,8 +934,10 @@ impl UxWork {
                                 rsz.show(ui, |ui| {
                                     let resp = ui.add(btn);
                                     if resp.clicked() {
-                                        self.selected = Some(work_offset);
-                                        self.slide_xform = ZoomPan::default();
+                                        self.set_selected(work_offset);
+                                        if tutorial.step() == TutorialStep::WorksIntro {
+                                            tutorial.next();
+                                        }
                                     }
                                 });
                             });
@@ -914,6 +951,7 @@ impl UxWork {
     pub fn slideshow_ui(
         &mut self,
         tags: Option<&HashMap<TagId, DbTag>>,
+        mut tutorial: Tutorial<'_>,
         db_write: &DbWriteHandle,
         ctx: &egui::Context,
         frame: &mut eframe::Frame,
@@ -928,77 +966,111 @@ impl UxWork {
             self.check_common_key_binds(tags, db_write, n_wide, ui);
             self.check_slideshow_key_binds(ui);
 
-            self.ensure_work_cached(ui.ctx(), work_offset);
-            for offset in work_offset.saturating_sub(10)
-                ..work_offset
-                    .saturating_add(10)
-                    .min(self.work_filtered.len().saturating_sub(1))
-            {
-                self.ensure_work_cached(ui.ctx(), offset);
+            // Note: we rate-limit the number of loads we allow per frame. Make sure that
+            // we preferentially load the image we're actually looking at so we're not stuck
+            // staring at a spinner while we load stuff we're not even going to look at.
+            // Follow this by the image in front of us, then behind us, spiraling outwards.
+            let forward = work_offset.saturating_add(1)..work_offset.saturating_add(n_wide).min(self.work_filtered.len());
+            let backward = (work_offset.saturating_sub(n_wide)..work_offset).rev();
+            for offset in once(work_offset).chain(forward.interleave(backward)) {
+                self.ensure_work_cached(ui.ctx(), offset, ctx.screen_rect().size());
             }
             self.flush_works_lru(ui.ctx());
 
-            // if let Some(work) = self.get_selected_work() {
-            match self.get_screen_image() {
+            let full = ui.available_size() * self.slide_xform.zoom;
+            let (img, size) = match self.get_screen_image() {
                 DisplayKind::Image(img) => {
+                    // Set the maintain_aspect_ratio flag, then call load_and_calc_size to
+                    // upscale the image size (not the image itself!) to fit in our virtual "full"
+                    // viewport, with zoom. Note that we already called load on svg with a SizeHint
+                    // of the actual screen size, so racing with zoom won't mess anything up here.
                     let img = img.show_loading_spinner(false).maintain_aspect_ratio(true);
-
-                    let avail = ui.available_size() * self.slide_xform.zoom;
-                    if let Some(size) = img.load_and_calc_size(ui, avail) {
-                        let (mut left, mut right, mut top, mut bottom) = (0., avail.x, 0., avail.y);
-                        if avail.y > size.y {
-                            top = (avail.y - size.y) / 2.;
-                            bottom = avail.y - top;
-                        }
-                        if avail.x > size.x {
-                            left = (avail.x - size.x) / 2.;
-                            right = avail.x - left;
-                        }
-                        let rect = Rect::from_x_y_ranges(left..=right, top..=bottom)
-                            .translate(self.slide_xform.pan);
-                        img.paint_at(ui, rect);
-                    }
-
-                    self.draw_offset_label(ui, work_offset);
+                    let size = img.load_and_calc_size(ui, full).unwrap_or([48., 48.].into());
+                    (img, size)
                 }
                 DisplayKind::MediaPlayer => {
-                    // Cause mpv to render to our backing texture
-                    let rect = ui.available_rect_before_wrap();
-                    if let Some(img) = self.mpv.image(&rect, ui.painter(), frame) {
-                        img.paint_at(ui, rect);
-                    }
-
-                    self.draw_offset_label(ui, work_offset);
-
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
-                        ui.horizontal(|ui| {
-                            if self.mpv.is_paused() && ui.button("▶").clicked() {
-                                self.mpv.unpause_async().ok();
-                            } else if ui.button("⏸").clicked() {
-                                self.mpv.pause_async().ok();
-                            }
-                            let time_pos = self.mpv.time_pos();
-                            ui.label(format!("{:02.0}:{:02.0}", time_pos / 60.0, time_pos % 60.0));
-                            let mut percent_pos = self.mpv.percent_pos();
-                            let slider = egui::Slider::new(&mut percent_pos, 0f64..=100f64)
-                                .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.25 })
-                                .show_value(false);
-                            if ui.add(slider).changed() {
-                                self.mpv
-                                    .seek_percent_absolute_async(percent_pos as usize)
-                                    .ok();
-                            }
-                            let duration = self.mpv.duration();
-                            ui.label(format!("{:02.0}:{:02.0}", duration / 60.0, duration % 60.0));
-                            if ui.button("⏪").clicked() {
-                                self.mpv.seek_absolute_async(0.).ok();
-                            }
-                            if ui.button("⏩").clicked() {
-                                self.mpv.seek_forward_async(5.).ok();
-                            }
-                        });
-                    });
+                    // TODO: currently, using the native size of the display area here. This will
+                    //       downsample the source. Instead we should be getting images at the
+                    //       source scale and using opengl to up/down scale things. This leaves
+                    //       out some of the nice filtering we get with mpv, but at the cost of
+                    //       losing detail when zooming on videos larger than the window size.
+                    //       The complex part is that the size from the video is only available
+                    //       when loaded. We already have the machinery in place to update the
+                    //       texture, so it's mostly a matter of figuring out when we have an
+                    //       accurate size from MPV.
+                    let screen = ui.available_rect_before_wrap();
+                    let img = if let Some(img) = self.mpv.image(&screen, ui.painter(), frame) {
+                        img
+                    } else {
+                        egui::Image::new(include_image!("../../assets/loading-preview.png"))
+                    };
+                    (img, screen.size() * self.slide_xform.zoom)
                 }
+            };
+
+            // Pan the zoomed image within the virtual `full` zoomed size, to account for both
+            // letterboxing and our current pan position.
+            let (mut left, mut right, mut top, mut bottom) = (0., full.x, 0., full.y);
+            if full.y > size.y {
+                top = (full.y - size.y) / 2.;
+                bottom = full.y - top;
+            }
+            if full.x > size.x {
+                left = (full.x - size.x) / 2.;
+                right = full.x - left;
+            }
+            let rect = Rect::from_x_y_ranges(left..=right, top..=bottom)
+                .translate(self.slide_xform.pan);
+
+            // Paint the image.
+            img.paint_at(ui, rect);
+
+            // Draw UX on top.
+            self.draw_offset_label(ui, work_offset);
+            if self.has_loaded_media {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
+                    ui.horizontal(|ui| {
+                        if self.mpv.is_paused() && ui.button("▶").clicked() {
+                            self.mpv.unpause_async().ok();
+                        } else if ui.button("⏸").clicked() {
+                            self.mpv.pause_async().ok();
+                        }
+                        let time_pos = self.mpv.time_pos();
+                        ui.label(format!("{:02.0}:{:02.0}", time_pos / 60.0, time_pos % 60.0));
+                        let mut percent_pos = self.mpv.percent_pos();
+                        let slider = egui::Slider::new(&mut percent_pos, 0f64..=100f64)
+                            .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.25 })
+                            .show_value(false);
+                        if ui.add(slider).changed() {
+                            self.mpv
+                                .seek_percent_absolute_async(percent_pos as usize)
+                                .ok();
+                        }
+                        let duration = self.mpv.duration();
+                        ui.label(format!("{:02.0}:{:02.0}", duration / 60.0, duration % 60.0));
+                        if ui.button("⏪").clicked() {
+                            self.mpv.seek_absolute_async(0.).ok();
+                        }
+                        if ui.button("⏩").clicked() {
+                            self.mpv.seek_forward_async(5.).ok();
+                        }
+                    });
+                });
+            }
+
+            if tutorial.step() == TutorialStep::WorksSlideshow {
+                tutorial.frame(ui, |ui, tutorial| {
+                    ui.heading("Slideshow");
+                    ui.separator();
+                    ui.label("Entering fullscreen allows for close inspection of a work.");
+                    ui.label("");
+                    ui.label("Use the mouse wheel or +/- keys to zoom in on the work and click and drag to pan around it.");
+                    ui.label("");
+                    ui.label("Use the left and right arrow keys to navigate to the next and previous work.");
+                    ui.label("");
+                    ui.label("To continue, exit the slideshow by pressing the Spacebar again.");
+                    tutorial.button_area(NextButton::Skip, ui);
+                });
             }
         });
 
@@ -1033,15 +1105,19 @@ impl UxWork {
         ));
     }
 
-    fn get_preview_image<'b>(&self, work: &'b DbWork) -> egui::Image<'b> {
-        if let Some(preview_path) = work.preview_path() {
-            let preview_uri = format!("file://{}", self.data_dir.join(preview_path).display());
-            // println!("Would show: {preview_uri}: {}", self.state.works_lru.contains(&preview_uri));
-            if self.works_lru.contains(&preview_uri) {
-                return egui::Image::new(preview_uri);
-            }
+    fn preview_uri(&self, work: &DbWork) -> Option<String> {
+        work.preview_path()
+            .map(|path| format!("file://{}", self.data_dir.join(path).display()))
+    }
+
+    fn get_preview_image<'b>(&self, uri: Option<String>) -> egui::Image<'b> {
+        if let Some(uri) = uri
+            && self.works_lru.contains(&uri)
+        {
+            egui::Image::new(uri)
+        } else {
+            egui::Image::new(include_image!("../../assets/loading-preview.png"))
         }
-        egui::Image::new(include_image!("../../assets/loading-preview.png"))
     }
 
     fn get_screen_image<'b>(&mut self) -> DisplayKind<'b> {
@@ -1071,11 +1147,7 @@ impl UxWork {
         )))
     }
 
-    fn ensure_work_cached(
-        &mut self,
-        ctx: &egui::Context,
-        work_offset: usize, /* work: &DbWork*/
-    ) {
+    fn ensure_work_cached(&mut self, ctx: &egui::Context, work_offset: usize, screen_size: Vec2) {
         // If we restore from an exit in slideshow mode and haven't loaded yet.
         if self.work_matching_tag.is_none() {
             return;
@@ -1086,13 +1158,10 @@ impl UxWork {
             return;
         }
 
-        // Adjust the size hint to be one power-of-two larger than whatever
-        // our current thumbnail size is set to. This will cause us to reload
-        // images as we scale, keeping the thumbnails looking okay.
-        let size = (self.thumb_size.round() as u32).next_power_of_two();
+        // Note: Only the svg loader uses this. Tell svg to load at the full screen size.
         let size_hint = SizeHint::Size {
-            width: size,
-            height: size,
+            width: screen_size.x as u32,
+            height: screen_size.y as u32,
             maintain_aspect_ratio: true,
         };
         let works = self

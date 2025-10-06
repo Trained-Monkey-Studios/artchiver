@@ -18,6 +18,8 @@ pub enum ColorTheme {
     CatppuccinMocha,
     SolarizedLight,
     SolarizedDark,
+    TutorialLight,
+    TutorialDark,
 }
 
 impl ColorTheme {
@@ -35,6 +37,7 @@ impl ColorTheme {
             Self::CatppuccinMocha => 9,
             Self::SolarizedLight => 10,
             Self::SolarizedDark => 11,
+            _ => panic!("tutorial themes cannot be selected"),
         };
         let labels = [
             "Egui Light",
@@ -125,6 +128,8 @@ impl ColorTheme {
                 visuals: egui_solarized::Theme::solarized_dark().into(),
                 ..Default::default()
             },
+            Self::TutorialLight => Self::SolarizedLight.style(),
+            Self::TutorialDark => Self::SolarizedDark.style(),
         }
     }
 
@@ -151,7 +156,7 @@ impl ColorTheme {
     }
 
     fn tweak_catppuccin(style: &mut egui::style::Style) {
-        style.visuals.selection.bg_fill = style.visuals.selection.bg_fill.linear_multiply(2.0);
+        style.visuals.selection.bg_fill = style.visuals.selection.bg_fill.gamma_multiply(2.0);
     }
 }
 
@@ -173,6 +178,16 @@ impl Default for Theme {
 impl Theme {
     pub fn new(color: ColorTheme, text_scale: f32) -> Self {
         Self { color, text_scale }
+    }
+
+    pub fn style_for_tutorial(&self) -> egui::Style {
+        let current_is_dark_mode = self.color.style().visuals.dark_mode;
+        let color = if current_is_dark_mode {
+            ColorTheme::TutorialDark
+        } else {
+            ColorTheme::TutorialLight
+        };
+        Self::new(color, self.text_scale).style()
     }
 
     pub fn text_scale(&self) -> f32 {
