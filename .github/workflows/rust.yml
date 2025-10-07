@@ -182,6 +182,7 @@ jobs:
 
   build_plugins:
     name: Build WASM (plugins/${{matrix.crate}})
+    needs: [clippy_plugins, fmt_plugins]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -311,10 +312,11 @@ jobs:
 
   # Collect all of our built release items and publish them, if we are pushing to main
   publish_release:
+    permissions:
+      contents: write
     if: github.ref_type == 'tag'
-    #if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
     name: Release the new version
-    needs: [build_release_win]
+    needs: [build_release_win, clippy_main, clippy_plugins, fmt_main, fmt_plugins, test_win, test_nix]
     runs-on: ubuntu-latest
     steps:
       # Get access to version number
