@@ -6,6 +6,7 @@ edition = "2024"
 license = "GPL-3"
 
 [dependencies]
+absolute_unit = { version = "0.10", features = ["serde"] }
 anyhow = "1.0"
 extism-pdk = "1.0"
 jiff = { version ="0.2", features = ["serde"] }

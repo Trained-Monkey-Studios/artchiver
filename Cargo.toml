@@ -19,7 +19,8 @@ exclude = [
     "plugins/artx-feed",
     "plugins/artx-met",
     "plugins/artx-nga",
-    "plugins/artx-podcast"
+    "plugins/artx-podcast",
+    "plugins/artx-smithsonian"
 ]
 members = []
 

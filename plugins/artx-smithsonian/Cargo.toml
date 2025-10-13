@@ -1,0 +1,19 @@
+[package]
+name = "artx-smithsonian"
+description = "Plugin for Artchiver to access The Smithsonian's open data collection."
+version = "0.0.1"
+edition = "2024"
+license = "GPL-3"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0"
+artchiver_sdk = { path = "../artchiver_sdk" }
+extism-pdk = "1.4"
+serde = "1.0"
+serde_json = "1.0"
+
+[lints]
+workspace = true

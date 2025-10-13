@@ -1,12 +1,15 @@
+mod work;
+
+pub use crate::work::{History, Location, Measurement, PhysicalData, SiUnit, Work};
+
 use anyhow::{Result, bail};
-use jiff::civil::Date;
+// use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 pub use serde_json;
 use std::{
     cmp::Ordering,
     fmt,
     hash::{Hash, Hasher},
-    path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
@@ -319,6 +322,10 @@ impl Tag {
         self
     }
 
+    pub fn work_count(&self) -> u64 {
+        self.remote_work_count
+    }
+
     pub fn increment_work_count(&mut self) {
         self.remote_work_count = self.remote_work_count.saturating_add(1);
     }
@@ -341,103 +348,6 @@ impl Tag {
 
     pub fn wiki_url(&self) -> Option<&str> {
         self.wiki_url.as_deref()
-    }
-}
-
-// API-centered [art]work item.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Work {
-    name: String,
-    date: Date,
-    preview_url: String,
-    screen_url: String,
-    tags: Vec<String>,
-
-    remote_id: Option<String>,
-    artist_name: Option<String>,
-    archive_url: Option<String>,
-
-    preview_path: Option<PathBuf>,
-    screen_path: Option<PathBuf>,
-    archive_path: Option<PathBuf>,
-}
-
-impl Work {
-    pub fn new<N: ToString, P: ToString, S: ToString>(
-        name: N,
-        date: Date,
-        preview_url: P,
-        screen_url: S,
-        tags: Vec<String>,
-    ) -> Self {
-        Self {
-            name: name.to_string(),
-            date,
-            preview_url: preview_url.to_string(),
-            screen_url: screen_url.to_string(),
-            tags,
-
-            remote_id: None,
-            artist_name: None,
-            archive_url: None,
-            preview_path: None,
-            screen_path: None,
-            archive_path: None,
-        }
-    }
-
-    pub fn with_remote_id(mut self, id: impl ToString) -> Self {
-        self.remote_id = Some(id.to_string());
-        self
-    }
-
-    pub fn with_archive_url(mut self, url: impl ToString) -> Self {
-        self.archive_url = Some(url.to_string());
-        self
-    }
-
-    pub fn remote_id(&self) -> Option<&str> {
-        self.remote_id.as_deref()
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn artist_name(&self) -> Option<&str> {
-        self.artist_name.as_deref()
-    }
-
-    pub fn date(&self) -> &Date {
-        &self.date
-    }
-
-    pub fn preview_url(&self) -> &str {
-        &self.preview_url
-    }
-
-    pub fn screen_url(&self) -> &str {
-        &self.screen_url
-    }
-
-    pub fn archive_url(&self) -> Option<&str> {
-        self.archive_url.as_deref()
-    }
-
-    pub fn preview_path(&self) -> Option<&Path> {
-        self.preview_path.as_deref()
-    }
-
-    pub fn screen_path(&self) -> Option<&Path> {
-        self.screen_path.as_deref()
-    }
-
-    pub fn archive_path(&self) -> Option<&Path> {
-        self.archive_path.as_deref()
-    }
-
-    pub fn tags(&self) -> &[String] {
-        &self.tags
     }
 }
 

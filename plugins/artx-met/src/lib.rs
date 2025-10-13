@@ -6,35 +6,58 @@ use std::collections::HashMap;
 
 import_section!();
 
-// 0: Object Number,
-// 1: Is Highlight,
-// 2: Is Timeline Work,
-// 3: Is Public Domain,
-// 4: Object ID,
-// 5: Gallery Number,
-// 6: Department,
-// 7: AccessionYear,
-// 8: Object Name,
-// 9: Title,
-// 10: Culture,
-// 11: Period,
-// 12: Dynasty,
-// 13: Reign,
-// 14: Portfolio,
-// 15: Constituent ID,
-// 16: Artist Role,
-// 17: Artist Prefix,
-// 18: Artist Display Name,
-// 19: Artist Display Bio,
-// 20: Artist Suffix,
-// 21: Artist Alpha Sort,
+// 0: Object Number, // Not unique. Seems to sometimes be a date, sometimes other things.
+// 1: Is Highlight, // TAGME: 0.57% of records
+// 2: Is Timeline Work, // TAGME: 1.65% of records
+// 3: Is Public Domain, // 51.2% of records
+// 4: Object ID, // Unique ID!
+// 5: Gallery Number, // 89.78% empty (archived), but _lots_ of rooms at the met, not all are id's some are string place names
+// ╭────┬───────────────────────────────────────────┬────────┬──────────┬────────────┬─────────────────────────────────────╮
+// │  # │                Department                 │ count  │ quantile │ percentage │              frequency              │
+// ├────┼───────────────────────────────────────────┼────────┼──────────┼────────────┼─────────────────────────────────────┤
+// │  0 │ Drawings and Prints                       │ 172630 │     0.36 │ 35.60%     │ *********************************** │
+// │  1 │ European Sculpture and Decorative Arts    │  43051 │     0.09 │ 8.88%      │ ********                            │
+// │  2 │ Photographs                               │  37459 │     0.08 │ 7.72%      │ *******                             │
+// │  3 │ Asian Art                                 │  37000 │     0.08 │ 7.63%      │ *******                             │
+// │  4 │ Greek and Roman Art                       │  33726 │     0.07 │ 6.95%      │ ******                              │
+// │  5 │ Costume Institute                         │  31652 │     0.07 │ 6.53%      │ ******                              │
+// │  6 │ Egyptian Art                              │  27969 │     0.06 │ 5.77%      │ *****                               │
+// │  7 │ The American Wing                         │  18532 │     0.04 │ 3.82%      │ ***                                 │
+// │  8 │ Islamic Art                               │  15573 │     0.03 │ 3.21%      │ ***                                 │
+// │  9 │ Modern and Contemporary Art               │  14696 │     0.03 │ 3.03%      │ ***                                 │
+// │ 10 │ Arms and Armor                            │  13623 │     0.03 │ 2.81%      │ **                                  │
+// │ 11 │ Arts of Africa, Oceania, and the Americas │  12367 │     0.03 │ 2.55%      │ **                                  │
+// │ 12 │ Medieval Art                              │   7142 │     0.01 │ 1.47%      │ *                                   │
+// │ 13 │ Ancient Near Eastern Art                  │   6223 │     0.01 │ 1.28%      │ *                                   │
+// │ 14 │ Musical Instruments                       │   5227 │     0.01 │ 1.08%      │ *                                   │
+// │ 15 │ European Paintings                        │   2626 │     0.01 │ 0.54%      │                                     │
+// │ 16 │ Robert Lehman Collection                  │   2586 │     0.01 │ 0.53%      │                                     │
+// │ 17 │ The Cloisters                             │   2340 │     0.00 │ 0.48%      │                                     │
+// │ 18 │ The Libraries                             │    534 │     0.00 │ 0.11%      │                                     │
+// ╰────┴───────────────────────────────────────────┴────────┴──────────┴────────────┴─────────────────────────────────────╯
+// 6: Department, // TAGME?
+// 7: AccessionYear, // TAGME: 0.8% blank; mostly the year, going back to 1800's; several specific dates
+// 8: Object Name, // Not the name. 20% are "Print", 6% are "Photograph". Seems like a broad description more than anything, even when specific.
+// 9: Title, // Not unique! 6% are blank. Lots of random descriptions, but closer to a title.
+// 10: Culture, // TAGME: 57% blank, but accurate below that, with a very long tail
+// 11: Period, // TAGME: 81% blank, but useful below that
+// 12: Dynasty, // TAGME: 95% blank, unclear how useful these would be as tags
+// 13: Reign, // TAGME: 98% blank, egyptian beyond; maybe useful?
+// 14: Portfolio, // 95% blank; very long instances, not worth tagging
+// 15: Constituent ID, // 42% blank; contains doubles?
+// 16: Artist Role, // 42% blank; 24% "Artist"; seems like a job description of the artist; add to attribution section
+// 17: Artist Prefix, // 42% blank; 30% differently blank; lots of bars as decoration; seems to have desriptives like "probably" and "published by"
+// 18: Artist Display Name, // 41% blank; 1.5% Walker Evans; seems to be full attribution, with artists separated by | if multiple
+// 19: Artist Display Bio, // Mostly 1-liners with place and year range, commas separating multiple artists
+// 20: Artist Suffix, // Seems to be mostly ", Place" or a bunch of |'s
+// 21: Artist Alpha Sort, // Mostly display name, but Last, First format
 // 22: Artist Nationality,
 // 23: Artist Begin Date,
 // 24: Artist End Date,
 // 25: Artist Gender,
 // 26: Artist ULAN URL,
 // 27: Artist Wikidata URL,
-// 28: Object Date,
+// 28: Object Date, // very broad; sometimes a year int, sometimes a textual guess like "late 19th century"
 // 29: Object Begin Date,
 // 30: Object End Date,
 // 31: Medium,

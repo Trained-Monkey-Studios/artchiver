@@ -61,6 +61,7 @@
             just
             rlwrap
             sqlite
+            vmtouch
           ];
 
           LD_LIBRARY_PATH = "${lib.makeLibraryPath buildInputs}";

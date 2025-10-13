@@ -22,6 +22,7 @@ use log::{info, trace};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     collections::{HashMap, HashSet},
     iter::once,
@@ -552,7 +553,7 @@ impl UxWork {
                 } else if pressed.contains(&Key::Delete) {
                     db_write
                         .set_work_hidden(work.id(), !work.hidden())
-                        .expect("set favorite");
+                        .expect("set hidden");
                     work.set_hidden(!work.hidden());
                     self.reproject_work(tags);
                     self.selected = selected;
@@ -666,12 +667,13 @@ impl UxWork {
 
         let work = &works[work_id];
         egui::Grid::new("work_info_grid").show(ui, |ui| {
-            ui.label("Offset");
-            ui.label(format!("{offset} of {}", self.work_filtered.len()));
+            ui.heading(work.name());
+            ui.end_row();
+            ui.separator();
             ui.end_row();
 
-            ui.label("Name");
-            ui.label(work.name());
+            ui.label("Offset");
+            ui.label(format!("{offset} of {}", self.work_filtered.len()));
             ui.end_row();
 
             ui.label("Date");
@@ -697,6 +699,40 @@ impl UxWork {
                 }
                 ui.label(path.display().to_string());
                 ui.end_row();
+            }
+
+            if let Some(location) = work.location() {
+                ui.heading("On Display At");
+                ui.separator();
+                ui.end_row();
+
+                if let Some(custody) = location.custody() {
+                    ui.label("Museum");
+                    ui.label(custody);
+                    ui.end_row();
+                }
+
+                if let Some(site) = location.site() {
+                    ui.label("Site");
+                    ui.label(site);
+                    ui.end_row();
+                }
+
+                if let Some(desc) = location.description() {
+                    let mut label = Cow::from(desc);
+                    if let Some(room) = location.room() {
+                        label = Cow::Owned(format!("{desc} ({room})"));
+                    }
+                    ui.label("Room");
+                    ui.label(label);
+                    ui.end_row();
+                }
+
+                if let Some(pos) = location.position() {
+                    ui.label("Position");
+                    ui.label(pos);
+                    ui.end_row();
+                }
             }
         });
         if let Some(tags) = tags {

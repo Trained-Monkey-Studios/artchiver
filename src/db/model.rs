@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const MIGRATIONS: [&str; 22] = [
+pub const MIGRATIONS: [&str; 28] = [
     // Migrations
     r#"CREATE TABLE migrations (
         id INTEGER PRIMARY KEY,
@@ -99,6 +99,13 @@ pub const MIGRATIONS: [&str; 22] = [
     r#"CREATE INDEX plugin_tags_tag_idx ON plugin_tags(tag_id);"#,
     r#"CREATE INDEX plugin_tags_plugin_idx ON plugin_tags(plugin_id);"#,
     r#"CREATE INDEX plugin_tags_work_count_idx ON plugin_tags(presumed_work_count);"#,
+    // Expand works information
+    r#"ALTER TABLE works ADD COLUMN location_custody TEXT"#,
+    r#"ALTER TABLE works ADD COLUMN location_site TEXT"#,
+    r#"ALTER TABLE works ADD COLUMN location_room TEXT"#,
+    r#"ALTER TABLE works ADD COLUMN location_position TEXT"#,
+    r#"ALTER TABLE works ADD COLUMN location_description TEXT"#,
+    r#"ALTER TABLE works ADD COLUMN location_on_display BOOLEAN"#,
 ];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

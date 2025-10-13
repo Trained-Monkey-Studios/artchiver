@@ -14,7 +14,7 @@ use crossbeam::channel::{Receiver, Sender};
 use log::error;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use rusqlite::{params, params_from_iter};
 
 pub enum DbWriterRequest {
     UpsertTags {
@@ -317,7 +317,18 @@ pub fn upsert_works(
         log.trace(format!("db->upsert_works chunk of {}", chunk.len()));
         let xaction = conn.transaction()?;
         {
-            let mut insert_work_stmt = xaction.prepare("INSERT OR IGNORE INTO works (name, artist_id, date, preview_url, screen_url, archive_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")?;
+            let mut insert_work_stmt = xaction.prepare(
+                r#"
+                INSERT OR REPLACE INTO works
+                (
+                    name, artist_id, date, preview_url, screen_url, archive_url,
+                    location_custody, location_site, location_room, location_position, location_description, location_on_display
+                )
+                VALUES
+                (?, ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?, ?, ?)
+                RETURNING id"#,
+            )?;
             let mut select_tag_ids_from_names =
                 xaction.prepare("SELECT id FROM tags WHERE name IN rarray(?)")?;
             let mut insert_work_tag_stmt = xaction
@@ -325,29 +336,32 @@ pub fn upsert_works(
             let mut select_work_id_stmt = xaction.prepare("SELECT id FROM works WHERE name = ?")?;
 
             for work in chunk {
-                let work_id = if let Ok(work_id) = insert_work_stmt.query_one(
-                    params![
-                        work.name(),
-                        0, // TODO: artist_id
-                        work.date(),
-                        work.preview_url(),
-                        work.screen_url(),
-                        work.archive_url()
-                    ],
-                    |row| row.get::<usize, i64>(0),
-                ) {
-                    work_id
-                } else if let Ok(work_id) =
-                    select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))
-                {
-                    work_id
-                } else {
-                    log.warn(format!(
-                        "Detected duplicate URL in work {}, skipping",
-                        work.name()
-                    ));
-                    continue;
+                let params_array = params![
+                    work.name(),
+                    0, // TODO: artist_id
+                    work.date(),
+                    work.preview_url(),
+                    work.screen_url(),
+                    work.archive_url(),
+                    work.location().map(|l| l.custody()),
+                    work.location().map(|l| l.site()),
+                    work.location().map(|l| l.room()),
+                    work.location().map(|l| l.position()),
+                    work.location().map(|l| l.description()),
+                    work.location().map(|l| l.on_display()),
+                ];
+                let result =
+                    insert_work_stmt.query_one(params_array, |row| row.get::<usize, i64>(0));
+                let work_id = match result {
+                    Ok(work_id) => work_id,
+                    Err(err) => {
+                        log.info(format!("Detected duplicate URL in work {}, {err:?}", work.name()));
+                        let work_id = select_work_id_stmt
+                            .query_row(params![work.name()], |row| row.get(0))?;
+                        work_id
+                    }
                 };
+
                 let tag_ids: Vec<i64> = select_tag_ids_from_names
                     .query_map([string_to_rarray(work.tags())], |row| row.get(0))?
                     .flatten()

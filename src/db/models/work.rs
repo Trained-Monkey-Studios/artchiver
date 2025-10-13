@@ -1,4 +1,5 @@
 use crate::db::models::tag::TagId;
+use artchiver_sdk::Location;
 use jiff::civil::Date;
 use rusqlite::types::{ToSqlOutput, Value};
 use rusqlite::{Row, ToSql};
@@ -18,6 +19,32 @@ impl WorkId {
     }
 }
 
+pub fn location_from_row(row: &Row<'_>) -> rusqlite::Result<Option<Location>> {
+    let mut loc = Location::default();
+    if let Some(custody) = row.get::<&str, Option<String>>("location_custody")? {
+        loc = loc.with_custody(custody);
+    }
+    if let Some(site) = row.get::<&str, Option<String>>("location_site")? {
+        loc = loc.with_site(site);
+    }
+    if let Some(room) = row.get::<&str, Option<String>>("location_room")? {
+        loc = loc.with_room(room);
+    }
+    if let Some(position) = row.get::<&str, Option<String>>("location_position")? {
+        loc = loc.with_position(position);
+    }
+    if let Some(description) = row.get::<&str, Option<String>>("location_description")? {
+        loc = loc.with_description(description);
+    }
+    if let Some(on_display) = row.get::<&str, Option<bool>>("location_on_display")? {
+        loc = loc.with_on_display(on_display);
+    }
+    if loc == Location::default() {
+        return Ok(None);
+    }
+    Ok(Some(loc))
+}
+
 // DB-centered [art]work item.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DbWork {
@@ -28,6 +55,8 @@ pub struct DbWork {
 
     favorite: bool,
     hidden: bool,
+
+    location: Option<Location>,
 
     preview_url: String,
     screen_url: String,
@@ -54,6 +83,7 @@ impl DbWork {
             date: row.get("date")?,
             favorite: row.get("favorite")?,
             hidden: row.get("hidden")?,
+            location: location_from_row(row)?,
             preview_url: row.get("preview_url")?,
             screen_url: row.get("screen_url")?,
             archive_url: row.get("archive_url")?,
@@ -116,6 +146,10 @@ impl DbWork {
 
     pub fn set_hidden(&mut self, hidden: bool) {
         self.hidden = hidden;
+    }
+
+    pub fn location(&self) -> Option<&Location> {
+        self.location.as_ref()
     }
 
     pub fn screen_path(&self) -> Option<&Path> {
