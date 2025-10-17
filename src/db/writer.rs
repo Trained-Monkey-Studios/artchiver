@@ -14,7 +14,7 @@ use crossbeam::channel::{Receiver, Sender};
 use log::error;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, params_from_iter};
+use rusqlite::params;
 
 pub enum DbWriterRequest {
     UpsertTags {
@@ -355,10 +355,11 @@ pub fn upsert_works(
                 let work_id = match result {
                     Ok(work_id) => work_id,
                     Err(err) => {
-                        log.info(format!("Detected duplicate URL in work {}, {err:?}", work.name()));
-                        let work_id = select_work_id_stmt
-                            .query_row(params![work.name()], |row| row.get(0))?;
-                        work_id
+                        log.info(format!(
+                            "Detected duplicate URL in work {}, {err:?}",
+                            work.name()
+                        ));
+                        select_work_id_stmt.query_row(params![work.name()], |row| row.get(0))?
                     }
                 };
 

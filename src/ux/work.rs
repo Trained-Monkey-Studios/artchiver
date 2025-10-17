@@ -666,12 +666,9 @@ impl UxWork {
         }
 
         let work = &works[work_id];
-        egui::Grid::new("work_info_grid").show(ui, |ui| {
-            ui.heading(work.name());
-            ui.end_row();
-            ui.separator();
-            ui.end_row();
-
+        ui.heading(work.name());
+        ui.separator();
+        egui::Grid::new("work_info_grid_basic").show(ui, |ui| {
             ui.label("Offset");
             ui.label(format!("{offset} of {}", self.work_filtered.len()));
             ui.end_row();
@@ -688,9 +685,11 @@ impl UxWork {
             ui.label(work.screen_url());
             ui.end_row();
 
-            ui.label("Archive");
-            ui.label(work.archive_url().unwrap_or(""));
-            ui.end_row();
+            if let Some(url) = work.archive_url() {
+                ui.label("Archive");
+                ui.label(url);
+                ui.end_row();
+            }
 
             if let Some(path) = work.screen_path() {
                 let path = self.data_dir.join(path);
@@ -700,12 +699,13 @@ impl UxWork {
                 ui.label(path.display().to_string());
                 ui.end_row();
             }
+        });
 
-            if let Some(location) = work.location() {
-                ui.heading("On Display At");
-                ui.separator();
-                ui.end_row();
-
+        if let Some(location) = work.location() {
+            ui.add_space(10.);
+            ui.heading("On Display At");
+            ui.separator();
+            egui::Grid::new("work_info_grid_location").show(ui, |ui| {
                 if let Some(custody) = location.custody() {
                     ui.label("Museum");
                     ui.label(custody);
@@ -733,10 +733,11 @@ impl UxWork {
                     ui.label(pos);
                     ui.end_row();
                 }
-            }
-        });
+            });
+        }
+
         if let Some(tags) = tags {
-            ui.label(" ");
+            ui.add_space(10.);
             ui.horizontal(|ui| {
                 ui.heading("Tags");
                 if ui.button("✔ Select All").clicked() {
