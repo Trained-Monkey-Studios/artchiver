@@ -235,7 +235,7 @@ struct Constituent {
 
 #[allow(non_snake_case, unused)]
 #[derive(Debug, Deserialize)]
-struct ElementMeasurement {
+struct MetElementMeasurement {
     Width: Option<f32>,
     Height: Option<f32>,
     Depth: Option<f32>,
@@ -243,10 +243,10 @@ struct ElementMeasurement {
 
 #[allow(non_snake_case, unused)]
 #[derive(Debug, Deserialize)]
-struct Measurement {
+struct MetMeasurement {
     elementName: String,
     elementDescription: Option<String>,
-    elementMeasurements: ElementMeasurement,
+    elementMeasurements: MetElementMeasurement,
 }
 
 #[allow(non_snake_case, unused)]
@@ -294,7 +294,7 @@ struct ObjectInfo {
     objectEndDate: i32,
     medium: String,
     dimensions: String,
-    measurements: Option<Vec<Measurement>>,
+    measurements: Option<Vec<MetMeasurement>>,
     creditLine: String,
     geographyType: String,
     city: String,
@@ -310,6 +310,7 @@ struct ObjectInfo {
     classification: String,
     rightsAndReproduction: String,
     linkResource: String,
+    #[allow(unused)] // always blank
     metadataDate: String,
     repository: String,
     objectURL: String,
@@ -418,9 +419,65 @@ pub fn list_works_for_tag(tag_name: String) -> FnResult<Json<Vec<Work>>> {
         // We don't have much information for location.
         let mut loc = Location::default().with_custody("The Metropolitan Gallery of Art");
         if let Some(room_tag) = room_tag_for_gallery_number(&api_object.GalleryNumber) {
-            loc = loc.with_room(api_object.GalleryNumber);
+            loc.set_room(api_object.GalleryNumber);
             tags.push(DISPLAY_TAG.to_owned());
             tags.push(room_tag);
+        }
+
+        // We have more information about the work history.
+        let mut history = History::default()
+            .with_begin_year(api_object.objectBeginDate.into())
+            .with_end_year(api_object.objectEndDate.into());
+        if !api_object.artistDisplayName.is_empty() {
+            history.set_attribution(api_object.artistDisplayName);
+        }
+        if !api_object.artistAlphaSort.is_empty() {
+            history.set_attribution_sort_key(api_object.artistAlphaSort);
+        }
+        if !api_object.objectDate.is_empty() {
+            history.set_display_date(api_object.objectDate);
+        }
+        if !api_object.rightsAndReproduction.is_empty() {
+            history.set_provenance(api_object.rightsAndReproduction);
+        }
+        if !api_object.creditLine.is_empty() {
+            history.set_credit_line(api_object.creditLine);
+        }
+
+        let mut physical = PhysicalData::default();
+        if !api_object.medium.is_empty() {
+            physical.set_medium(&api_object.medium);
+        }
+        if !api_object.dimensions.is_empty() {
+            physical.set_dimensions_display(&api_object.dimensions);
+        }
+        if let Some(measurements) = api_object.measurements.as_deref() {
+            for measure in measurements {
+                if let Some(width) = measure.elementMeasurements.Width {
+                    physical.add_measurement(Measurement::new(
+                        format!("{}-width", measure.elementName),
+                        measure.elementDescription.as_deref().unwrap_or_default(),
+                        width as f64 / 100., // documented as centimeters
+                        SiUnit::Meter,
+                    ));
+                }
+                if let Some(height) = measure.elementMeasurements.Height {
+                    physical.add_measurement(Measurement::new(
+                        format!("{}-height", measure.elementName),
+                        measure.elementDescription.as_deref().unwrap_or_default(),
+                        height as f64 / 100., // documented as centimeters
+                        SiUnit::Meter,
+                    ));
+                }
+                if let Some(depth) = measure.elementMeasurements.Depth {
+                    physical.add_measurement(Measurement::new(
+                        format!("{}-depth", measure.elementName),
+                        measure.elementDescription.as_deref().unwrap_or_default(),
+                        depth as f64 / 100., // documented as centimeters
+                        SiUnit::Meter,
+                    ));
+                }
+            }
         }
 
         let work = Work::new(
@@ -432,7 +489,9 @@ pub fn list_works_for_tag(tag_name: String) -> FnResult<Json<Vec<Work>>> {
             tags,
         )
         .with_remote_id(obj_id)
-        .with_location(loc);
+        .with_location(loc)
+        .with_history(history)
+        .with_physical_data(physical);
         all_works.push(work);
     }
     Progress::clear()?;

@@ -321,6 +321,31 @@ fn published_images(csv: &str) -> FnResult<Vec<NgaPublishedImage>> {
         .collect())
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct NgaObjectDimensions {
+    objectid: i64,
+    element: String,
+    dimensiontype: String,
+    dimension: f64,
+    unitname: String,
+}
+const OBJECTS_DIMENSIONS_URL: &str = "https://raw.githubusercontent.com/NationalGalleryOfArt/opendata/refs/heads/main/data/objects_dimensions.csv";
+
+fn objects_dimensions(csv: &str) -> FnResult<Vec<NgaObjectDimensions>> {
+    Ok(csv_reader(csv)?
+        .records()
+        .flatten()
+        .map(|row| match row.deserialize::<NgaObjectDimensions>(None) {
+            Ok(r) => r,
+            Err(e) => {
+                Log::error(format!("Failed to deserialize object dimensions: {e}")).ok();
+                Log::error(format!("Row is: {row:#?}")).ok();
+                panic!("Failed to deserialize object dimensions: {e}")
+            }
+        })
+        .collect())
+}
+
 const DISPLAY_TAG: &str = "On Display";
 
 fn type_to_kind(termtype: &str) -> TagKind {
@@ -424,12 +449,17 @@ pub fn list_works_for_tag(tag_name: String) -> FnResult<Json<Vec<Work>>> {
     let published_images = published_images(&published_images_csv)?;
     Progress::percent(5, 100)?;
 
+    Log::info("Downloading objects dimensions list...")?;
+    let objects_dimensions_csv = Web::fetch_text(Request::get(OBJECTS_DIMENSIONS_URL))?;
+    let objects_dimensions = objects_dimensions(&objects_dimensions_csv)?;
+    Progress::percent(7, 100)?;
+
     Log::info("Downloading objects list (this may take awhile)...")?;
     let objects_csv = Web::fetch_text(Request::get(OBJECTS_URL))?;
     let objects = objects(&objects_csv)?;
     Progress::percent(10, 100)?;
 
-    // Map from the tag name to all of the tags matching that name. We need to check if the tag
+    // Map from the tag name to all the tags matching that name. We need to check if the tag
     // is a term, or a location, or "On Display". Each of these checks requires a different
     // strategy for performance.
 
@@ -477,8 +507,8 @@ pub fn list_works_for_tag(tag_name: String) -> FnResult<Json<Vec<Work>>> {
         "Found {} objects with tag '{tag_name}'",
         obj_ids.len()
     ))?;
-    Progress::percent(15, 100)?;
-    let mut pos = 15.;
+    let mut pos = 17.;
+    Progress::percent(pos as i32, 100)?;
     let fract = (100. - pos) / obj_ids.len() as f64;
 
     // Iterate the objects and build a work for each. The hard part here is the reverse tag lookup.
@@ -523,12 +553,79 @@ pub fn list_works_for_tag(tag_name: String) -> FnResult<Json<Vec<Work>>> {
         if let Ok(location_id) = obj.locationid.parse::<i64>()
             && let Some(location) = locations.iter().find(|l| l.locationid == location_id)
         {
-            loc = loc
-                .with_site(&location.site)
-                .with_room(&location.room)
-                .with_on_display(location.publicaccess == 1)
-                .with_description(&location.description)
-                .with_position(&location.unitposition);
+            loc.set_site(&location.site);
+            loc.set_room(&location.room);
+            loc.set_on_display(location.publicaccess == 1);
+            loc.set_description(&location.description);
+            loc.set_position(&location.unitposition);
+        }
+
+        let mut history = History::default()
+            .with_attribution(&obj.attribution)
+            .with_attribution_sort_key(&obj.attributioninverted);
+        if !obj.displaydate.is_empty() {
+            history.set_display_date(&obj.displaydate);
+        }
+        if !obj.provenancetext.is_empty() {
+            history.set_provenance(&obj.provenancetext);
+        }
+        if !obj.creditline.is_empty() {
+            history.set_credit_line(&obj.creditline);
+        }
+        if let Some(year) = obj.beginyear {
+            history.set_begin_year(year);
+        }
+        if let Some(year) = obj.endyear {
+            history.set_end_year(year);
+        }
+
+        let mut physical = PhysicalData::default();
+        if !obj.medium.is_empty() {
+            physical.set_medium(&obj.medium);
+        }
+        if !obj.dimensions.is_empty() {
+            physical.set_dimensions_display(&obj.dimensions);
+        }
+        if !obj.inscription.is_empty() {
+            physical.set_inscription(&obj.inscription);
+        }
+        if !obj.markings.is_empty() {
+            physical.set_markings(&obj.markings);
+        }
+        if !obj.watermarks.is_empty() {
+            physical.set_watermarks(&obj.watermarks);
+        }
+        for dim in objects_dimensions
+            .iter()
+            .filter(|dim| dim.objectid == obj.objectid)
+        {
+            let mut value = dim.dimension;
+            let si_unit = match dim.unitname.as_str() {
+                "centimeters" => {
+                    value /= 100.;
+                    SiUnit::Meter
+                }
+                "inches" => {
+                    value *= 0.0254;
+                    SiUnit::Meter
+                }
+                "grams" => SiUnit::Gram,
+                "kilograms" => {
+                    value *= 1000.;
+                    SiUnit::Gram
+                }
+                "pounds" => {
+                    value *= 453.5924;
+                    SiUnit::Gram
+                }
+                _ => panic!("unexpected unit name {}", dim.unitname),
+            };
+            physical.add_measurement(Measurement::new(
+                &dim.dimensiontype, // length, height, diameter, width, etc
+                &dim.element,       // description
+                value,
+                si_unit,
+            ))
         }
 
         // Put together the work
@@ -545,7 +642,9 @@ pub fn list_works_for_tag(tag_name: String) -> FnResult<Json<Vec<Work>>> {
         .with_remote_id(obj_id.to_string())
         // Note: archive url is for the iiif tile server and path
         .with_archive_url(img.iiifurl.to_owned())
-        .with_location(loc);
+        .with_location(loc)
+        .with_history(history)
+        .with_physical_data(physical);
         works.push(work);
     }
 
