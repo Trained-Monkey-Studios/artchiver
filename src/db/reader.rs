@@ -142,7 +142,7 @@ pub fn list_works_with_tag(
         let query = format!(
             r#"
             SELECT works.*,
-                GROUP_CONCAT(tags.id) as tags,
+                GROUP_CONCAT(DISTINCT tags.id) as tags,
                 GROUP_CONCAT(DISTINCT m.name || '|' || m.description || '|' || m.value || '|' || m.si_unit) as measure_names
             FROM works
                 LEFT JOIN work_tags ON work_tags.work_id = works.id
@@ -180,7 +180,7 @@ pub fn list_favorite_works(
     let query = r#"
     SELECT
         works.*,
-        GROUP_CONCAT(tags.id) as tags,
+        GROUP_CONCAT(DISTINCT tags.id) as tags,
         GROUP_CONCAT(DISTINCT m.name || '|' || m.description || '|' || m.value || '|' || m.si_unit) as measure_names
     FROM works
         LEFT JOIN work_tags ON work_tags.work_id = works.id
