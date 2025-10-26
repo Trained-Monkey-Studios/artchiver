@@ -812,11 +812,6 @@ impl UxWork {
                         ui.add(egui::Label::new(watermarks).wrap());
                         ui.end_row();
                     }
-
-                    /*
-                           // Set of arbitrary physical characteristics, if any.
-                           measurements: Vec<Measurement>,
-                    */
                 });
         }
 
@@ -897,7 +892,7 @@ impl UxWork {
 
         ui.horizontal_wrapped(|ui| {
             if let Some(tags) = tags {
-                self.tag_selection.ui(tags, ui);
+                self.tag_selection.location_ui(tags, ui);
             }
             ui.label(format!("({})", self.work_filtered.len()));
         });
