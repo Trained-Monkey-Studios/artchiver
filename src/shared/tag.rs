@@ -98,22 +98,21 @@ impl TagSet {
                 .enabled
                 .iter()
                 .min_by_key(|t| tags.get(t).map(|t| t.local_count()))
+                && let Some(tag) = tags.get(min)
             {
-                trace!(
-                    "Fetching the smallest local tag: {}",
-                    tags.get(min).expect("checked").name()
-                );
+                trace!("Fetching the smallest local tag: {}", tag.name());
                 self.last_fetched = Some(*min);
                 return TagRefresh::NeedRefresh(*min);
             } else if let Some(min) = self
                 .enabled
                 .iter()
                 .min_by_key(|t| tags.get(t).map(|t| t.network_count()))
+                && let Some(tag) = tags.get(min)
             {
                 // Note: fall back to the network counts if we haven't fully loaded yet.
                 warn!(
                     "Falling back to fetch the smallest network tag: {}",
-                    tags.get(min).expect("checked").name()
+                    tag.name()
                 );
                 self.last_fetched = Some(*min);
                 return TagRefresh::NeedRefresh(*min);

@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const MIGRATIONS: [&str; 22] = [
+pub const MIGRATIONS: [&str; 41] = [
     // Migrations
     r#"CREATE TABLE migrations (
         id INTEGER PRIMARY KEY,
@@ -99,6 +99,35 @@ pub const MIGRATIONS: [&str; 22] = [
     r#"CREATE INDEX plugin_tags_tag_idx ON plugin_tags(tag_id);"#,
     r#"CREATE INDEX plugin_tags_plugin_idx ON plugin_tags(plugin_id);"#,
     r#"CREATE INDEX plugin_tags_work_count_idx ON plugin_tags(presumed_work_count);"#,
+    // Expand works information
+    r#"ALTER TABLE works ADD COLUMN location_custody TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN location_site TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN location_room TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN location_position TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN location_description TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN location_on_display BOOLEAN;"#,
+    r#"ALTER TABLE works ADD COLUMN history_attribution TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN history_attribution_sort_key TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN history_display_date TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN history_begin_year INTEGER;"#,
+    r#"ALTER TABLE works ADD COLUMN history_end_year INTEGER;"#,
+    r#"ALTER TABLE works ADD COLUMN history_provenance TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN history_credit_line TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN physical_medium TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN physical_dimensions_display TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN physical_inscription TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN physical_markings TEXT;"#,
+    r#"ALTER TABLE works ADD COLUMN physical_watermarks TEXT;"#,
+    r#"CREATE TABLE work_measurements (
+        id INTEGER PRIMARY KEY,
+        work_id INTEGER NOT NULL,
+        name TEXT,
+        description TEXT,
+        value REAL NOT NULL,
+        si_unit TEXT NOT NULL,
+        FOREIGN KEY(work_id) REFERENCES works(id),
+        UNIQUE (work_id, name)
+    );"#,
 ];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

@@ -141,9 +141,13 @@ pub fn list_works_with_tag(
         // GROUP BY works.id HAVING COUNT(DISTINCT tags.name) = {enabled_size}
         let query = format!(
             r#"
-            SELECT works.*, GROUP_CONCAT(tags.id) as tags FROM works
-            LEFT JOIN work_tags ON work_tags.work_id = works.id
-            LEFT JOIN tags ON work_tags.tag_id = tags.id
+            SELECT works.*,
+                GROUP_CONCAT(tags.id) as tags,
+                GROUP_CONCAT(DISTINCT m.name || '|' || m.description || '|' || m.value || '|' || m.si_unit) as measure_names
+            FROM works
+                LEFT JOIN work_tags ON work_tags.work_id = works.id
+                LEFT JOIN tags ON work_tags.tag_id = tags.id
+                LEFT JOIN work_measurements AS m ON m.work_id = works.id
             WHERE works.id IN (
                 SELECT work_tags.work_id FROM work_tags WHERE work_tags.tag_id = ?
             ) AND works.id > ?
@@ -174,9 +178,14 @@ pub fn list_favorite_works(
 ) -> Result<Vec<DbWork>> {
     let start = Instant::now();
     let query = r#"
-    SELECT works.*, GROUP_CONCAT(tags.id) as tags FROM works
-    LEFT JOIN work_tags ON work_tags.work_id = works.id
-    LEFT JOIN tags ON work_tags.tag_id = tags.id
+    SELECT
+        works.*,
+        GROUP_CONCAT(tags.id) as tags,
+        GROUP_CONCAT(DISTINCT m.name || '|' || m.description || '|' || m.value || '|' || m.si_unit) as measure_names
+    FROM works
+        LEFT JOIN work_tags ON work_tags.work_id = works.id
+        LEFT JOIN tags ON work_tags.tag_id = tags.id
+        LEFT JOIN work_measurements AS m ON m.work_id = works.id
     WHERE works.id IN (
         SELECT works.id FROM works WHERE works.favorite = 1 OR works.hidden = 1 -- Why are these not showing up?
     )
