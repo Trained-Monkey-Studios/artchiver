@@ -86,12 +86,12 @@ impl Measurement {
 
     pub fn set_name(&mut self, name: impl ToString) {
         let s = name.to_string();
-        self.name = Some(s.replace(',', "_").replace('|', "_"));
+        self.name = Some(s.replace([',', '|'], "_"));
     }
 
     pub fn set_description(&mut self, description: impl ToString) {
         let s = description.to_string();
-        self.description = Some(s.replace(',', "_").replace('|', "_"));
+        self.description = Some(s.replace([',', '|'], "_"));
     }
 
     pub fn with_name(mut self, name: impl ToString) -> Self {
