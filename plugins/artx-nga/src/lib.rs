@@ -620,12 +620,11 @@ pub fn list_works_for_tag(tag_name: String) -> FnResult<Json<Vec<Work>>> {
                 }
                 _ => panic!("unexpected unit name {}", dim.unitname),
             };
-            physical.add_measurement(Measurement::new(
-                &dim.dimensiontype, // length, height, diameter, width, etc
-                &dim.element,       // description
-                value,
-                si_unit,
-            ))
+            physical.add_measurement(
+                Measurement::new(value, si_unit)?
+                    .with_name(&dim.dimensiontype)
+                    .with_description(&dim.element),
+            )
         }
 
         // Put together the work

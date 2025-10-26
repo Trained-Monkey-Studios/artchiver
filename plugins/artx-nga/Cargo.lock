@@ -56,6 +56,7 @@ version = "0.0.1"
 dependencies = [
  "absolute_unit",
  "anyhow",
+ "decorum",
  "extism-pdk",
  "jiff",
  "serde",
@@ -156,6 +157,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d02f3b0da4c6504f86e9cd789d8dbafab48c2321be74e9987593de5a894d93d"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "decorum"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fcc6bb0c903f3f815b48365bb9182092866f54a132d8ebe906f0b66952936e3"
+dependencies = [
+ "approx",
+ "num-traits",
+ "rustversion",
+ "serde",
+ "serde_derive",
+ "thiserror",
 ]
 
 [[package]]

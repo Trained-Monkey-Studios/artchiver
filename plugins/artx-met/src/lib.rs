@@ -454,28 +454,40 @@ pub fn list_works_for_tag(tag_name: String) -> FnResult<Json<Vec<Work>>> {
         if let Some(measurements) = api_object.measurements.as_deref() {
             for measure in measurements {
                 if let Some(width) = measure.elementMeasurements.Width {
-                    physical.add_measurement(Measurement::new(
-                        format!("{}-width", measure.elementName),
-                        measure.elementDescription.as_deref().unwrap_or_default(),
-                        width as f64 / 100., // documented as centimeters
-                        SiUnit::Meter,
-                    ));
+                    physical.add_measurement(
+                        Measurement::new(
+                            width / 100., // documented as centimeters
+                            SiUnit::Meter,
+                        )?
+                        .with_name(format!("{}-width", measure.elementName))
+                        .with_description(
+                            measure.elementDescription.as_deref().unwrap_or_default(),
+                        ),
+                    );
                 }
                 if let Some(height) = measure.elementMeasurements.Height {
-                    physical.add_measurement(Measurement::new(
-                        format!("{}-height", measure.elementName),
-                        measure.elementDescription.as_deref().unwrap_or_default(),
-                        height as f64 / 100., // documented as centimeters
-                        SiUnit::Meter,
-                    ));
+                    physical.add_measurement(
+                        Measurement::new(
+                            height / 100., // documented as centimeters
+                            SiUnit::Meter,
+                        )?
+                        .with_name(format!("{}-height", measure.elementName))
+                        .with_description(
+                            measure.elementDescription.as_deref().unwrap_or_default(),
+                        ),
+                    );
                 }
                 if let Some(depth) = measure.elementMeasurements.Depth {
-                    physical.add_measurement(Measurement::new(
-                        format!("{}-depth", measure.elementName),
-                        measure.elementDescription.as_deref().unwrap_or_default(),
-                        depth as f64 / 100., // documented as centimeters
-                        SiUnit::Meter,
-                    ));
+                    physical.add_measurement(
+                        Measurement::new(
+                            depth / 100., // documented as centimeters
+                            SiUnit::Meter,
+                        )?
+                        .with_name(format!("{}-depth", measure.elementName))
+                        .with_description(
+                            measure.elementDescription.as_deref().unwrap_or_default(),
+                        ),
+                    );
                 }
             }
         }

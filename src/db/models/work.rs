@@ -1,5 +1,6 @@
 use crate::db::models::tag::TagId;
-use artchiver_sdk::Location;
+use anyhow::anyhow;
+use artchiver_sdk::{History, Location, Measurement, PhysicalData, SiUnit};
 use jiff::civil::Date;
 use rusqlite::types::{ToSqlOutput, Value};
 use rusqlite::{Row, ToSql};
@@ -45,6 +46,99 @@ pub fn location_from_row(row: &Row<'_>) -> rusqlite::Result<Option<Location>> {
     Ok(Some(loc))
 }
 
+pub fn history_from_row(row: &Row<'_>) -> rusqlite::Result<Option<History>> {
+    let mut history = History::default();
+    if let Some(v) = row.get::<&str, Option<String>>("history_attribution")? {
+        history.set_attribution(v);
+    }
+    if let Some(v) = row.get::<&str, Option<String>>("history_attribution_sort_key")? {
+        history.set_attribution_sort_key(v);
+    }
+    if let Some(v) = row.get::<&str, Option<String>>("history_display_date")? {
+        history.set_display_date(v);
+    }
+    if let Some(v) = row.get::<&str, Option<i64>>("history_begin_year")? {
+        history.set_begin_year(v);
+    }
+    if let Some(v) = row.get::<&str, Option<i64>>("history_end_year")? {
+        history.set_end_year(v);
+    }
+    if let Some(v) = row.get::<&str, Option<String>>("history_provenance")? {
+        history.set_provenance(v);
+    }
+    if let Some(v) = row.get::<&str, Option<String>>("history_credit_line")? {
+        history.set_credit_line(v);
+    }
+    if history == History::default() {
+        return Ok(None);
+    }
+    Ok(Some(history))
+}
+
+pub fn physical_from_row(row: &Row<'_>) -> rusqlite::Result<Option<PhysicalData>> {
+    let mut physical = PhysicalData::default();
+    if let Some(v) = row.get::<&str, Option<String>>("physical_medium")? {
+        physical.set_medium(v);
+    }
+    if let Some(v) = row.get::<&str, Option<String>>("physical_dimensions_display")? {
+        physical.set_dimensions_display(v);
+    }
+    if let Some(v) = row.get::<&str, Option<String>>("physical_inscription")? {
+        physical.set_inscription(v);
+    }
+    if let Some(v) = row.get::<&str, Option<String>>("physical_markings")? {
+        physical.set_markings(v);
+    }
+    if let Some(v) = row.get::<&str, Option<String>>("physical_watermarks")? {
+        physical.set_watermarks(v);
+    }
+    // FIXME: need the measurements list
+    if physical == PhysicalData::default() {
+        return Ok(None);
+    }
+    Ok(Some(physical))
+}
+
+pub fn measurements_from_row(row: &Row<'_>) -> rusqlite::Result<Vec<Measurement>> {
+    let mut measurements = Vec::new();
+    let measures_str: String = row.get("measure_names").ok().unwrap_or_default();
+    for measure_item in measures_str.split(',') {
+        if measure_item.trim().is_empty() {
+            continue;
+        }
+        let mut parts = measure_item.split('|');
+        let name = parts.next().expect("measure name");
+        let desc = parts.next().expect("measure description");
+        let value = parts.next().expect("measure value");
+        let unit = parts.next().expect("measure unit");
+        let mut measurement = Measurement::new(
+            value.parse::<f64>().map_err(|e| {
+                rusqlite::Error::ToSqlConversionFailure(
+                    anyhow!("failed to parse measure value: {value}: {e}").into(),
+                )
+            })?,
+            SiUnit::try_from(unit).map_err(|e| {
+                rusqlite::Error::ToSqlConversionFailure(
+                    anyhow!("unexpected measure unit: {unit}: {e}").into(),
+                )
+            })?,
+        )
+        .map_err(|e| {
+            rusqlite::Error::ToSqlConversionFailure(
+                anyhow!("invalid measure value: {value}: {e}").into(),
+            )
+        })?;
+        if !name.is_empty() {
+            measurement.set_name(name);
+        }
+        if !desc.is_empty() {
+            measurement.set_description(desc);
+        }
+        measurements.push(measurement);
+    }
+    Ok(measurements)
+}
+
 // DB-centered [art]work item.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DbWork {
@@ -57,6 +151,8 @@ pub struct DbWork {
     hidden: bool,
 
     location: Option<Location>,
+    history: Option<History>,
+    physical_data: Option<PhysicalData>,
 
     preview_url: String,
     screen_url: String,
@@ -76,6 +172,9 @@ impl DbWork {
             .split(',')
             .map(|s| TagId::wrap(s.parse::<i64>().expect("valid ids")))
             .collect();
+
+        let measurements = measurements_from_row(row)?;
+
         Ok(Self {
             id: WorkId(row.get("id")?),
             name: row.get("name")?,
@@ -84,6 +183,9 @@ impl DbWork {
             favorite: row.get("favorite")?,
             hidden: row.get("hidden")?,
             location: location_from_row(row)?,
+            history: history_from_row(row)?,
+            physical_data: physical_from_row(row)?
+                .map(|physical| physical.with_measurements(measurements.into_iter())),
             preview_url: row.get("preview_url")?,
             screen_url: row.get("screen_url")?,
             archive_url: row.get("archive_url")?,
@@ -150,6 +252,14 @@ impl DbWork {
 
     pub fn location(&self) -> Option<&Location> {
         self.location.as_ref()
+    }
+
+    pub fn history(&self) -> Option<&History> {
+        self.history.as_ref()
+    }
+
+    pub fn physical_data(&self) -> Option<&PhysicalData> {
+        self.physical_data.as_ref()
     }
 
     pub fn screen_path(&self) -> Option<&Path> {

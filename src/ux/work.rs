@@ -665,79 +665,163 @@ impl UxWork {
             });
         }
 
+        const SPACING: f32 = 15.;
         let work = &works[work_id];
-        ui.heading(work.name());
-        ui.separator();
-        egui::Grid::new("work_info_grid_basic").show(ui, |ui| {
-            ui.label("Offset");
-            ui.label(format!("{offset} of {}", self.work_filtered.len()));
-            ui.end_row();
 
-            ui.label("Date");
-            ui.label(format!("{}", work.date()));
-            ui.end_row();
+        ui.horizontal(|ui| {
+            ui.style_mut().override_text_style = Some(egui::TextStyle::Name("Title".into()));
+            ui.add(egui::Label::new(work.name()).wrap().selectable(true));
+            ui.style_mut().override_text_style = None;
 
-            ui.label("Preview");
-            ui.label(work.preview_url());
-            ui.end_row();
-
-            ui.label("Screen");
-            ui.label(work.screen_url());
-            ui.end_row();
-
-            if let Some(url) = work.archive_url() {
-                ui.label("Archive");
-                ui.label(url);
-                ui.end_row();
-            }
-
-            if let Some(path) = work.screen_path() {
-                let path = self.data_dir.join(path);
-                if ui.button("Path 📋").clicked() {
-                    ui.ctx().copy_text(path.display().to_string());
-                }
-                ui.label(path.display().to_string());
-                ui.end_row();
-            }
+            ui.small(format!("({offset} of {})", self.work_filtered.len()));
         });
+        ui.add_space(SPACING / 2.);
 
         if let Some(location) = work.location() {
-            ui.add_space(10.);
+            ui.add_space(SPACING);
             ui.heading("On Display At");
             ui.separator();
-            egui::Grid::new("work_info_grid_location").show(ui, |ui| {
-                if let Some(custody) = location.custody() {
-                    ui.label("Museum");
-                    ui.label(custody);
-                    ui.end_row();
-                }
-
-                if let Some(site) = location.site() {
-                    ui.label("Site");
-                    ui.label(site);
-                    ui.end_row();
-                }
-
-                if let Some(desc) = location.description() {
-                    let mut label = Cow::from(desc);
-                    if let Some(room) = location.room() {
-                        label = Cow::Owned(format!("{desc} ({room})"));
+            egui::Grid::new("work_info_grid_location")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    if let Some(custody) = location.custody() {
+                        ui.label("Museum");
+                        ui.add(egui::Label::new(custody).truncate());
+                        ui.end_row();
                     }
-                    ui.label("Room");
-                    ui.label(label);
-                    ui.end_row();
-                }
 
-                if let Some(pos) = location.position() {
-                    ui.label("Position");
-                    ui.label(pos);
-                    ui.end_row();
-                }
-            });
+                    if let Some(site) = location.site() {
+                        ui.label("Site");
+                        ui.add(egui::Label::new(site).truncate());
+                        ui.end_row();
+                    }
+
+                    if let Some(desc) = location.description() {
+                        let mut label = Cow::from(desc);
+                        if let Some(room) = location.room() {
+                            label = Cow::Owned(format!("{desc} ({room})"));
+                        }
+                        ui.vertical(|ui| {
+                            ui.add(egui::Label::new("Room").extend());
+                        });
+                        ui.add(egui::Label::new(label).wrap());
+                        ui.end_row();
+                    }
+
+                    if let Some(pos) = location.position() {
+                        ui.label("Position");
+                        ui.add(egui::Label::new(pos).truncate());
+                        ui.end_row();
+                    }
+                });
+        }
+
+        if let Some(history) = work.history() {
+            ui.add_space(SPACING);
+            ui.heading("History of the Work");
+            ui.separator();
+            egui::Grid::new("work_info_grid_history")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    if let Some(attribution) = history.attribution() {
+                        ui.vertical(|ui| {
+                            ui.add(egui::Label::new("Attributed To").extend());
+                        });
+                        ui.add(egui::Label::new(attribution).wrap());
+                        ui.end_row();
+                    }
+
+                    if let Some(display_date) = history.display_date() {
+                        ui.label("Date");
+                        ui.add(egui::Label::new(display_date).truncate());
+                        ui.end_row();
+                    }
+
+                    if let Some(provenance) = history.provenance() {
+                        ui.vertical(|ui| {
+                            ui.add(egui::Label::new("Via").extend());
+                        });
+                        ui.add(egui::Label::new(provenance).wrap());
+                        ui.end_row();
+                    }
+
+                    if let Some(credit_line) = history.credit_line() {
+                        ui.vertical(|ui| {
+                            ui.add(egui::Label::new("Thanks to").extend());
+                        });
+                        ui.add(egui::Label::new(credit_line).wrap());
+                        ui.end_row();
+                    }
+                });
+        }
+
+        if let Some(physical) = work.physical_data() {
+            ui.add_space(SPACING);
+            ui.heading("About the Work");
+            ui.separator();
+            egui::Grid::new("work_info_grid_physical_data")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    if let Some(medium) = physical.medium() {
+                        ui.label("Medium");
+                        ui.label(medium);
+                        ui.end_row();
+                    }
+
+                    if let Some(dims) = physical.dimensions_display() {
+                        ui.vertical(|ui| {
+                            ui.add(egui::Label::new("Dimensions").extend());
+                        });
+                        // Note: normally with internal linebreaks
+                        ui.label(dims);
+                        ui.end_row();
+                    }
+
+                    for (i, measure) in physical.measurements().iter().enumerate() {
+                        ui.vertical(|ui| {
+                            if i == 0 {
+                                ui.add(egui::Label::new("Measurements").extend());
+                            } else {
+                                ui.label("");
+                            }
+                        });
+                        ui.add(egui::Label::new(measure.label()).wrap());
+                        ui.end_row();
+                    }
+
+                    if let Some(inscription) = physical.inscription() {
+                        ui.vertical(|ui| {
+                            ui.add(egui::Label::new("Inscription").extend());
+                        });
+                        ui.add(egui::Label::new(inscription).wrap());
+                        ui.end_row();
+                    }
+
+                    if let Some(markings) = physical.markings() {
+                        ui.vertical(|ui| {
+                            ui.add(egui::Label::new("Markings").extend());
+                        });
+                        ui.add(egui::Label::new(markings).wrap());
+                        ui.end_row();
+                    }
+
+                    if let Some(watermarks) = physical.watermarks() {
+                        ui.vertical(|ui| {
+                            ui.add(egui::Label::new("Watermarks").extend());
+                        });
+                        ui.add(egui::Label::new(watermarks).wrap());
+                        ui.end_row();
+                    }
+
+                    /*
+                           // Set of arbitrary physical characteristics, if any.
+                           measurements: Vec<Measurement>,
+                    */
+                });
         }
 
         if let Some(tags) = tags {
-            ui.add_space(10.);
+            ui.add_space(SPACING);
             ui.horizontal(|ui| {
                 ui.heading("Tags");
                 if ui.button("✔ Select All").clicked() {
@@ -756,6 +840,36 @@ impl UxWork {
                         .tag_row_ui(tag, host, db_write, ui, &mut tutorial);
                 });
         }
+
+        ui.add_space(SPACING);
+        ui.heading("Local Storage Info");
+        ui.separator();
+        egui::Grid::new("work_info_grid_paths")
+            .num_columns(2)
+            .show(ui, |ui| {
+                ui.label("Preview");
+                ui.add(egui::Label::new(work.preview_url()).truncate());
+                ui.end_row();
+
+                ui.label("Screen");
+                ui.add(egui::Label::new(work.screen_url()).truncate());
+                ui.end_row();
+
+                if let Some(url) = work.archive_url() {
+                    ui.label("Archive");
+                    ui.add(egui::Label::new(url).truncate());
+                    ui.end_row();
+                }
+
+                if let Some(path) = work.screen_path() {
+                    let path = self.data_dir.join(path);
+                    if ui.button("Path 📋").clicked() {
+                        ui.ctx().copy_text(path.display().to_string());
+                    }
+                    ui.add(egui::Label::new(path.display().to_string()).truncate());
+                    ui.end_row();
+                }
+            });
     }
 
     pub fn gallery_ui(

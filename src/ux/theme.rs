@@ -231,6 +231,10 @@ impl Theme {
         use egui::TextStyle as TS;
         let s = self.text_scale / 100.0;
         let text_styles: BTreeMap<_, _> = [
+            (
+                TS::Name("Title".into()),
+                FontId::new(18.0 * s, Proportional),
+            ),
             (TS::Heading, FontId::new(15.0 * s, Proportional)),
             (TS::Body, FontId::new(12.5 * s, Proportional)),
             (TS::Monospace, FontId::new(12.0 * s, FFMonospace)),

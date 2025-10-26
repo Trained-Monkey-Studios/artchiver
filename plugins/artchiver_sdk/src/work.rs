@@ -1,50 +1,118 @@
-use absolute_unit::prelude::*;
+use anyhow::{Result, bail};
+use decorum::{
+    Real,
+    divergence::{AsResult, OrError},
+};
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// The kind of measurement.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum SiUnit {
     Gram,
     Meter,
 }
 
+impl fmt::Display for SiUnit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let txt = match self {
+            Self::Gram => "g",
+            Self::Meter => "m",
+        };
+        write!(f, "{txt}")
+    }
+}
+
+impl TryFrom<&str> for SiUnit {
+    type Error = anyhow::Error;
+    fn try_from(value: &str) -> Result<Self> {
+        Ok(match value {
+            "g" => Self::Gram,
+            "m" => Self::Meter,
+            _ => bail!("not a known SiUnit name: {value}"),
+        })
+    }
+}
+
 /// An arbitrary physical characteristic.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// Note: neither `name` nor `description` may contain any ',' or '|', for dumb technical reasons.
+/// These will get replaced by '_' automatically.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Measurement {
-    name: String,
-    description: String,
-    value: f64,
+    name: Option<String>,
+    description: Option<String>,
+    value: Real<f64, OrError<AsResult>>,
     si_unit: SiUnit,
 }
 
 impl Measurement {
-    pub fn new<N: ToString, D: ToString>(
-        name: N,
-        description: D,
-        value: f64,
-        si_unit: SiUnit,
-    ) -> Self {
-        Self {
-            name: name.to_string(),
-            description: description.to_string(),
-            value,
+    pub fn new<F: Into<f64>>(value: F, si_unit: SiUnit) -> Result<Self> {
+        let f = value.into();
+        Ok(Self {
+            name: None,        // name.to_string(),
+            description: None, // description.to_string(),
+            value: Real::<f64, OrError<AsResult>>::new(f)?,
             si_unit,
-        }
+        })
+    }
+
+    pub fn label(&self) -> String {
+        format!(
+            "{}{} | {} ({})",
+            self.value(),
+            self.si_unit(),
+            self.name().unwrap_or_default(),
+            self.description().unwrap_or_default()
+        )
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    pub fn value(&self) -> f64 {
+        self.value.into_inner()
+    }
+
+    pub fn si_unit(&self) -> SiUnit {
+        self.si_unit
+    }
+
+    pub fn set_name(&mut self, name: impl ToString) {
+        let s = name.to_string();
+        self.name = Some(s.replace(',', "_").replace('|', "_"));
+    }
+
+    pub fn set_description(&mut self, description: impl ToString) {
+        let s = description.to_string();
+        self.description = Some(s.replace(',', "_").replace('|', "_"));
+    }
+
+    pub fn with_name(mut self, name: impl ToString) -> Self {
+        self.set_name(name);
+        self
+    }
+
+    pub fn with_description(mut self, description: impl ToString) -> Self {
+        self.set_description(description);
+        self
     }
 }
 
 /// Captures data about the physical nature of an artwork.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PhysicalData {
     // Describes the physical type of the object. Print, statue, photograph, etc.
     medium: Option<String>,
 
     // A formatted representation of the object's dimensions, for display
     dimensions_display: Option<String>,
-
-    // The physical size of the object, if known.
-    dimensions: Option<V3<Length<Meters>>>,
 
     // Set of arbitrary physical characteristics, if any.
     measurements: Vec<Measurement>,
@@ -71,11 +139,6 @@ impl PhysicalData {
     /// volumetric dimensions or measurements are not appropriate.
     pub fn dimensions_display(&self) -> Option<&str> {
         self.dimensions_display.as_deref()
-    }
-
-    /// The physical extents of the object, if known.
-    pub fn dimensions(&self) -> Option<V3<Length<Meters>>> {
-        self.dimensions
     }
 
     /// A set of arbitrary physical characteristics, if any.
@@ -111,11 +174,6 @@ impl PhysicalData {
         self.dimensions_display = Some(dimensions_display.to_string());
     }
 
-    /// Set the dimensions of the physical data. See getter for details.
-    pub fn set_dimensions(&mut self, dimensions: V3<Length<Meters>>) {
-        self.dimensions = Some(dimensions);
-    }
-
     /// Add a measurements to the physical data. See getter for details.
     pub fn add_measurement(&mut self, measurement: Measurement) {
         self.measurements.push(measurement);
@@ -147,12 +205,6 @@ impl PhysicalData {
     /// Set the dimensions text of the physical data. See getter for details.
     pub fn with_dimensions_display(mut self, dimensions_display: impl ToString) -> Self {
         self.dimensions_display = Some(dimensions_display.to_string());
-        self
-    }
-
-    /// Set the dimensions of the physical data. See getter for details.
-    pub fn with_dimensions(mut self, dimensions: V3<Length<Meters>>) -> Self {
-        self.dimensions = Some(dimensions);
         self
     }
 
@@ -196,9 +248,6 @@ pub struct History {
     // Extracted begin/end creation years, if known or relevant.
     begin_year: Option<i64>,
     end_year: Option<i64>,
-
-    // TODO: TAGME?: 20 broad time categories for when an artwork was created.
-    time_category: String, // 20 broad categories
 
     // What do we know about where this object has been?
     provenance: Option<String>,
