@@ -180,11 +180,13 @@ impl TagSet {
             if let Some(tag) = tags.get(&enabled) {
                 let fav_icon = if tag.favorite() { "✨" } else { "" };
                 let hid_icon = if tag.hidden() { "🗑" } else { "" };
-                if ui
+                let mut resp = ui
                     .button(format!("+{}{fav_icon}{hid_icon}", tag.name()))
-                    .on_hover_text("Remove Filter")
-                    .clicked()
-                {
+                    .on_hover_text("Remove Filter");
+                if Some(enabled) == self.last_fetched() {
+                    resp = resp.highlight();
+                }
+                if resp.clicked() {
                     remove = Some(enabled);
                 }
             }
