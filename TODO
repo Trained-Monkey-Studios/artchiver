@@ -41,11 +41,7 @@ o Return works incrementally
 o Only scroll to selection on a move event or leaving slideshow
 o make font size configurable via preferences menu
 ------ 0.1.0 ------
-o Add On Display, building, and room tags to NGA
-* Add On Display, building, and room tags to The Met
-* Expand Work with location and display data
-* Expand Work with attribution and history data
-* Expand Work with physical descriptions
+* Expand Work with Location, history, and physical data
 ------ 0.2.0 ------
 * Find more open-access galleries
 * show fetch state as in progress for incremental fetch (spinner next to count)

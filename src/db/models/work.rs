@@ -6,6 +6,7 @@ use rusqlite::types::{ToSqlOutput, Value};
 use rusqlite::{Row, ToSql};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use itertools::Itertools;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct WorkId(i64);
