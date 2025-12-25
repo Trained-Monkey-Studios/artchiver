@@ -196,6 +196,10 @@ impl PluginMetadata {
         Duration::from_millis(self.rate_window_ms.into())
     }
 
+    pub fn cache_timeout(&self) -> Duration {
+        self.cache_timeout
+    }
+
     pub fn configurations(&self) -> &[(String, ConfigValue)] {
         &self.configurations
     }

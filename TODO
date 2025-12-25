@@ -41,14 +41,15 @@ o Return works incrementally
 o Only scroll to selection on a move event or leaving slideshow
 o make font size configurable via preferences menu
 ------ 0.1.0 ------
-* Expand Work with Location, history, and physical data
-* Highlight the tag that is currently queried
-* show fetch state as in progress for incremental fetch (spinner next to count)
------- 0.2.0 ------
+o Expand Work with Location, history, and physical data
+o Highlight the tag that is currently queried
+o show fetch state as in progress for incremental fetch (spinner next to count)
+o cache control: actually obey timeouts and give ways to reset it in certain scopes
+
+------ TODO -------
 * Find more open-access galleries
 * kill in progress reads if we no longer need them
 * Multiple works panels, each with different query context
-* cache control: actually obey timeouts and give ways to reset it in certain scopes
 * show unique images if same md5sum is in multiple open-access collections
 * add a refresh-all-*visible*-tags button
 * make more long-running DB operations incremental and cancelable

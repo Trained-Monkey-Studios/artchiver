@@ -301,7 +301,11 @@ impl UxWork {
 
         for update in updates {
             match update {
-                DataUpdate::ListWorksChunk { tag_id, works, finished } => {
+                DataUpdate::ListWorksChunk {
+                    tag_id,
+                    works,
+                    finished,
+                } => {
                     if *tag_id == self.tag_selection.last_fetched() {
                         trace!("Received {} works for tag {tag_id:?}", works.len());
                         self.is_loading_works = !finished;
