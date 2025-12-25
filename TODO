@@ -42,11 +42,11 @@ o Only scroll to selection on a move event or leaving slideshow
 o make font size configurable via preferences menu
 ------ 0.1.0 ------
 * Expand Work with Location, history, and physical data
+* Highlight the tag that is currently queried
+* show fetch state as in progress for incremental fetch (spinner next to count)
 ------ 0.2.0 ------
 * Find more open-access galleries
-* show fetch state as in progress for incremental fetch (spinner next to count)
 * kill in progress reads if we no longer need them
-* Highlight the tag that is actually queried somehow
 * Multiple works panels, each with different query context
 * cache control: actually obey timeouts and give ways to reset it in certain scopes
 * show unique images if same md5sum is in multiple open-access collections

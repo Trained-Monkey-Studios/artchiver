@@ -80,5 +80,6 @@ pub enum DataUpdate {
     ListWorksChunk {
         tag_id: Option<TagId>,
         works: HashMap<WorkId, DbWork>,
+        finished: bool,
     },
 }

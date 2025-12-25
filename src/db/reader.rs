@@ -119,7 +119,7 @@ impl DbReadHandle {
                 .map(|w| (w.id(), w))
                 .collect::<HashMap<_, _>>();
             log.trace(format!("Finished collecting {} works", works.len()));
-            host.return_list_works_chunk(None, works)
+            host.return_list_works_chunk(None, works, true)
                 .expect("connection closed");
             trace!("Dispatching fetched works to UX");
         });
@@ -166,7 +166,7 @@ pub fn list_works_with_tag(
         last_id = page.last().map(|w| w.id());
         total_count += page.len();
         let chunk = page.into_iter().map(|w| (w.id(), w)).collect();
-        host.return_list_works_chunk(Some(tag_id), chunk)?;
+        host.return_list_works_chunk(Some(tag_id), chunk, last_id.is_none())?;
         report_slow_query(start, "list_works_with_any_tags", &query);
     }
     log.trace(format!("Finished collecting {total_count} works"));
