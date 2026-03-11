@@ -194,9 +194,13 @@ impl HostUpdateSender {
         &mut self,
         tag_id: Option<TagId>,
         works: HashMap<WorkId, DbWork>,
+        finished: bool,
     ) -> Result<()> {
-        self.tx_to_runner
-            .send(DataUpdate::ListWorksChunk { tag_id, works })?;
+        self.tx_to_runner.send(DataUpdate::ListWorksChunk {
+            tag_id,
+            works,
+            finished,
+        })?;
         Ok(())
     }
 

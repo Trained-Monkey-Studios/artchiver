@@ -62,7 +62,14 @@ impl Environment {
     }
 
     pub fn metadata_file_path(&self) -> PathBuf {
-        self.data_dir().join("metadata.db")
+        let path = self.data_dir().join("metadata.db");
+        if path.is_symlink()
+            && let Ok(target) = fs::read_link(&path)
+        {
+            info!("followed symlink to metadata file");
+            return target;
+        }
+        path
     }
 
     pub fn global_plugin_dir(&self) -> PathBuf {

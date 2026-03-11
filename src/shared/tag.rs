@@ -174,46 +174,55 @@ impl TagSet {
         self.disabled.iter().copied()
     }
 
-    pub fn ui(&mut self, tags: &HashMap<TagId, DbTag>, ui: &mut egui::Ui) {
-        let mut remove = None;
-        for enabled in self.enabled() {
-            if let Some(tag) = tags.get(&enabled) {
-                let fav_icon = if tag.favorite() { "✨" } else { "" };
-                let hid_icon = if tag.hidden() { "🗑" } else { "" };
-                if ui
-                    .button(format!("+{}{fav_icon}{hid_icon}", tag.name()))
-                    .on_hover_text("Remove Filter")
-                    .clicked()
-                {
-                    remove = Some(enabled);
+    pub fn location_ui(&mut self, tags: &HashMap<TagId, DbTag>, ui: &mut egui::Ui) {
+        egui::Frame::new()
+            .corner_radius(ui.visuals().widgets.noninteractive.corner_radius)
+            .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+            .fill(ui.visuals().widgets.noninteractive.bg_fill)
+            .inner_margin(egui::Margin::symmetric(8, 6))
+            .show(ui, |ui| {
+                let mut remove = None;
+                for enabled in self.enabled() {
+                    if let Some(tag) = tags.get(&enabled) {
+                        let fav_icon = if tag.favorite() { "✨" } else { "" };
+                        let hid_icon = if tag.hidden() { "🗑" } else { "" };
+                        let text = format!("+{}{fav_icon}{hid_icon}", tag.name());
+                        let mut resp = ui.button(text).on_hover_text("Remove Filter");
+                        if Some(enabled) == self.last_fetched() {
+                            resp = resp.highlight();
+                        }
+                        if resp.clicked() {
+                            remove = Some(enabled);
+                        }
+                    }
                 }
-            }
-        }
-        if let Some(remove) = remove
-            && let Some(tag) = tags.get(&remove)
-        {
-            self.unselect(tag);
-        }
+                if let Some(remove) = remove
+                    && let Some(tag) = tags.get(&remove)
+                {
+                    self.unselect(tag);
+                }
 
-        let mut unselect = None;
-        for disabled in self.disabled() {
-            if let Some(tag) = tags.get(&disabled) {
-                let fav_icon = if tag.favorite() { "✨" } else { "" };
-                let hid_icon = if tag.hidden() { "🗑" } else { "" };
-                if ui
-                    .button(format!("-{}{fav_icon}{hid_icon}", tag.name()))
-                    .on_hover_text("Unselect negative filter")
-                    .clicked()
-                {
-                    unselect = Some(disabled);
+                let mut unselect = None;
+                for disabled in self.disabled() {
+                    if let Some(tag) = tags.get(&disabled) {
+                        let fav_icon = if tag.favorite() { "✨" } else { "" };
+                        let hid_icon = if tag.hidden() { "🗑" } else { "" };
+                        let text = format!("-{}{fav_icon}{hid_icon}", tag.name());
+                        if ui
+                            .button(text)
+                            .on_hover_text("Unselect negative filter")
+                            .clicked()
+                        {
+                            unselect = Some(disabled);
+                        }
+                    }
                 }
-            }
-        }
-        if let Some(unselect) = unselect
-            && let Some(tag) = tags.get(&unselect)
-        {
-            self.unselect(tag);
-        }
+                if let Some(unselect) = unselect
+                    && let Some(tag) = tags.get(&unselect)
+                {
+                    self.unselect(tag);
+                }
+            });
 
         if !self.is_empty() {
             if ui.button("x").clicked() {

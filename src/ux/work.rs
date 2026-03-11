@@ -223,8 +223,13 @@ pub struct UxWork {
     #[serde(skip, default)]
     mpv: MpvPlayer,
 
+    // Track the playlist state in libmpv externally because we can only interact async
     #[serde(skip, default)]
     has_loaded_media: bool,
+
+    // Show a spinner while works are loading async and incrementally
+    #[serde(skip, default)]
+    is_loading_works: bool,
 }
 
 impl Default for UxWork {
@@ -246,6 +251,7 @@ impl Default for UxWork {
             works_lru: LruCache::unbounded(),
             mpv: MpvPlayer::default(),
             has_loaded_media: false,
+            is_loading_works: true,
         }
     }
 }
@@ -265,6 +271,7 @@ impl UxWork {
         self.data_dir = data_dir.to_owned();
 
         // FIXME: this is going to fetch the wrong thing. We want the smallest tag, as selected elsewhere.
+        self.is_loading_works = true;
         if let Some(tag_id) = self.tag_selection.enabled().next() {
             db.get_works_for_tag(tag_id);
         } else if self.tag_selection.is_empty() {
@@ -294,9 +301,14 @@ impl UxWork {
 
         for update in updates {
             match update {
-                DataUpdate::ListWorksChunk { tag_id, works } => {
+                DataUpdate::ListWorksChunk {
+                    tag_id,
+                    works,
+                    finished,
+                } => {
                     if *tag_id == self.tag_selection.last_fetched() {
                         trace!("Received {} works for tag {tag_id:?}", works.len());
+                        self.is_loading_works = !finished;
                         if let Some(local) = self.work_matching_tag.as_mut() {
                             local.extend(works.iter().map(|(id, work)| (*id, work.to_owned())));
                         } else {
@@ -396,12 +408,14 @@ impl UxWork {
             TagRefresh::NeedRefresh(tag_id) => {
                 self.work_matching_tag = None;
                 self.work_filtered = Vec::new();
+                self.is_loading_works = true;
                 self.clear_selected();
                 db.get_works_for_tag(tag_id);
             }
             TagRefresh::Favorites => {
                 self.work_matching_tag = None;
                 self.work_filtered = Vec::new();
+                self.is_loading_works = true;
                 self.clear_selected();
                 db.get_favorite_works();
             }
@@ -812,11 +826,6 @@ impl UxWork {
                         ui.add(egui::Label::new(watermarks).wrap());
                         ui.end_row();
                     }
-
-                    /*
-                           // Set of arbitrary physical characteristics, if any.
-                           measurements: Vec<Measurement>,
-                    */
                 });
         }
 
@@ -897,7 +906,10 @@ impl UxWork {
 
         ui.horizontal_wrapped(|ui| {
             if let Some(tags) = tags {
-                self.tag_selection.ui(tags, ui);
+                self.tag_selection.location_ui(tags, ui);
+            }
+            if self.is_loading_works {
+                ui.spinner();
             }
             ui.label(format!("({})", self.work_filtered.len()));
         });
@@ -1240,7 +1252,9 @@ impl UxWork {
         } else if self.last_mouse_motion.elapsed() < Duration::from_secs(2) {
             // Note: we may have gotten painted again after the above check but before we make it
             //       below, so request repaint again until we hit the 2 second timeout
-            ctx.request_repaint_after(Duration::from_secs(2) - self.last_mouse_motion.elapsed());
+            ctx.request_repaint_after(
+                Duration::from_secs(2).saturating_sub(self.last_mouse_motion.elapsed()),
+            );
         } else if self.last_mouse_motion.elapsed() >= Duration::from_millis(1900) {
             ctx.set_cursor_icon(egui::CursorIcon::None);
         }

@@ -95,6 +95,7 @@ pub struct PluginState {
     cache_dir: PathBuf,
     data_dir: PathBuf,
     tmp_dir: PathBuf,
+    cache_timeout: Duration,
     progress: ProgressSender,
     log: LogSender,
     host: HostUpdateSender,
@@ -134,6 +135,7 @@ impl PluginState {
             cache_dir: env.cache_dir().clone(),
             data_dir: env.data_dir().clone(),
             tmp_dir: env.tmp_dir().clone(),
+            cache_timeout: Duration::from_secs(60 * 60 * 24 * 7), // one week
             progress: ProgressSender::wrap(UpdateSource::Unknown, tx_to_runner.clone()),
             log: LogSender::wrap(UpdateSource::Unknown, tx_to_runner.clone()),
             host: HostUpdateSender::wrap(UpdateSource::Unknown, tx_to_runner),
@@ -168,6 +170,7 @@ fn plugin_main(
     let db_plugin = {
         let state_ref = state.get()?;
         let mut state = state_ref.lock().expect("poison");
+        state.cache_timeout = metadata.cache_timeout();
         let db_plugin = state.db_sync.sync_upsert_plugin(metadata.name())?;
         state.throttle = CallingThrottle::new(metadata.rate_limit(), metadata.rate_window());
         state.progress = ProgressSender::wrap(
@@ -338,11 +341,21 @@ fn fetch_text_inner(state: &mut PluginState, request: &Request) -> TextResponse 
     let key = Sha256::digest(&url);
     let key_path = state.cache_dir.join(format!("{key:x}"));
     if let Ok(mut cache_fp) = fs::File::open(&key_path) {
-        // state.log.trace(format!("cached: fetch_text({url})"));
-        let mut buffer = Vec::new();
-        io::copy(&mut cache_fp, &mut buffer)?;
-        let out = String::from_utf8_lossy(&buffer).to_string();
-        return Ok(out);
+        let last_write = cache_fp
+            .metadata()
+            .expect("stat failed")
+            .modified()
+            .expect("mtime failed");
+        // Note: elapsed may be negative because time
+        if let Ok(staleness) = last_write.elapsed()
+            && staleness < state.cache_timeout
+        {
+            // state.log.trace(format!("cached: fetch_text({url})"));
+            let mut buffer = Vec::new();
+            io::copy(&mut cache_fp, &mut buffer)?;
+            let out = String::from_utf8_lossy(&buffer).to_string();
+            return Ok(out);
+        }
     }
 
     // Stream the response simultaneously to the cache file and to a string for use by the plugin.
