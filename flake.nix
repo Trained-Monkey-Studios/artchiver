@@ -10,7 +10,7 @@
   outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        rustVersion = "1.90.0";
+        rustVersion = "1.93.1";
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs { inherit system overlays; };
       in with pkgs; {
@@ -36,7 +36,7 @@
             gdb
             libclang
             libffi.dev
-            mold-wrapped
+            mold
             mpv
             pipewire.dev
             pkg-config
@@ -50,10 +50,10 @@
             wayland
 
             # x11 libraries
-            xorg.libXcursor
-            xorg.libXrandr
-            xorg.libXi
-            xorg.libX11
+            libXcursor
+            libXrandr
+            libXi
+            libX11
             libdrm.dev
           ];
 

@@ -1252,7 +1252,7 @@ impl UxWork {
         } else if self.last_mouse_motion.elapsed() < Duration::from_secs(2) {
             // Note: we may have gotten painted again after the above check but before we make it
             //       below, so request repaint again until we hit the 2 second timeout
-            ctx.request_repaint_after(Duration::from_secs(2) - self.last_mouse_motion.elapsed());
+            ctx.request_repaint_after(Duration::from_secs(2).saturating_sub(self.last_mouse_motion.elapsed()));
         } else if self.last_mouse_motion.elapsed() >= Duration::from_millis(1900) {
             ctx.set_cursor_icon(egui::CursorIcon::None);
         }
